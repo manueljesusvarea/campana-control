@@ -14,6 +14,14 @@ Usuario: encargado de una cuadrilla en España. Toda la interfaz, los textos y l
   - **iPhone:** la app web instalable («Añadir a pantalla de inicio»). No hay App Store.
 - Nada de servicios de pago.
 
+## Versión 3.0 (multiusuario) · reglas de trabajo
+
+- Se desarrolla en la rama `desarrollo/multiusuario-v3`. **`main` conserva la 2.3.0 pública:** nunca fusionar con `main`, publicar una Release ni actualizar la web sin autorización expresa del dueño del proyecto. Los flujos de GitHub solo se ejecutan con `push` a `main`; subir la rama de desarrollo no publica nada.
+- Backend: Supabase Free (sin facturación). Esquema y permisos en `supabase/migrations/`, pruebas de permisos en `supabase/pruebas/` (`npm test`, PostgreSQL local con PGlite). Si se cambia el esquema, **las pruebas de permisos deben seguir todas correctas**.
+- Documentación: `docs/PLAN_VERSION_3.md` (decisiones y etapas), `docs/MODELO_MULTIUSUARIO.md`, `docs/PERMISOS_Y_SEGURIDAD.md`.
+- Nunca subir claves de Supabase con privilegios (`service_role`), contraseñas, datos reales ni copias de seguridad. La clave pública `anon` sí puede ir en la app.
+- Solo datos ficticios en pruebas. No migrar datos reales sin autorización.
+
 ## Estructura
 
 ```
