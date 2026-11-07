@@ -7,3 +7,4 @@ Thumbs.db
 windows/dist/
 herramientas/pruebas/resultado*.json
 windows/dist-*/
+supabase/pruebas/.env*

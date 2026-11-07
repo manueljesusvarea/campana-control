@@ -3,6 +3,11 @@
   "private": true,
   "description": "Pruebas de permisos (RLS) del esquema 3.0 en un PostgreSQL local (PGlite), sin servidor ni Docker",
   "type": "module",
-  "scripts": { "test": "node permisos.test.mjs" },
-  "devDependencies": { "@electric-sql/pglite": "0.5.15" }
+  "scripts": {
+    "test": "node permisos.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.15",
+    "@supabase/supabase-js": "2.119.0"
+  }
 }
