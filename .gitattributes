@@ -1,0 +1,12 @@
+# Fines de línea iguales en cualquier ordenador (Windows o GitHub Actions con Linux)
+* text=auto
+# Scripts que se ejecutan en Linux: siempre LF, o fallan con «bad interpreter»
+android/gradlew text eol=lf
+*.sh text eol=lf
+# Scripts de Windows: CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# Binarios
+*.png binary
+*.woff2 binary
+*.jar binary

@@ -1,0 +1,8 @@
+{
+  "appId": "es.campanacontrol.app",
+  "appName": "CAMPAÑA CONTROL",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": false
+  }
+}

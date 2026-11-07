@@ -1,0 +1,64 @@
+{
+  "name": "campana-control-windows",
+  "productName": "CAMPAÑA CONTROL",
+  "version": "0.0.0",
+  "description": "Control de la campaña de aceituna (versión de escritorio para Windows)",
+  "author": "CAMPAÑA CONTROL",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "empezar": "electron .",
+    "instalador": "node construir.js"
+  },
+  "build": {
+    "appId": "es.campanacontrol.app",
+    "productName": "CAMPAÑA CONTROL",
+    "copyright": "CAMPAÑA CONTROL",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "package.json",
+      {
+        "from": "../www",
+        "to": "www",
+        "filter": [
+          "**/*",
+          "!sw.js"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CAMPAÑA CONTROL",
+      "uninstallDisplayName": "CAMPAÑA CONTROL",
+      "deleteAppDataOnUninstall": false,
+      "installerLanguages": [
+        "es_ES"
+      ],
+      "language": "3082",
+      "artifactName": "CampanaControl-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0"
+  }
+}

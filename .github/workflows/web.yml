@@ -1,0 +1,42 @@
+# Publica la app web (carpeta www/) en GitHub Pages en cada cambio de la rama main. Gratis y sin dominio:
+#   https://USUARIO.github.io/campana-control/
+# Desde ese enlace se instala en el iPhone (Safari → Compartir → Añadir a pantalla de inicio),
+# y también en Android y Windows como alternativa al APK y al .exe.
+# Hay que activarlo una vez: repositorio → Settings → Pages → Source: «GitHub Actions».
+
+name: Web (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.publicar.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generar www/index.html desde el código fuente
+        run: python3 herramientas/construir_www.py
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: www
+
+      - id: publicar
+        uses: actions/deploy-pages@v4

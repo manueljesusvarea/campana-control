@@ -1,0 +1,1690 @@
+<title>CAMPAÑA CONTROL</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* Layout: barra lateral en escritorio, barra inferior en móvil; tarjetas solo para bloques que se editan */
+:root{
+  --c1:#46561c; --c2:#c08a12; --c3:#2d6f8f; --c4:#a8492f; --c5:#6b4f8a; --c6:#2f7f6a;
+  --bg:#f2f3ec; --surface:#ffffff; --surface-2:#e9ece0; --ink:#1c2113; --ink-2:#5b624f; --line:#d5d9c7;
+  --olive:#46561c; --olive-2:#5f7428; --on-olive:#ffffff; --oil:#a87f12; --oil-soft:#f3e7c4;
+  --ok:#2c7536; --ok-soft:#dcefdc; --warn:#9a5c00; --warn-soft:#f8e6c8; --bad:#a83526; --bad-soft:#f6dcd7; --info:#2d5a85; --info-soft:#dae6f2;
+  --shadow:0 1px 2px rgba(30,40,10,.06),0 4px 14px rgba(30,40,10,.06);
+  --f-display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --f-body:"Source Sans 3","Segoe UI",system-ui,-apple-system,sans-serif;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --c1:#9cb44a; --c2:#e0b13f; --c3:#6fb3d2; --c4:#e07d5f; --c5:#a98bd0; --c6:#5fc2a6;
+  --bg:#12150d; --surface:#1a1f13; --surface-2:#232a19; --ink:#e7ebdb; --ink-2:#a2aa92; --line:#333b26;
+  --olive:#9cb44a; --olive-2:#b2c964; --on-olive:#12150d; --oil:#d8b24a; --oil-soft:#3a3115;
+  --ok:#72c47e; --ok-soft:#1f3622; --warn:#e3a54a; --warn-soft:#3b2c12; --bad:#ec7b69; --bad-soft:#40211b; --info:#86b3e0; --info-soft:#1b2c3d;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark }}
+:root[data-theme="dark"]{
+  --c1:#9cb44a; --c2:#e0b13f; --c3:#6fb3d2; --c4:#e07d5f; --c5:#a98bd0; --c6:#5fc2a6;
+  --bg:#12150d; --surface:#1a1f13; --surface-2:#232a19; --ink:#e7ebdb; --ink-2:#a2aa92; --line:#333b26;
+  --olive:#9cb44a; --olive-2:#b2c964; --on-olive:#12150d; --oil:#d8b24a; --oil-soft:#3a3115;
+  --ok:#72c47e; --ok-soft:#1f3622; --warn:#e3a54a; --warn-soft:#3b2c12; --bad:#ec7b69; --bad-soft:#40211b; --info:#86b3e0; --info-soft:#1b2c3d;
+  --shadow:0 1px 2px rgba(0,0,0,.3); color-scheme:dark }
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-text-size-adjust:100%}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--olive)}
+h1,h2,h3{font-family:var(--f-display);font-weight:700;letter-spacing:.01em;margin:0;text-wrap:balance;line-height:1.1}
+h1{font-size:30px} h2{font-size:22px} h3{font-size:18px}
+button,input,select,textarea{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-2)}
+.small{font-size:13px}
+.lbl{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-2);font-weight:600}
+
+/* Cabecera */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--olive);color:var(--on-olive);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;
+  display:flex;align-items:center;gap:12px}
+.brand{font-family:var(--f-display);font-weight:700;font-size:22px;letter-spacing:.06em;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.brand svg{flex:none}
+.top .sp{flex:1}
+.campsel{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25);color:inherit;border-radius:8px;padding:6px 8px;max-width:150px}
+:root[data-theme="dark"] .campsel{background:rgba(0,0,0,.12)}
+.campsel option{color:#1c2113;background:#fff}
+.iconbtn{background:none;border:0;color:inherit;padding:6px;border-radius:8px;cursor:pointer;display:grid;place-items:center}
+.iconbtn:hover{background:rgba(255,255,255,.15)}
+.sync{font-size:12px;opacity:.9;white-space:nowrap}
+@media (max-width:560px){ .brand{font-size:18px;letter-spacing:.04em} .sync{display:none} .campsel{max-width:108px} .top{gap:8px} }
+@media (max-width:360px){ .brand svg{display:none} }
+.savebar .sbtxt{flex:1;min-width:0}
+
+/* Estructura */
+.shell{display:flex;min-height:calc(100vh - 56px)}
+.side{display:none}
+main{flex:1;min-width:0;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:18px 110px;max-width:1100px;margin:0 auto;width:100%}
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(6,1fr);padding-bottom:env(safe-area-inset-bottom,0px);
+  padding-left:env(safe-area-inset-left,0px);padding-right:env(safe-area-inset-right,0px)}
+.tabs a{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 2px 7px;color:var(--ink-2);text-decoration:none;font-size:11px;font-weight:600}
+.tabs a[aria-current="page"]{color:var(--olive)}
+.tabs a[aria-current="page"] svg{stroke:var(--olive)}
+@media (min-width:900px){
+  .tabs{display:none}
+  .side{display:flex;flex-direction:column;gap:2px;width:210px;flex:none;padding:18px 10px;border-right:1px solid var(--line);position:sticky;top:56px;height:calc(100vh - 56px)}
+  .side a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--ink);text-decoration:none;font-weight:600}
+  .side a:hover{background:var(--surface-2)}
+  .side a[aria-current="page"]{background:var(--olive);color:var(--on-olive)}
+  .side a[aria-current="page"] svg{stroke:var(--on-olive)}
+  main{padding-bottom:40px}
+}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.side svg.i{width:19px;height:19px}
+
+/* Componentes */
+.stack{display:flex;flex-direction:column;gap:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.between{justify-content:space-between}
+.head{display:flex;gap:12px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;box-shadow:var(--shadow);min-width:0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);
+  border-radius:8px;padding:9px 14px;font-weight:600;cursor:pointer;min-height:40px;text-decoration:none}
+.btn:hover{border-color:var(--olive-2)}
+.btn.pri{background:var(--olive);border-color:var(--olive);color:var(--on-olive)}
+.btn.pri:hover{background:var(--olive-2)}
+.btn.oil{background:var(--oil);border-color:var(--oil);color:#fff}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.danger{color:var(--bad)}
+.btn.sm{padding:5px 10px;min-height:32px;font-size:13px}
+.btn:disabled{opacity:.5;cursor:default}
+.btn svg.i{width:18px;height:18px}
+:focus-visible{outline:2px solid var(--oil);outline-offset:2px}
+label.f{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 160px}
+label.f>span{font-size:13px;color:var(--ink-2);font-weight:600}
+input,select,textarea{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-height:40px;width:100%;min-width:0}
+textarea{min-height:90px;resize:vertical}
+input[type=checkbox]{width:20px;height:20px;min-height:0;accent-color:var(--olive)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.pill{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700;white-space:nowrap}
+.p-normal{background:var(--ok-soft);color:var(--ok)}
+.p-mas{background:var(--info-soft);color:var(--info)}
+.p-menos{background:var(--warn-soft);color:var(--warn)}
+.p-especial{background:var(--oil-soft);color:var(--oil)}
+.p-ausente{background:var(--bad-soft);color:var(--bad)}
+.p-ok{background:var(--ok-soft);color:var(--ok)}
+.p-gris{background:var(--surface-2);color:var(--ink-2)}
+.p-warn{background:var(--warn-soft);color:var(--warn)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-weight:600;cursor:pointer;font-size:14px}
+.chip[aria-pressed="true"]{background:var(--olive);border-color:var(--olive);color:var(--on-olive)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.kpi{background:var(--surface);padding:12px 14px;min-width:0}
+.kpi b{display:block;font-family:var(--f-display);font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle;white-space:nowrap}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-2);background:var(--surface-2);font-weight:700}
+td.r,th.r{text-align:right}
+tr:last-child td{border-bottom:0}
+tfoot td{font-weight:700;background:var(--surface-2)}
+.list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);overflow:hidden}
+.li{display:flex;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);min-width:0;cursor:pointer;background:none;border-left:0;border-right:0;border-top:0;text-align:left;width:100%}
+.li:last-child{border-bottom:0}
+.li:hover{background:var(--surface-2)}
+.li .grow{flex:1;min-width:0}
+.li .t{font-weight:700;overflow:hidden;text-overflow:ellipsis}
+.empty{border:1.5px dashed var(--line);border-radius:var(--r);padding:28px 18px;text-align:center;color:var(--ink-2);display:flex;flex-direction:column;gap:10px;align-items:center}
+.empty b{color:var(--ink);font-size:17px}
+.banner{border-radius:8px;padding:10px 12px;font-size:14px;background:var(--warn-soft);color:var(--warn);font-weight:600}
+.banner.info{background:var(--info-soft);color:var(--info)}
+
+/* Parte diario */
+.wrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 10px;padding:12px 14px;border-bottom:1px solid var(--line);align-items:center}
+.wrow:last-child{border-bottom:0}
+.wrow .nm{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.wrow .ctl{grid-column:1/-1;display:grid;grid-template-columns:minmax(120px,1.3fr) 90px minmax(0,2fr);gap:8px;align-items:center}
+.wrow.aus{background:color-mix(in srgb,var(--bad-soft) 45%,transparent)}
+@media (max-width:620px){ .wrow .ctl{grid-template-columns:1fr 84px} .wrow .ctl .nota{grid-column:1/-1} }
+.mrow{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.mrow:last-child{border-bottom:0}
+.mrow .grow{flex:1;min-width:0}
+.step{display:flex;align-items:center;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.step button{width:40px;height:40px;border:0;background:var(--surface-2);font-size:20px;font-weight:700;cursor:pointer}
+.step input{width:52px;border:0;border-radius:0;text-align:center;min-height:40px;padding:0}
+.savebar{position:sticky;bottom:calc(64px + env(safe-area-inset-bottom,0px));z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+@media (min-width:900px){.savebar{bottom:12px}}
+.dirty{color:var(--warn);font-weight:700;font-size:13px}
+
+/* Modal */
+.ov{position:fixed;inset:0;z-index:50;background:rgba(15,20,8,.55);display:flex;align-items:flex-end;justify-content:center}
+@media (min-width:700px){.ov{align-items:center;padding:24px}}
+.md{background:var(--bg);width:100%;max-width:640px;max-height:92vh;overflow:auto;border-radius:14px 14px 0 0;
+  padding:18px max(16px,env(safe-area-inset-right,0px)) calc(18px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+@media (min-width:700px){.md{border-radius:14px}}
+.md.wide{max-width:900px}
+.md .mh{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(80px + env(safe-area-inset-bottom,0px));z-index:60;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-weight:600;max-width:90vw;box-shadow:var(--shadow)}
+/* Gráficas y saldos */
+.chartw{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);padding:10px 8px 4px}
+.chartw svg{display:block}
+.chartw text{fill:var(--ink-2);font-family:var(--f-body);font-size:11px}
+.chartw .gl{stroke:var(--line);stroke-width:1}
+.chartw .qs{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:3 3;opacity:.6}
+.legend{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;color:var(--ink-2);padding:6px 4px 2px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.saldo{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.saldo>div{background:var(--surface);padding:12px 14px;min-width:0}
+.saldo b{display:block;font-family:var(--f-display);font-size:28px;line-height:1.1;font-variant-numeric:tabular-nums}
+.saldo .resto{background:var(--olive);color:var(--on-olive)}
+.saldo .resto{grid-column:1/-1}
+@media (min-width:700px){.saldo{grid-template-columns:repeat(3,1fr)} .saldo .resto{grid-column:auto}}
+.saldo .resto .lbl{color:inherit;opacity:.85}
+.saldo .resto.neg{background:var(--bad);color:#fff}
+.pago{display:flex;gap:12px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+.pago:last-child{border-bottom:0}
+.pago .grow{flex:1;min-width:0}
+.pago .imp{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}
+.thumbs img{width:90px;height:110px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#fff}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cal div{background:var(--surface);border:1px solid var(--line);border-radius:6px;min-height:46px;padding:3px 5px;font-size:12px}
+.cal div.h{background:none;border:0;min-height:0;text-align:center;font-weight:700;color:var(--ink-2)}
+.cal div.x{background:none;border-color:transparent}
+.cal div b{display:block;font-size:14px;color:var(--olive)}
+.cal div.au b{color:var(--bad)}
+.hint{font-size:13px;color:var(--ink-2)}
+code.ph{background:var(--surface-2);border-radius:4px;padding:1px 5px;font-size:12px;cursor:pointer;border:1px solid var(--line)}
+@media (prefers-reduced-motion:no-preference){.btn,.chip,.li{transition:background .15s,border-color .15s}}
+</style>
+
+<header class="top">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 27C12 22 18 14 27 5" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><ellipse cx="12" cy="13" rx="4.2" ry="6.2" transform="rotate(-35 12 13)" fill="currentColor" opacity=".9"/><ellipse cx="21" cy="19" rx="3.6" ry="5.4" transform="rotate(-35 21 19)" fill="currentColor" opacity=".65"/></svg>
+    CAMPAÑA CONTROL
+  </div>
+  <div class="sp"></div>
+  <span class="sync" id="sync"></span>
+  <select class="campsel" id="campsel" aria-label="Campaña activa"></select>
+  <a class="iconbtn" href="#ajustes" aria-label="Ajustes" title="Ajustes"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>
+</header>
+<div class="shell">
+  <nav class="side" id="side" aria-label="Secciones"></nav>
+  <main id="view"></main>
+</div>
+<nav class="tabs" id="tabs" aria-label="Secciones"></nav>
+<div id="modal"></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+"use strict";
+/* ===================== Utilidades ===================== */
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = (p = "") => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const pad2 = n => String(n).padStart(2, "0");
+const isoD = d => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+const hoy = () => isoD(new Date());
+const pD = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = pD(s); d.setDate(d.getDate() + n); return isoD(d); };
+const fFecha = s => s ? pD(s).toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" }) : "";
+const fFechaL = s => s ? pD(s).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+const fN = (n, d = 2) => (+n || 0).toLocaleString("es-ES", { maximumFractionDigits: d });
+const fH = n => fN(n) + " h";
+const fE = n => (+n || 0).toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+const num = v => {
+  if (v === "" || v == null) return null; let t = String(v).trim().replace(/\s|€/g, "");
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, "").replace(",", "."); // 2.350 o 1.234,50
+  else t = t.replace(",", ".");
+  const n = parseFloat(t); return isNaN(n) ? null : n;
+};
+const ahoraHM = () => { const d = new Date(); return pad2(d.getHours()) + ":" + pad2(d.getMinutes()); };
+const byName = (a, b) => (a.nombre || "").localeCompare(b.nombre || "", "es");
+const clone = o => JSON.parse(JSON.stringify(o ?? {}));
+function hhmmAdd(hhmm, horas) { const [h, m] = (hhmm || "08:00").split(":").map(Number); const t = h * 60 + m + Math.round((+horas || 0) * 60); return pad2(Math.floor(t / 60) % 24) + ":" + pad2(t % 60); }
+function rangoFechas(a, b) { const out = []; if (!a || !b) return out; let d = a; let g = 0; while (d <= b && g++ < 400) { out.push(d); d = addDays(d, 1); } return out; }
+const TIPOS = [["normal", "Normal"], ["mas", "Más horas"], ["menos", "Menos horas"], ["especial", "Día especial"], ["ausente", "No asiste"]];
+const tipoTxt = t => (TIPOS.find(x => x[0] === t) || TIPOS[0])[1];
+const ICON = {
+  inicio: '<path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/>',
+  partes: '<rect x="4" y="4" width="16" height="17" rx="2"/><path d="M8 2v4M16 2v4M4 10h16M8 14h3M8 17h6"/>',
+  duenos: '<path d="M4 20c4-1 6-5 8-9"/><circle cx="16" cy="7" r="3"/><path d="M12 21h9M14 13c2 0 5 2 6 5"/>',
+  trabajadores: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c.6-3.4 3-5.5 6-5.5s5.4 2.1 6 5.5"/><circle cx="17" cy="9" r="2.4"/><path d="M16.5 14.5c2.3.2 4 1.9 4.5 4.5"/>',
+  informes: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7M9 9h3"/>',
+  documentos: '<path d="M4 4h10l6 6v10H4z"/><path d="M13 4v7h7"/><path d="M7 17c1.5-1.5 3-1.5 4 0s2.5 1.5 4 0"/>',
+  ajustes: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  euro: '<path d="M17 6.5A6.5 6.5 0 1 0 17 17.5"/><path d="M4 10h9M4 14h9"/>',
+  chart: '<path d="M4 20V4M4 20h16"/><rect x="7" y="11" width="3" height="6"/><rect x="12" y="7" width="3" height="10"/><rect x="17" y="13" width="3" height="4"/>',
+  mas: '<path d="M12 5v14M5 12h14"/>', cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  pdf: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 15h6M12 12v6"/>', xls: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M4 15h16M10 4v16"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>', back: '<path d="M15 5l-7 7 7 7"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'
+};
+const ic = (k, extra = "") => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true" ${extra}>${ICON[k] || ""}</svg>`;
+
+/* ===================== Plantillas genéricas ===================== */
+const PLANTILLAS_GEN = {
+  "gen-riesgos": {
+    generica: true, nombre: "Información de riesgos laborales y coordinación", asesoria: "Genérica", tipo: "texto",
+    titulo: "INFORMACIÓN DE RIESGOS LABORALES Y COORDINACIÓN DE ACTIVIDADES EMPRESARIALES",
+    cuerpo: "En {{municipio}}, a {{fecha}}.\n\nDe una parte, {{dueno}}, con NIF {{dueno_nif}} y domicilio en {{dueno_direccion}}, titular de la finca {{finca}} (polígono {{poligono}}, parcela {{parcela}}, término de {{municipio}}). De otra parte, {{empresa}}, con NIF {{empresa_nif}}, que realiza en dicha finca la recolección de aceituna de la {{campana}}, con {{encargado}} como encargado de la cuadrilla.\n\n1. OBJETO. Ambas partes se informan de los riesgos de la actividad y de las medidas para prevenirlos, según la Ley 31/1995 de Prevención de Riesgos Laborales (arts. 18 y 24) y el Real Decreto 171/2004 de coordinación de actividades empresariales.\n\n2. RIESGOS PRINCIPALES Y MEDIDAS PREVENTIVAS\n- Caídas al mismo y a distinto nivel por terreno irregular, ramas o escaleras: calzado con suela antideslizante; no subir al árbol ni a remolques en marcha.\n- Golpes y cortes con varas, peines y ramas: guantes de protección y distancia de seguridad entre compañeros.\n- Proyección de partículas a los ojos durante el vareo o el soplado: gafas de protección.\n- Ruido y vibraciones de sopladoras, vibradores y máquinas de trepar: protectores auditivos, guantes antivibración, pausas y rotación de tareas.\n- Sobreesfuerzos y posturas forzadas al mover mantos, fardos y sacos: levantar con las piernas, repartir la carga entre dos personas.\n- Atropello, vuelco o atrapamiento con tractor, remolque y vehículos: tractor con estructura antivuelco y cinturón; nadie dentro del radio de acción de la máquina; prohibido llevar personas en el remolque.\n- Líneas eléctricas aéreas: no acercar varas ni maquinaria a menos de 5 metros.\n- Frío, lluvia y sol: ropa adecuada, agua disponible y suspensión del trabajo con tiempo adverso.\n- Combustibles de sopladoras y máquinas: repostar con el motor parado y frío y sin fumar.\n- Heridas, picaduras y alergias: botiquín en el tajo.\n\n3. EQUIPOS DE PROTECCIÓN INDIVIDUAL. La empresa entrega a cada trabajador guantes, gafas, protectores auditivos y la ropa necesaria, y el trabajador se compromete a usarlos.\n\n4. EMERGENCIAS. Teléfono de emergencias: {{telefono_emergencias}}. Centro sanitario más cercano: {{centro_salud}}. Punto de reunión: {{punto_reunion}}. Botiquín: {{botiquin}}.\n\n5. RIESGOS PROPIOS DE LA FINCA comunicados por el titular: {{riesgos_finca}}.\n\n6. COMPROMISOS. El titular comunicará cualquier riesgo específico del terreno. La empresa trasladará esta información a todos sus trabajadores.\n\nTrabajadores de la cuadrilla:\n{{trabajadores}}\n\nMaquinaria prevista:\n{{maquinas}}",
+    campos: [
+      { clave: "telefono_emergencias", etiqueta: "Teléfono de emergencias", valor: "112" },
+      { clave: "centro_salud", etiqueta: "Centro sanitario más cercano", valor: "" },
+      { clave: "punto_reunion", etiqueta: "Punto de reunión", valor: "Junto a los vehículos" },
+      { clave: "botiquin", etiqueta: "Ubicación del botiquín", valor: "En el vehículo del encargado" },
+      { clave: "riesgos_finca", etiqueta: "Riesgos propios de la finca", valor: "Ninguno adicional" }
+    ]
+  }
+};
+const PH_BASE = [["empresa", "Nombre de la empresa"], ["empresa_nif", "NIF empresa"], ["empresa_direccion", "Dirección empresa"], ["encargado", "Encargado"], ["dueno", "Nombre del dueño"], ["dueno_nif", "NIF dueño"], ["dueno_direccion", "Dirección dueño"], ["dueno_telefono", "Teléfono dueño"], ["finca", "Finca / paraje"], ["municipio", "Municipio"], ["poligono", "Polígono"], ["parcela", "Parcela"], ["campana", "Campaña"], ["fecha", "Fecha del documento"], ["fecha_inicio", "Primer día"], ["fecha_fin", "Último día"], ["trabajadores", "Lista de trabajadores"], ["maquinas", "Lista de maquinaria"]];
+const MAQ_DEF = [
+  { id: "sopladora", nombre: "Sopladora", precio: 10, unidad: "día" },
+  { id: "trepar", nombre: "Máquina de trepar", precio: 15, unidad: "día" },
+  { id: "peine", nombre: "Peine", precio: 5, unidad: "día" },
+  { id: "coche", nombre: "Coche", precio: 20, unidad: "día" },
+  { id: "tractor", nombre: "Tractor", precio: 40, unidad: "día" }
+];
+const CAMP_DEF = { horasDia: 7.5, horaInicio: "08:00", precioHoraTrab: 10, precioHoraDueno: 10, iva: 0, maquinas: MAQ_DEF };
+
+/* ===================== Almacenamiento ===================== */
+const COLS = ["ajustes", "trabajadores", "campanas", "duenos", "partes", "plantillas", "documentos", "pagos"];
+const S = {}; COLS.forEach(c => S[c] = {});
+let MODE = "cargando", DB = null, ASSETS = null, DL = null, SAMPLE = null, SAMPLE_IMG = false;
+const LKEY = "campana-control-v1";
+const APP_VERSION = "2.3.0";
+// Fuera de Claude (app instalable) no existe window.claude: los datos viven en este dispositivo
+const STANDALONE = !window.claude?.use;
+let firstSnap = false, loadTimer = null, netWarn = false;
+
+// DANADO: los datos guardados no se podían leer. Antes de escribir nada se guarda el texto original aparte
+// (clave campana-control-v1-danado-<fecha>); si ni eso se puede, no se guarda nada para no perderlo.
+let DANADO = null;
+function saveLocal() {
+  if (DANADO && !DANADO.copia) { toast("No se guarda: los datos anteriores están dañados y no se pudo apartar una copia. Mira Ajustes."); return; }
+  try { localStorage.setItem(LKEY, JSON.stringify({ S })); } catch (e) { toast("No se pudo guardar: el almacenamiento del dispositivo está lleno o bloqueado. Haz una copia de seguridad."); }
+}
+function loadLocal() {
+  let raw = null;
+  try { raw = localStorage.getItem(LKEY); } catch (e) { return; }
+  if (raw == null) return;
+  try {
+    const j = JSON.parse(raw); if (!j || typeof j !== "object" || typeof j.S !== "object" || !j.S) throw new Error("formato");
+    COLS.forEach(c => S[c] = (j.S[c] && typeof j.S[c] === "object") ? j.S[c] : {});
+  } catch (e) {
+    const clave = LKEY + "-danado-" + new Date().toISOString().replace(/[:.]/g, "-");
+    let copia = false; try { localStorage.setItem(clave, raw); copia = true; } catch (e2) { }
+    DANADO = { clave, copia, bytes: raw.length };
+  }
+}
+// Otra pestaña o ventana de esta misma app ha guardado: se recargan los datos para no pisarlos al guardar aquí
+window.addEventListener("storage", e => {
+  if (MODE !== "local" || e.key !== LKEY || e.newValue == null) return;
+  loadLocal(); if (UI.draft && !UI.draft.dirty) UI.draft = null; scheduleRender();
+});
+
+const wq = {};
+function put(col, id, data) {
+  S[col][id] = data; scheduleRender();
+  if (MODE === "nube") {
+    const k = col + "/" + id;
+    wq[k] = (wq[k] || Promise.resolve()).then(() => DB.doc(k).set(data)).catch(e => errDb(e));
+    return wq[k];
+  }
+  saveLocal(); return Promise.resolve();
+}
+function del(col, id) {
+  delete S[col][id]; scheduleRender();
+  if (MODE === "nube") { const k = col + "/" + id; wq[k] = (wq[k] || Promise.resolve()).then(() => DB.doc(k).delete()).catch(e => errDb(e)); return wq[k]; }
+  saveLocal(); return Promise.resolve();
+}
+function errDb(e) {
+  const c = e?.code;
+  if (c === "quota_exceeded") toast("La base de datos está llena. Borra documentos antiguos.");
+  else if (c === "invalid_argument") toast("No tienes permiso para guardar cambios aquí.");
+  else toast("No se pudo guardar. Revisa la conexión e inténtalo de nuevo.");
+}
+const subs = {}; let subCamp = null;
+function snapInto(col) {
+  return snap => {
+    const o = {}; snap.docs.forEach(d => o[d.id] = d.data()); S[col] = o;
+    if (!snap.metadata.fromCache) { firstSnap = true; clearTimeout(loadTimer); if (netWarn) { netWarn = false; } }
+    updSync(); ensureCampSubs(); scheduleRender();
+  };
+}
+function subErr(e) { if (e?.code !== "revoked") toast("Se perdió la conexión con los datos. Recarga la app."); }
+function subscribeGlobal() {
+  ["ajustes", "trabajadores", "campanas", "plantillas"].forEach(c => { subs[c] = DB.collection(c).onSnapshot(snapInto(c), subErr); });
+  loadTimer = setTimeout(() => { if (!firstSnap) { netWarn = true; updSync(); scheduleRender(); } }, 10000);
+}
+function ensureCampSubs() {
+  if (MODE !== "nube") return;
+  const c = camp(); const id = c?.id || null;
+  if (id === subCamp) return;
+  ["duenos", "partes", "documentos", "pagos"].forEach(col => { subs[col]?.(); S[col] = {}; });
+  subCamp = id;
+  if (!id) return;
+  ["duenos", "partes", "documentos", "pagos"].forEach(col => { subs[col] = DB.collection(col).where("campanaId", "==", id).onSnapshot(snapInto(col), subErr); });
+}
+
+/* ===================== Modelo ===================== */
+const aj = () => S.ajustes.general || {};
+const empresa = () => aj().empresa || {};
+function camp() {
+  const a = aj(); let id = a.campanaActiva;
+  if (!S.campanas[id]) { const l = Object.entries(S.campanas).sort((x, y) => (+y[1].anio || 0) - (+x[1].anio || 0)); id = l[0]?.[0]; }
+  if (!id) return null;
+  const c = S.campanas[id];
+  return { ...CAMP_DEF, ...c, maquinas: c.maquinas || CAMP_DEF.maquinas, id };
+}
+const lista = col => Object.entries(S[col]).map(([id, v]) => ({ id, ...v }));
+const duenosCamp = () => { const c = camp(); return lista("duenos").filter(d => d.campanaId === c?.id).sort(byName); };
+const partesCamp = () => { const c = camp(); return lista("partes").filter(p => p.campanaId === c?.id); };
+const trabajadoresAct = () => lista("trabajadores").filter(t => t.activo !== false).sort(byName);
+const nomT = id => S.trabajadores[id]?.nombre || "(trabajador borrado)";
+const nomD = id => S.duenos[id]?.nombre || "(dueño borrado)";
+const plantillas = () => [...Object.entries(PLANTILLAS_GEN).map(([id, p]) => ({ id, ...p })), ...lista("plantillas").sort(byName)];
+const plantilla = id => PLANTILLAS_GEN[id] ? { id, ...PLANTILLAS_GEN[id] } : (S.plantillas[id] ? { id, ...S.plantillas[id] } : null);
+function horasFila(f, c) { if (!f || f.tipo === "ausente") return 0; if (!f.tipo || f.tipo === "normal" || f.horas == null || f.horas === "") return +c.horasDia; return +f.horas || 0; }
+const precioT = tid => { const c = camp(); const p = num(S.trabajadores[tid]?.precioHora); return p != null ? p : +c.precioHoraTrab; };
+const precioD = did => { const c = camp(); const p = num(S.duenos[did]?.precioHora); return p != null ? p : +c.precioHoraDueno; };
+const maqInfo = mid => (camp()?.maquinas || []).find(m => m.id === mid);
+function enRango(f, fl) { return (!fl.desde || f >= fl.desde) && (!fl.hasta || f <= fl.hasta); }
+function registros(fl = {}) {
+  const c = camp(); if (!c) return [];
+  const rows = [];
+  for (const p of partesCamp()) {
+    if (!enRango(p.fecha, fl)) continue;
+    if (fl.duenos?.length && !fl.duenos.includes(p.duenoId)) continue;
+    for (const [tid, f] of Object.entries(p.filas || {})) {
+      if (fl.trabs?.length && !fl.trabs.includes(tid)) continue;
+      rows.push({ parteId: p.id, fecha: p.fecha, duenoId: p.duenoId, trabId: tid, tipo: f.tipo || "normal", horas: horasFila(f, c), nota: f.nota || "" });
+    }
+  }
+  return rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || nomT(a.trabId).localeCompare(nomT(b.trabId), "es"));
+}
+function resumenTrab(tid, fl = {}) {
+  const rs = registros({ ...fl, trabs: [tid] });
+  const trab = rs.filter(r => r.tipo !== "ausente");
+  const dias = new Set(trab.map(r => r.fecha)).size;
+  const horas = trab.reduce((s, r) => s + r.horas, 0);
+  const faltas = rs.filter(r => r.tipo === "ausente").length;
+  const precio = precioT(tid); const importe = horas * precio;
+  const entregas = pagosDe("trabajador", tid, fl); const entregado = entregas.reduce((s, p) => s + (+p.importe || 0), 0);
+  return { rs, dias, horas, faltas, precio, importe, entregas, entregado, pendiente: importe - entregado };
+}
+// Pagos: entregas de dinero a trabajadores (tipo "trabajador") y cobros a dueños (tipo "dueno"). Cuentan dentro de las fechas elegidas.
+function pagosDe(tipo, pid, fl = {}) {
+  const c = camp();
+  return lista("pagos").filter(p => p.campanaId === c?.id && p.tipo === tipo && p.personaId === pid && enRango(p.fecha, fl))
+    .sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+}
+const FORMAS = [["efectivo", "Efectivo"], ["transferencia", "Transferencia"], ["bizum", "Bizum"], ["otro", "Otro"]];
+const formaTxt = f => (FORMAS.find(x => x[0] === f) || [0, ""])[1];
+// Quincenas (1–15 y 16–fin de mes) entre dos fechas
+function quincenasEntre(desde, hasta) {
+  const out = []; if (!desde || !hasta) return out;
+  let [y, m] = desde.split("-").map(Number); const end = hasta.slice(0, 7); let g = 0;
+  while (g++ < 40) {
+    const ym = y + "-" + pad2(m); if (ym > end) break;
+    const last = new Date(y, m, 0).getDate(); const mes = new Date(y, m - 1, 1).toLocaleDateString("es-ES", { month: "short" }).replace(".", "");
+    for (const [a, b, n] of [[1, 15, "1ª"], [16, last, "2ª"]]) {
+      const d1 = ym + "-" + pad2(a), d2 = ym + "-" + pad2(b); if (d2 < desde || d1 > hasta) continue;
+      out.push({ k: ym + (a === 1 ? "-q1" : "-q2"), label: n + " quincena de " + mes, corto: a + "–" + b + " " + mes, desde: d1, hasta: d2 });
+    }
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+function rangoCampana() { const c = camp(); const f = partesCamp().map(p => p.fecha).sort(); return { desde: f[0] || c?.inicio || hoy(), hasta: f[f.length - 1] || hoy() }; }
+const quinDe = f => (+f.slice(8) <= 15 ? f.slice(0, 7) + "-q1" : f.slice(0, 7) + "-q2");
+// Horas por quincena y dueño a partir de registros
+function porQuincena(rs, precioFn) {
+  const qs = {}; const out = [];
+  rs.forEach(r => { if (r.tipo === "ausente") return; const k = quinDe(r.fecha) + "|" + r.duenoId; const o = qs[k] ??= { q: quinDe(r.fecha), duenoId: r.duenoId, dias: new Set(), horas: 0, importe: 0 }; o.dias.add(r.fecha); o.horas += r.horas; o.importe += r.horas * precioFn(r); });
+  const lab = {}; const all = rs.map(r => r.fecha).sort(); quincenasEntre(all[0], all[all.length - 1]).forEach(q => lab[q.k] = q);
+  Object.values(qs).sort((a, b) => a.q.localeCompare(b.q) || nomD(a.duenoId).localeCompare(nomD(b.duenoId), "es")).forEach(o => out.push({ ...o, dias: o.dias.size, label: lab[o.q]?.label || o.q, corto: lab[o.q]?.corto || o.q }));
+  return out;
+}
+// Color fijo por dueño (orden alfabético dentro de la campaña)
+const PAL_RGB = [[70, 86, 28], [192, 138, 18], [45, 111, 143], [168, 73, 47], [107, 79, 138], [47, 127, 106]];
+const idxDueno = did => { const i = duenosCamp().findIndex(d => d.id === did); return (i < 0 ? 0 : i) % 6; };
+const colDueno = did => `var(--c${idxDueno(did) + 1})`;
+// Gráfica de barras apiladas: horas por día, de colores por dueño
+function grafica(rs, desde, hasta, titulo) {
+  const dias = rangoFechas(desde, hasta); if (!dias.length) return "";
+  const by = {}; rs.forEach(r => { if (r.tipo === "ausente") return; const o = by[r.fecha] ??= {}; o[r.duenoId] = (o[r.duenoId] || 0) + r.horas; });
+  const tot = d => Object.values(by[d] || {}).reduce((a, b) => a + b, 0);
+  const total = dias.reduce((s, d) => s + tot(d), 0); if (!total) return `<div class="empty"><span>No hay horas en estas fechas.</span></div>`;
+  const mx = Math.max(...dias.map(tot)); const step = mx <= 10 ? 2 : mx <= 25 ? 5 : mx <= 60 ? 10 : mx <= 150 ? 25 : 50; const top = Math.ceil(mx / step) * step || step;
+  const bw = dias.length > 40 ? 10 : 16, gap = dias.length > 40 ? 4 : 6, L = 40, B = 28, T = 10, Hh = 170;
+  const Wd = Math.max(300, L + dias.length * (bw + gap) + 10), Ht = T + Hh + B;
+  const y = v => T + Hh - v / top * Hh;
+  let g = ""; for (let v = 0; v <= top + 1e-9; v += step) g += `<line class="gl" x1="${L}" x2="${Wd - 6}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fN(v, 1)}</text>`;
+  const order = duenosCamp().map(d => d.id); let bars = "", labs = "", seps = "";
+  const every = dias.length > 40 ? 5 : dias.length > 20 ? 2 : 1;
+  dias.forEach((d, i) => {
+    const x = L + 6 + i * (bw + gap); let acc = 0; const o = by[d] || {};
+    [...order, ...Object.keys(o).filter(k => !order.includes(k))].forEach(did => { const h = o[did]; if (!h) return; const y1 = y(acc + h), y0 = y(acc); bars += `<rect x="${x}" y="${y1}" width="${bw}" height="${Math.max(0, y0 - y1)}" rx="2" fill="${colDueno(did)}"><title>${esc(fFechaL(d))} · ${esc(nomD(did))}: ${fN(h)} h</title></rect>`; acc += h; });
+    const dn = +d.slice(8); if (dn === 1 || dn === 16) seps += `<line class="qs" x1="${x - gap / 2}" x2="${x - gap / 2}" y1="${T}" y2="${T + Hh}"/>`;
+    if (i % every === 0 || dn === 1 || dn === 16) labs += `<text x="${x + bw / 2}" y="${T + Hh + 16}" text-anchor="middle">${dn}</text>`;
+  });
+  const usados = order.filter(did => dias.some(d => by[d]?.[did]));
+  return `<div class="stack" style="gap:6px">${titulo ? `<div class="row between"><h3>${esc(titulo)}</h3><span class="muted small num">${fH(total)}</span></div>` : ""}
+   <div class="chartw"><svg width="${Wd}" height="${Ht}" viewBox="0 0 ${Wd} ${Ht}" role="img" aria-label="Horas por día del ${esc(fFechaL(desde))} al ${esc(fFechaL(hasta))}">${g}${seps}${bars}${labs}</svg>
+   <div class="legend">${usados.map(did => `<span><i style="background:${colDueno(did)}"></i>${esc(nomD(did))}</span>`).join("")}<span>· La línea discontinua separa las quincenas</span></div></div></div>`;
+}
+// Selector de periodo: toda la campaña, cada quincena o fechas a mano
+function selPeriodo(key, per) {
+  const rc = rangoCampana(); const qs = quincenasEntre(rc.desde, rc.hasta);
+  return `<div class="stack" style="gap:8px"><div class="chips" role="group" aria-label="Periodo">
+    <button class="chip" data-act="perSet" data-key="${key}" data-k="todo" aria-pressed="${per.k === "todo"}">Toda la campaña</button>
+    ${qs.map(q => `<button class="chip" data-act="perSet" data-key="${key}" data-k="${q.k}" data-d="${q.desde}" data-h="${q.hasta}" aria-pressed="${per.k === q.k}">${esc(q.corto)}</button>`).join("")}
+    <button class="chip" data-act="perSet" data-key="${key}" data-k="custom" aria-pressed="${per.k === "custom"}">Elegir fechas</button></div>
+    ${per.k === "custom" ? `<div class="grid2"><label class="f"><span>Desde</span><input type="date" data-per="${key}" data-campo="desde" value="${per.desde || rc.desde}"></label><label class="f"><span>Hasta</span><input type="date" data-per="${key}" data-campo="hasta" value="${per.hasta || rc.hasta}"></label></div>` : ""}</div>`;
+}
+function perFl(per) { if (!per || per.k === "todo") return {}; return { desde: per.desde, hasta: per.hasta }; }
+function perTxt(per) { return per && per.k !== "todo" ? `del ${fFechaL(per.desde)} al ${fFechaL(per.hasta)}` : "toda la campaña"; }
+function cuentaDueno(did, fl = {}) {
+  const c = camp(); const d = S.duenos[did] || {};
+  const rs = registros({ ...fl, duenos: [did], trabs: [] });
+  const byT = {};
+  rs.forEach(r => { if (r.tipo === "ausente") return; const t = byT[r.trabId] ??= { dias: new Set(), horas: 0 }; t.dias.add(r.fecha); t.horas += r.horas; });
+  const precio = precioD(did);
+  const mano = Object.entries(byT).map(([tid, v]) => ({ tid, nombre: nomT(tid), dias: v.dias.size, horas: v.horas, precio, importe: v.horas * precio })).sort(byName);
+  const ps = partesCamp().filter(p => p.duenoId === did && enRango(p.fecha, fl)).sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const mq = {};
+  ps.forEach(p => Object.entries(p.maquinas || {}).forEach(([m, q]) => { if (+q > 0) mq[m] = (mq[m] || 0) + +q; }));
+  const maquinas = Object.entries(mq).map(([mid, ud]) => { const mi = maqInfo(mid); const pr = +mi?.precio || 0; return { mid, nombre: mi?.nombre || mid, unidad: mi?.unidad || "día", ud, precio: pr, importe: ud * pr }; });
+  const dias = ps.map(p => {
+    const filas = Object.values(p.filas || {}); const pres = filas.filter(f => f.tipo !== "ausente");
+    return { fecha: p.fecha, n: pres.length, aus: filas.length - pres.length, horas: pres.reduce((s, f) => s + horasFila(f, c), 0), kilos: num(p.kilos), maq: Object.entries(p.maquinas || {}).filter(([, q]) => +q > 0).map(([m, q]) => q + " " + (maqInfo(m)?.nombre || m)).join(", ") };
+  });
+  const kilosDia = dias.reduce((s, x) => s + (x.kilos || 0), 0);
+  const kilos = kilosDia || num(d.kilosTotal) || 0;
+  const tMano = mano.reduce((s, x) => s + x.importe, 0), tMaq = maquinas.reduce((s, x) => s + x.importe, 0);
+  const base = tMano + tMaq; const iva = base * (+c.iva || 0) / 100; const total = base + iva;
+  const pagos = pagosDe("dueno", did, fl); const pagado = pagos.reduce((s, p) => s + (+p.importe || 0), 0);
+  return { d: { id: did, ...d }, mano, maquinas, dias, kilos, kilosDia, horas: mano.reduce((s, x) => s + x.horas, 0), tMano, tMaq, base, iva, total, precio, pagos, pagado, pendiente: total - pagado, rs };
+}
+
+/* ===================== Render ===================== */
+const ROUTES = [["inicio", "Inicio"], ["partes", "Parte"], ["duenos", "Dueños"], ["trabajadores", "Trabajadores"], ["informes", "Informes"], ["documentos", "Docs"]];
+const UI = { fecha: hoy(), duenoSel: null, dueVer: null, trabVer: null, draft: null, inf: null, per: { trab: { k: "todo" }, dueno: { k: "todo" } } };
+let renderPending = false, rq = false;
+function route() { const h = (location.hash || "").slice(1); return ["inicio", "partes", "duenos", "trabajadores", "informes", "documentos", "ajustes"].includes(h) ? h : "inicio"; }
+function scheduleRender() { if (rq) return; rq = true; requestAnimationFrame(() => { rq = false; if (editing()) renderPending = true; else render(); }); }
+function editing() { const a = document.activeElement; return a && $("#view").contains(a) && /INPUT|TEXTAREA/.test(a.tagName) && !/checkbox|date|time|file/.test(a.type); }
+document.addEventListener("focusout", () => { if (renderPending) setTimeout(() => { if (!editing()) { renderPending = false; render(); } }, 60); });
+
+function renderNav() {
+  const r = route();
+  const links = ROUTES.map(([k, t]) => `<a href="#${k}" ${r === k ? 'aria-current="page"' : ""}>${ic(k)}<span>${t}</span></a>`).join("");
+  $("#tabs").innerHTML = links;
+  $("#side").innerHTML = ROUTES.map(([k, t]) => `<a href="#${k}" ${r === k ? 'aria-current="page"' : ""}>${ic(k)}<span>${k === "partes" ? "Parte diario" : k === "documentos" ? "Documentos" : t}</span></a>`).join("") + `<a href="#ajustes" ${r === "ajustes" ? 'aria-current="page"' : ""}>${ic("ajustes")}<span>Ajustes</span></a>`;
+  const c = camp(); const cs = $("#campsel");
+  const camps = lista("campanas").sort((a, b) => (+b.anio || 0) - (+a.anio || 0));
+  cs.innerHTML = camps.length ? camps.map(x => `<option value="${esc(x.id)}" ${x.id === c?.id ? "selected" : ""}>${esc(x.nombre)}</option>`).join("") : `<option>Sin campaña</option>`;
+  cs.disabled = !camps.length;
+}
+function updSync() {
+  const el = $("#sync");
+  el.textContent = MODE === "local" ? "Solo este dispositivo" : MODE === "cargando" ? "Cargando…" : netWarn ? "Sin conexión" : "Sincronizado";
+}
+function render() {
+  renderPending = false;
+  renderNav(); updSync();
+  const r = route(); const v = $("#view");
+  if (MODE === "cargando") { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b><span>Conectando con tus datos.</span></div>`; return; }
+  const c = camp();
+  if (!c && r !== "ajustes" && r !== "trabajadores" && r !== "documentos") { v.innerHTML = vSinCampana(); return; }
+  const fn = { inicio: vInicio, partes: vPartes, duenos: vDuenos, trabajadores: vTrabajadores, informes: vInformes, documentos: vDocumentos, ajustes: vAjustes }[r];
+  const avisoDanado = DANADO ? `<div class="banner" style="margin-bottom:12px">Los datos guardados en este dispositivo estaban dañados y no se pudieron leer. ${DANADO.copia ? "Se ha apartado una copia del contenido original." : "No se pudo apartar una copia, así que no se guardará nada hasta resolverlo."} <button class="btn sm" data-act="descargarDanado">Descargar el contenido dañado</button> Guárdalo y, si tienes una copia de seguridad, impórtala en Ajustes.</div>` : "";
+  v.innerHTML = avisoDanado + (netWarn ? `<div class="banner" style="margin-bottom:12px">Todavía no se pueden cargar los datos. Puede que lo que ves esté desactualizado.</div>` : "") + fn();
+  after[r]?.();
+}
+const after = {};
+function vSinCampana() {
+  return `<div class="stack"><h1>Bienvenido</h1><div class="empty"><b>Crea tu primera campaña</b><span>Por ejemplo «Campaña 2026». Después añade trabajadores y dueños.</span><button class="btn pri" data-act="nuevaCamp">${ic("mas")}Crear campaña</button></div></div>`;
+}
+
+/* ---------- Inicio ---------- */
+function vInicio() {
+  const c = camp(); const ds = duenosCamp(); const rs = registros({});
+  const trab = rs.filter(r => r.tipo !== "ausente");
+  const horas = trab.reduce((s, r) => s + r.horas, 0);
+  const ganado = trab.reduce((s, r) => s + r.horas * precioT(r.trabId), 0);
+  const entregado = lista("pagos").filter(p => p.campanaId === c.id && p.tipo === "trabajador").reduce((s, p) => s + (+p.importe || 0), 0);
+  const ks = ds.map(d => cuentaDueno(d.id)); const porCobrar = ks.reduce((s, k) => s + k.pendiente, 0);
+  const ps = partesCamp(); const kilos = ps.reduce((s, p) => s + (num(p.kilos) || 0), 0);
+  const diasN = new Set(ps.map(p => p.fecha)).size;
+  const hoyPs = ps.filter(p => p.fecha === hoy());
+  const recientes = ps.sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 6);
+  const rc = rangoCampana();
+  return `<div class="stack">
+  <div class="head"><div><div class="lbl">Campaña activa</div><h1>${esc(c.nombre)}</h1><div class="muted small">Jornada de ${fH(c.horasDia)} · entrada ${esc(c.horaInicio)} · ${fE(c.precioHoraTrab)}/h trabajador · ${fE(c.precioHoraDueno)}/h dueño</div></div>
+  <a class="btn pri" href="#partes" data-act="parteHoy">${ic("partes")}Parte de hoy</a></div>
+  ${avisoInstalar()}
+  <div class="kpis"><div class="kpi"><span class="lbl">Días con parte</span><b>${diasN}</b></div><div class="kpi"><span class="lbl">Horas totales</span><b>${fN(horas)}</b></div><div class="kpi"><span class="lbl">Ganado por trabajadores</span><b>${fE(ganado)}</b></div><div class="kpi"><span class="lbl">Falta pagarles</span><b>${fE(ganado - entregado)}</b></div><div class="kpi"><span class="lbl">Falta cobrar a dueños</span><b>${fE(porCobrar)}</b></div><div class="kpi"><span class="lbl">Kilos anotados</span><b>${fN(kilos, 0)}</b></div></div>
+  ${hoyPs.length ? `<div class="banner info">Hoy hay ${hoyPs.length} parte${hoyPs.length > 1 ? "s" : ""}: ${hoyPs.map(p => esc(nomD(p.duenoId))).join(", ")}.</div>` : ""}
+  ${rs.length ? grafica(rs, rc.desde, rc.hasta, "Horas por día de la campaña") : ""}
+  <section class="stack"><div class="row between"><h2>Dueños de la campaña</h2><button class="btn sm" data-act="nuevoDueno">${ic("mas")}Añadir dueño</button></div>
+  ${ds.length ? `<div class="tw"><table><thead><tr><th>Dueño</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Kilos</th><th class="r">Cuenta</th><th class="r">Pagado</th><th class="r">Pendiente</th></tr></thead><tbody>${ks.map(k => `<tr><td><a href="#duenos" data-act="verDueno" data-id="${k.d.id}" style="color:inherit;font-weight:700"><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colDueno(k.d.id)};margin-right:6px"></i>${esc(k.d.nombre)}</a><div class="muted small">${esc(k.d.finca || "")}</div></td><td class="r">${k.dias.length}</td><td class="r">${fN(k.horas)}</td><td class="r">${k.kilos ? fN(k.kilos, 0) : "—"}</td><td class="r">${fE(k.total)}</td><td class="r">${fE(k.pagado)}</td><td class="r"><b>${fE(k.pendiente)}</b></td></tr>`).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>Aún no hay dueños</b><span>Añade a quién le recogéis la aceituna esta campaña.</span><button class="btn pri" data-act="nuevoDueno">${ic("mas")}Añadir dueño</button></div>`}
+  </section>
+  <section class="stack"><h2>Últimos partes</h2>
+  ${recientes.length ? `<div class="list">${recientes.map(p => { const f = Object.values(p.filas || {}); const pr = f.filter(x => x.tipo !== "ausente"); const aus = f.length - pr.length; return `<button class="li" data-act="abrirParte" data-d="${p.duenoId}" data-f="${p.fecha}"><div class="grow"><div class="t">${esc(nomD(p.duenoId))}</div><div class="muted small">${fFecha(p.fecha)} · ${pr.length} trabajadores${aus ? ` · ${aus} falta${aus > 1 ? "s" : ""}` : ""}</div></div><span class="pill p-ok">${fH(pr.reduce((s, x) => s + horasFila(x, c), 0))}</span></button>`; }).join("")}</div>`
+      : `<div class="empty"><span>Cuando hagas el primer parte diario aparecerá aquí.</span></div>`}
+  </section></div>`;
+}
+
+/* ---------- Parte diario ---------- */
+const parteId = (did, f) => did + "_" + f;
+function cargarDraft(force) {
+  const c = camp(); const did = UI.duenoSel; if (!did || !c) { UI.draft = null; return; }
+  const key = parteId(did, UI.fecha);
+  if (!force && UI.draft && UI.draft.key === key && UI.draft.dirty) return;
+  const ex = S.partes[key];
+  if (ex) UI.draft = { key, existe: true, dirty: false, data: clone(ex) };
+  else {
+    const d = S.duenos[did] || {}; const filas = {};
+    (d.trabajadores || []).filter(t => S.trabajadores[t]).forEach(t => filas[t] = { tipo: "normal", horas: null, nota: "" });
+    UI.draft = { key, existe: false, dirty: false, data: { campanaId: c.id, duenoId: did, fecha: UI.fecha, filas, maquinas: {}, kilos: null, notas: "" } };
+  }
+}
+function vPartes() {
+  const c = camp(); const ds = duenosCamp();
+  if (!ds.length) return `<div class="stack"><h1>Parte diario</h1><div class="empty"><b>Primero añade un dueño</b><span>El parte se hace por dueño y día.</span><button class="btn pri" data-act="nuevoDueno">${ic("mas")}Añadir dueño</button></div></div>`;
+  if (!UI.duenoSel || !S.duenos[UI.duenoSel] || S.duenos[UI.duenoSel].campanaId !== c.id) {
+    const hoyP = partesCamp().find(p => p.fecha === UI.fecha); UI.duenoSel = hoyP?.duenoId || ds[0].id; UI.draft = null;
+  }
+  cargarDraft(false);
+  const D = UI.draft.data; const filas = Object.entries(D.filas || {}).sort((a, b) => nomT(a[0]).localeCompare(nomT(b[0]), "es"));
+  const libres = trabajadoresAct().filter(t => !D.filas[t.id]);
+  const pres = filas.filter(([, f]) => f.tipo !== "ausente");
+  const totalH = pres.reduce((s, [, f]) => s + horasFila(f, c), 0);
+  return `<div class="stack">
+  <div class="head"><div><div class="lbl">Parte diario</div><h1>${esc(fFecha(UI.fecha))}</h1></div>
+   <div class="row"><button class="btn sm" data-act="diaMenos" aria-label="Día anterior">‹</button><input type="date" id="pfecha" value="${UI.fecha}" style="width:auto"><button class="btn sm" data-act="diaMas" aria-label="Día siguiente">›</button></div></div>
+  <div class="chips" role="group" aria-label="Dueño">${ds.map(d => `<button class="chip" data-act="selDueno" data-id="${d.id}" aria-pressed="${d.id === UI.duenoSel}">${esc(d.nombre)}${S.partes[parteId(d.id, UI.fecha)] ? " ✓" : ""}</button>`).join("")}</div>
+  ${!UI.draft.existe ? `<div class="banner info">Parte nuevo para ${esc(nomD(UI.duenoSel))}. Revisa los trabajadores y pulsa «Guardar parte».</div>` : ""}
+  <section class="stack"><h2>Trabajadores <span class="muted small num">${pres.length} presentes · ${fH(totalH)}</span></h2>
+  ${filas.length ? `<div class="list">${filas.map(([tid, f]) => {
+    const t = f.tipo || "normal"; const h = horasFila(f, c);
+    return `<div class="wrow ${t === "ausente" ? "aus" : ""}">
+      <div class="nm">${esc(nomT(tid))} <span class="pill p-${t}">${tipoTxt(t)}</span></div>
+      <button class="btn ghost sm" data-act="quitarT" data-id="${tid}" aria-label="Quitar a ${esc(nomT(tid))} de este parte">${ic("x")}</button>
+      <div class="ctl">
+        <select data-act="tipoT" data-id="${tid}" aria-label="Tipo de día">${TIPOS.map(([k, n]) => `<option value="${k}" ${k === t ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <input class="num" inputmode="decimal" data-act="horasT" data-id="${tid}" value="${t === "ausente" ? "0" : fN(h)}" ${t === "normal" || t === "ausente" ? "disabled" : ""} aria-label="Horas">
+        <input class="nota" data-act="notaT" data-id="${tid}" value="${esc(f.nota || "")}" placeholder="Nota (opcional)" aria-label="Nota">
+      </div></div>`;
+  }).join("")}</div>` : `<div class="empty"><span>No hay trabajadores en este parte. Añádelos abajo o asígnalos al dueño.</span></div>`}
+  ${libres.length ? `<div class="row"><select id="addT" style="flex:1 1 200px"><option value="">Añadir trabajador al parte…</option>${libres.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}</select><button class="btn" data-act="addT">${ic("mas")}Añadir</button><button class="btn" data-act="addTodos">Añadir todos</button></div>` : ""}
+  </section>
+  <section class="stack"><h2>Maquinaria usada</h2>
+   <div class="list">${c.maquinas.map(m => { const q = +(D.maquinas?.[m.id] || 0); return `<div class="mrow"><div class="grow"><b>${esc(m.nombre)}</b><div class="muted small">${fE(m.precio)} por ${esc(m.unidad || "día")}</div></div><div class="step"><button data-act="maqMenos" data-id="${m.id}" aria-label="Quitar una">−</button><input class="num" inputmode="numeric" data-act="maqQ" data-id="${m.id}" value="${q}" aria-label="Cantidad de ${esc(m.nombre)}"><button data-act="maqMas" data-id="${m.id}" aria-label="Añadir una">+</button></div></div>`; }).join("")}</div>
+  </section>
+  <section class="grid2"><label class="f"><span>Kilos recogidos este día (si se saben)</span><input class="num" inputmode="decimal" id="pkilos" value="${D.kilos ?? ""}" placeholder="Ej. 2.350"></label>
+   <label class="f"><span>Notas del día</span><input id="pnotas" value="${esc(D.notas || "")}" placeholder="Lluvia, cambio de finca…"></label></section>
+  <div class="savebar">${UI.draft.dirty ? `<span class="dirty">Cambios sin guardar</span>` : UI.draft.existe ? `<span class="muted small">Guardado</span>` : `<span class="muted small">Sin guardar</span>`}
+   <span style="flex:1"></span>
+   <button class="btn sm" data-act="copiarAnterior" title="Copiar trabajadores y máquinas del último parte">${ic("copy")}Copiar último</button>
+   ${UI.draft.existe ? `<button class="btn sm danger" data-act="borrarParte">Borrar</button>` : ""}
+   <button class="btn pri" data-act="guardarParte">Guardar parte</button></div>
+  </div>`;
+}
+after.partes = () => {
+  const f = $("#pfecha"); if (f) f.onchange = async () => { if (f.value) { const v = f.value; if (UI.draft?.dirty) await guardarParte(true); UI.fecha = v; UI.draft = null; render(); } };
+  const k = $("#pkilos"); if (k) k.oninput = () => { UI.draft.data.kilos = num(k.value); markDirty(); };
+  const n = $("#pnotas"); if (n) n.oninput = () => { UI.draft.data.notas = n.value; markDirty(); };
+};
+function markDirty() { if (!UI.draft.dirty) { UI.draft.dirty = true; const sb = $(".savebar span"); if (sb) { sb.className = "dirty"; sb.textContent = "Cambios sin guardar"; } } }
+async function guardarParte(silent) {
+  const d = UI.draft; if (!d) return;
+  d.data.campanaId = camp().id; d.data.actualizado = Date.now();
+  await put("partes", d.key, clone(d.data)); d.existe = true; d.dirty = false;
+  if (!silent) toast("Parte guardado"); render();
+}
+
+/* ---------- Dueños ---------- */
+function vDuenos() {
+  if (UI.dueVer && S.duenos[UI.dueVer]) return vDuenoDet(UI.dueVer);
+  const ds = duenosCamp();
+  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(camp().nombre)}</div><h1>Dueños</h1></div><button class="btn pri" data-act="nuevoDueno">${ic("mas")}Añadir dueño</button></div>
+  ${ds.length ? `<div class="list">${ds.map(d => { const k = cuentaDueno(d.id); return `<button class="li" data-act="verDueno" data-id="${d.id}"><div class="grow"><div class="t">${esc(d.nombre)}</div><div class="muted small">${esc([d.finca, d.municipio].filter(Boolean).join(" · ") || "Sin finca anotada")} · ${(d.trabajadores || []).length} trabajadores asignados</div></div><div class="num" style="text-align:right"><b>${fH(k.horas)}</b><div class="muted small">${k.dias.length} días</div></div></button>`; }).join("")}</div>`
+      : `<div class="empty"><b>Sin dueños en esta campaña</b><span>Cada dueño tiene sus partes, documentos y su cuenta.</span><button class="btn pri" data-act="nuevoDueno">${ic("mas")}Añadir dueño</button></div>`}</div>`;
+}
+function vDuenoDet(did) {
+  const d = { id: did, ...S.duenos[did] }; const per = UI.per.dueno; const fl = perFl(per); const k = cuentaDueno(did, fl);
+  const docs = lista("documentos").filter(x => x.duenoId === did).sort((a, b) => (b.creado || 0) - (a.creado || 0));
+  const rc = rangoCampana(); const gd = fl.desde || rc.desde, gh = fl.hasta || rc.hasta;
+  return `<div class="stack">
+  <button class="btn ghost sm" data-act="volverDuenos" style="align-self:flex-start">${ic("back")}Dueños</button>
+  <div class="head"><div><h1>${esc(d.nombre)}</h1><div class="muted small">${esc([d.nif && "NIF " + d.nif, d.finca, d.municipio, d.poligono && "Pol. " + d.poligono, d.parcela && "Parc. " + d.parcela].filter(Boolean).join(" · "))}</div></div>
+   <div class="row"><button class="btn" data-act="editDueno" data-id="${did}">Editar</button><button class="btn pri" data-act="parteDueno" data-id="${did}">${ic("partes")}Parte de hoy</button></div></div>
+  ${selPeriodo("dueno", per)}
+  <div class="kpis"><div class="kpi"><span class="lbl">Días</span><b>${k.dias.length}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(k.horas)}</b></div><div class="kpi"><span class="lbl">Mano de obra</span><b>${fE(k.tMano)}</b></div><div class="kpi"><span class="lbl">Maquinaria</span><b>${fE(k.tMaq)}</b></div><div class="kpi"><span class="lbl">Kilos</span><b>${k.kilos ? fN(k.kilos, 0) : "—"}</b></div></div>
+  <div class="saldo"><div><span class="lbl">Total cuenta</span><b>${fE(k.total)}</b></div><div><span class="lbl">Ha pagado</span><b>${fE(k.pagado)}</b></div><div class="resto ${k.pendiente < -0.004 ? "neg" : ""}"><span class="lbl">${k.pendiente < -0.004 ? "Ha pagado de más" : "Le falta pagar"}</span><b>${fE(Math.abs(k.pendiente))}</b></div></div>
+  <div class="row"><button class="btn" data-act="pdfDueno" data-id="${did}">${ic("pdf")}Cuenta en PDF</button><button class="btn" data-act="xlsDueno" data-id="${did}">${ic("xls")}Cuenta en Excel</button></div>
+  ${k.dias.length ? grafica(k.rs, gd, gh, "Horas por día · " + perTxt(per)) : ""}
+  <section class="stack"><div class="row between"><h2>Pagos del dueño</h2><button class="btn sm pri" data-act="nuevoPago" data-tipo="dueno" data-id="${did}">${ic("euro")}Anotar pago</button></div>
+   ${listaPagos(k.pagos, "Todavía no ha pagado nada" + (per.k === "todo" ? "." : " en estas fechas."))}</section>
+  ${k.mano.length ? `<section class="stack"><h2>Trabajadores en su finca</h2><div class="tw"><table><thead><tr><th>Trabajador</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Importe</th></tr></thead><tbody>${k.mano.map(m => `<tr><td>${esc(m.nombre)}</td><td class="r">${m.dias}</td><td class="r">${fN(m.horas)}</td><td class="r">${fE(m.importe)}</td></tr>`).join("")}</tbody></table></div></section>` : ""}
+  <section class="stack"><div class="row between"><h2>Trabajadores asignados</h2><button class="btn sm" data-act="asignar" data-id="${did}">Cambiar</button></div>
+   <div class="hint">Salen por defecto en cada parte nuevo de este dueño.</div>
+   <div class="chips">${(d.trabajadores || []).filter(t => S.trabajadores[t]).map(t => `<span class="chip" aria-pressed="false">${esc(nomT(t))}</span>`).join("") || `<span class="muted">Ninguno asignado.</span>`}</div></section>
+  <section class="stack"><div class="row between"><h2>Documentos</h2><button class="btn sm" data-act="nuevoDoc" data-id="${did}">${ic("mas")}Nuevo documento</button></div>
+   ${docs.length ? `<div class="list">${docs.map(x => `<button class="li" data-act="abrirDoc" data-id="${x.id}"><div class="grow"><div class="t">${esc(x.nombre || plantilla(x.plantillaId)?.nombre || "Documento")}</div><div class="muted small">${fFechaL(x.fecha)}${(x.escaneos || []).length ? " · " + x.escaneos.length + " fotos" : ""}</div></div></button>`).join("")}</div>` : `<div class="empty"><span>Crea la hoja de riesgos laborales u otros papeles de la asesoría, rellenos con los datos de este dueño.</span></div>`}
+  </section>
+  <section class="stack"><h2>Días trabajados</h2>
+   ${k.dias.length ? `<div class="tw"><table><thead><tr><th>Fecha</th><th class="r">Trab.</th><th class="r">Faltas</th><th class="r">Horas</th><th>Maquinaria</th><th class="r">Kilos</th></tr></thead><tbody>${k.dias.map(x => `<tr style="cursor:pointer" data-act="abrirParte" data-d="${did}" data-f="${x.fecha}"><td>${fFecha(x.fecha)}</td><td class="r">${x.n}</td><td class="r">${x.aus || ""}</td><td class="r">${fN(x.horas)}</td><td>${esc(x.maq) || "—"}</td><td class="r">${x.kilos != null ? fN(x.kilos, 0) : ""}</td></tr>`).join("")}</tbody></table></div>` : `<div class="muted">No hay partes de este dueño ${per.k === "todo" ? "todavía" : "en estas fechas"}.</div>`}
+  </section></div>`;
+}
+function listaPagos(pagos, vacio) {
+  if (!pagos.length) return `<div class="empty"><span>${esc(vacio)}</span></div>`;
+  return `<div class="list">${pagos.map(p => `<div class="pago"><div class="grow"><b>${fFecha(p.fecha)}${p.hora ? " · " + esc(p.hora) : ""}</b><div class="muted small">${esc([formaTxt(p.forma), p.nota].filter(Boolean).join(" · ") || "Sin nota")}</div></div><span class="imp">${fE(p.importe)}</span><button class="btn ghost sm" data-act="editPago" data-id="${p.id}" aria-label="Editar pago">Editar</button></div>`).join("")}
+   <div class="pago" style="background:var(--surface-2)"><div class="grow"><b>Total</b></div><span class="imp">${fE(pagos.reduce((s, p) => s + (+p.importe || 0), 0))}</span><span style="width:62px"></span></div></div>`;
+}
+function formDueno(did) {
+  const d = did ? S.duenos[did] : {};
+  const fld = (n, l, t = "text", ph = "") => `<label class="f"><span>${l}</span><input name="${n}" id="fd-${n}" type="${t}" value="${esc(d[n] ?? "")}" placeholder="${ph}" ${t === "number" ? 'step="any" inputmode="decimal"' : ""}></label>`;
+  openModal(`<div class="mh"><h2>${did ? "Editar dueño" : "Nuevo dueño"}</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="fdueno">
+   <div class="card stack" id="scanbox" hidden><b>Rellenar desde una foto</b><span class="hint">Haz una foto a un papel con los datos del dueño (DNI, escritura, hoja de la asesoría) y Claude rellenará los campos. Revísalos antes de guardar.</span>
+    <label class="btn" style="align-self:flex-start">${ic("cam")}Hacer foto o elegir imagen<input type="file" accept="image/*" capture="environment" id="scanDueno" hidden></label><span id="scanMsg" class="hint"></span></div>
+   <div class="grid2">${fld("nombre", "Nombre del dueño *")}${fld("nif", "DNI / NIF")}${fld("telefono", "Teléfono", "tel")}${fld("direccion", "Dirección")}</div>
+   <div class="grid2">${fld("finca", "Finca / paraje")}${fld("municipio", "Municipio")}${fld("poligono", "Polígono")}${fld("parcela", "Parcela")}</div>
+   <div class="grid2">${fld("precioHora", "Precio hora para este dueño (€)", "number", "Vacío = el de la campaña")}${fld("kilosTotal", "Kilos totales (si se saben)", "number")}</div>
+   <label class="f"><span>Notas</span><textarea name="notas" id="fd-notas">${esc(d.notas || "")}</textarea></label>
+   <div class="row between">${did ? `<button class="btn danger" data-act="borrarDueno" data-id="${did}">Borrar dueño</button>` : "<span></span>"}<button class="btn pri" data-act="guardarDueno" data-id="${did || ""}">Guardar</button></div>
+  </div>`);
+  scanSetup("#scanbox", "#scanDueno", "#scanMsg", async file => {
+    const r = await SAMPLE.json('Esta foto es un documento español relacionado con un propietario de una finca de olivar (DNI, escritura, nota simple, contrato o formulario de una asesoría). Extrae los datos del propietario. Responde solo con un objeto JSON con estas claves (cadena vacía si no aparece): {"nombre":"","nif":"","telefono":"","direccion":"","finca":"","municipio":"","poligono":"","parcela":""}', { images: [file] });
+    let n = 0; for (const k of ["nombre", "nif", "telefono", "direccion", "finca", "municipio", "poligono", "parcela"]) { const v = r?.[k]; const el = $("#fd-" + k); if (v && el && !el.value) { el.value = String(v); n++; } }
+    return n ? `Rellenados ${n} campos. Revísalos.` : "No se encontraron datos nuevos en la foto.";
+  });
+}
+
+/* ---------- Trabajadores ---------- */
+function vTrabajadores() {
+  if (UI.trabVer && S.trabajadores[UI.trabVer]) return vTrabDet(UI.trabVer);
+  const c = camp(); const ts = lista("trabajadores").sort(byName);
+  return `<div class="stack"><div class="head"><div><div class="lbl">${c ? esc(c.nombre) : ""}</div><h1>Trabajadores</h1></div><div class="row"><button class="btn" data-act="variosT">Añadir varios</button><button class="btn pri" data-act="nuevoT">${ic("mas")}Añadir trabajador</button></div></div>
+  ${ts.length ? `<div class="tw"><table><thead><tr><th>Nombre</th><th class="r">Días</th><th class="r">Faltas</th><th class="r">Horas</th><th class="r">Ganado</th><th class="r">Entregado</th><th class="r">Le queda</th></tr></thead><tbody>${ts.map(t => { const r = c ? resumenTrab(t.id) : { dias: 0, faltas: 0, horas: 0, importe: 0, entregado: 0, pendiente: 0 }; return `<tr style="cursor:pointer" data-act="verT" data-id="${t.id}"><td><b>${esc(t.nombre)}</b>${t.activo === false ? ` <span class="pill p-gris">De baja</span>` : ""}</td><td class="r">${r.dias}</td><td class="r">${r.faltas || ""}</td><td class="r">${fN(r.horas)}</td><td class="r">${fE(r.importe)}</td><td class="r">${fE(r.entregado)}</td><td class="r"><b>${fE(r.pendiente)}</b></td></tr>`; }).join("")}</tbody></table></div>`
+      : `<div class="empty"><b>Aún no hay trabajadores</b><span>Añade los nombres de la cuadrilla. Puedes pegar una lista entera.</span><div class="row"><button class="btn" data-act="variosT">Añadir varios</button><button class="btn pri" data-act="nuevoT">${ic("mas")}Añadir trabajador</button></div></div>`}</div>`;
+}
+function vTrabDet(tid) {
+  const t = S.trabajadores[tid]; const c = camp(); const per = UI.per.trab; const fl = perFl(per);
+  const r = c ? resumenTrab(tid, fl) : null;
+  let cal = "";
+  if (r && r.rs.length) { const meses = [...new Set(r.rs.map(x => x.fecha.slice(0, 7)))].sort(); cal = meses.map(m => calMes(m, r.rs)).join(""); }
+  const qs = r ? porQuincena(r.rs, () => r.precio) : [];
+  const rc = rangoCampana(); const gd = fl.desde || rc.desde, gh = fl.hasta || rc.hasta;
+  const duenosT = [...new Set(r?.rs.filter(x => x.tipo !== "ausente").map(x => x.duenoId) || [])];
+  return `<div class="stack"><button class="btn ghost sm" data-act="volverT" style="align-self:flex-start">${ic("back")}Trabajadores</button>
+  <div class="head"><div><h1>${esc(t.nombre)}</h1><div class="muted small">${esc([t.nif && "DNI " + t.nif, t.telefono, t.nss && "NSS " + t.nss].filter(Boolean).join(" · "))}</div></div>
+   <div class="row"><button class="btn" data-act="editT" data-id="${tid}">Editar</button><button class="btn" data-act="pdfTrab" data-id="${tid}">${ic("pdf")}Cuenta PDF</button><button class="btn" data-act="xlsTrab" data-id="${tid}">${ic("xls")}Excel</button></div></div>
+  ${r ? `${selPeriodo("trab", per)}
+  <div class="kpis"><div class="kpi"><span class="lbl">Días trabajados</span><b>${r.dias}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(r.horas)}</b></div><div class="kpi"><span class="lbl">Faltas</span><b>${r.faltas}</b></div><div class="kpi"><span class="lbl">Dueños</span><b>${duenosT.length}</b></div></div>
+  <div class="saldo"><div><span class="lbl">Lleva ganado</span><b>${fE(r.importe)}</b></div><div><span class="lbl">Entregado</span><b>${fE(r.entregado)}</b></div><div class="resto ${r.pendiente < -0.004 ? "neg" : ""}"><span class="lbl">${r.pendiente < -0.004 ? "Se le ha adelantado de más" : "Le queda por cobrar"}</span><b>${fE(Math.abs(r.pendiente))}</b></div></div>
+  <div class="muted small">Precio: ${fE(r.precio)}/h ${num(t.precioHora) != null ? "(propio de este trabajador)" : "(el de la campaña)"} · ${esc(perTxt(per))}.</div>
+  <section class="stack"><div class="row between"><h2>Entregas de dinero</h2><button class="btn sm pri" data-act="nuevoPago" data-tipo="trabajador" data-id="${tid}">${ic("euro")}Anotar entrega</button></div>
+   ${listaPagos(r.entregas, "Todavía no se le ha entregado dinero" + (per.k === "todo" ? "." : " en estas fechas."))}</section>
+  ${r.rs.length ? grafica(r.rs, gd, gh, "Horas por día · " + perTxt(per)) : ""}
+  ${qs.length ? `<section class="stack"><h2>Por quincena y dueño</h2><div class="tw"><table><thead><tr><th>Quincena</th><th>Dueño</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Importe</th></tr></thead><tbody>${qs.map(q => `<tr><td>${esc(q.corto)}</td><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colDueno(q.duenoId)};margin-right:6px"></i>${esc(nomD(q.duenoId))}</td><td class="r">${q.dias}</td><td class="r">${fN(q.horas)}</td><td class="r">${fE(q.importe)}</td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${r.dias}</td><td class="r">${fN(r.horas)}</td><td class="r">${fE(r.importe)}</td></tr></tfoot></table></div></section>` : ""}
+  ` : ""}
+  ${cal ? `<section class="stack"><h2>Calendario</h2>${cal}</section>` : `<div class="empty"><span>No aparece en ningún parte ${per.k === "todo" ? "de esta campaña" : "en estas fechas"}.</span></div>`}
+  </div>`;
+}
+function calMes(ym, rs) {
+  const [y, m] = ym.split("-").map(Number); const first = new Date(y, m - 1, 1); const n = new Date(y, m, 0).getDate();
+  const off = (first.getDay() + 6) % 7; const by = {};
+  rs.forEach(x => { if (x.fecha.startsWith(ym)) (by[x.fecha] ??= []).push(x); });
+  let cells = ["L", "M", "X", "J", "V", "S", "D"].map(d => `<div class="h">${d}</div>`).join("");
+  for (let i = 0; i < off; i++) cells += `<div class="x"></div>`;
+  for (let d = 1; d <= n; d++) {
+    const k = ym + "-" + pad2(d); const xs = by[k] || [];
+    const aus = xs.length && xs.every(x => x.tipo === "ausente"); const h = xs.reduce((s, x) => s + x.horas, 0);
+    cells += `<div class="${aus ? "au" : ""}"><span class="muted">${d}</span>${xs.length ? `<b class="num">${aus ? "Falta" : fN(h)}</b>` : ""}</div>`;
+  }
+  return `<div class="card stack"><h3>${first.toLocaleDateString("es-ES", { month: "long", year: "numeric" })}</h3><div class="cal">${cells}</div></div>`;
+}
+function formTrab(tid) {
+  const t = tid ? S.trabajadores[tid] : {};
+  const fld = (n, l, ty = "text", ph = "") => `<label class="f"><span>${l}</span><input name="${n}" type="${ty}" value="${esc(t[n] ?? "")}" placeholder="${ph}" ${ty === "number" ? 'step="any" inputmode="decimal"' : ""}></label>`;
+  openModal(`<div class="mh"><h2>${tid ? "Editar trabajador" : "Nuevo trabajador"}</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="ftrab"><div class="grid2">${fld("nombre", "Nombre y apellidos *")}${fld("nif", "DNI / NIE")}${fld("telefono", "Teléfono", "tel")}${fld("nss", "Nº Seguridad Social")}${fld("precioHora", "Precio hora propio (€)", "number", "Vacío = el de la campaña")}</div>
+  <label class="row" style="gap:8px"><input type="checkbox" name="baja" ${t.activo === false ? "checked" : ""}> De baja (no aparece para añadir a partes nuevos)</label>
+  <div class="row between">${tid ? `<button class="btn danger" data-act="borrarT" data-id="${tid}">Borrar</button>` : "<span></span>"}<button class="btn pri" data-act="guardarT" data-id="${tid || ""}">Guardar</button></div></div>`);
+}
+
+/* ---------- Informes ---------- */
+function infDef() {
+  const c = camp(); const fechas = partesCamp().map(p => p.fecha).sort();
+  return { tipo: "dueno", desde: fechas[0] || c.inicio || hoy(), hasta: fechas[fechas.length - 1] || hoy(), duenos: [], trabs: [] };
+}
+function vInformes() {
+  UI.inf ??= infDef(); const F = UI.inf; const ds = duenosCamp(); const ts = lista("trabajadores").sort(byName);
+  const tipos = [["dueno", "Cuenta de dueños"], ["trab", "Cuenta de trabajadores"], ["reg", "Registro de horas"], ["graf", "Gráfica de la campaña"]];
+  const usaT = F.tipo !== "dueno", usaD = true;
+  let prev = "";
+  const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs };
+  if (F.tipo === "dueno") {
+    const sel = F.duenos.length ? F.duenos : ds.map(d => d.id);
+    const ks = sel.map(id => cuentaDueno(id, fl)).filter(k => k.dias.length);
+    const sum = f => ks.reduce((s, k) => s + f(k), 0);
+    prev = ks.length ? `<div class="tw"><table><thead><tr><th>Dueño</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Mano de obra</th><th class="r">Maquinaria</th><th class="r">Total</th><th class="r">Pagado</th><th class="r">Pendiente</th></tr></thead><tbody>${ks.map(k => `<tr><td><b>${esc(k.d.nombre)}</b></td><td class="r">${k.dias.length}</td><td class="r">${fN(k.horas)}</td><td class="r">${fE(k.tMano)}</td><td class="r">${fE(k.tMaq)}</td><td class="r">${fE(k.total)}</td><td class="r">${fE(k.pagado)}</td><td class="r"><b>${fE(k.pendiente)}</b></td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td><td></td><td class="r">${fN(sum(k => k.horas))}</td><td class="r">${fE(sum(k => k.tMano))}</td><td class="r">${fE(sum(k => k.tMaq))}</td><td class="r">${fE(sum(k => k.total))}</td><td class="r">${fE(sum(k => k.pagado))}</td><td class="r">${fE(sum(k => k.pendiente))}</td></tr></tfoot></table></div><div class="hint">Los pagos cuentan si su fecha está dentro del periodo elegido.</div>` : vacioInf();
+  } else if (F.tipo === "trab" || F.tipo === "reg") {
+    const sel = F.trabs.length ? F.trabs : ts.map(t => t.id);
+    const rs = sel.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length);
+    const sum = f => rs.reduce((s, r) => s + f(r), 0);
+    if (F.tipo === "trab") prev = rs.length ? `<div class="tw"><table><thead><tr><th>Trabajador</th><th class="r">Días</th><th class="r">Faltas</th><th class="r">Horas</th><th class="r">Ganado</th><th class="r">Entregado</th><th class="r">Le queda</th></tr></thead><tbody>${rs.map(r => `<tr><td><b>${esc(nomT(r.id))}</b></td><td class="r">${r.dias}</td><td class="r">${r.faltas || ""}</td><td class="r">${fN(r.horas)}</td><td class="r">${fE(r.importe)}</td><td class="r">${fE(r.entregado)}</td><td class="r"><b>${fE(r.pendiente)}</b></td></tr>`).join("")}</tbody><tfoot><tr><td>Total</td><td></td><td></td><td class="r">${fN(sum(r => r.horas))}</td><td class="r">${fE(sum(r => r.importe))}</td><td class="r">${fE(sum(r => r.entregado))}</td><td class="r">${fE(sum(r => r.pendiente))}</td></tr></tfoot></table></div><div class="hint">Las entregas cuentan si su fecha está dentro del periodo elegido.</div>` : vacioInf();
+    else {
+      const dias = rangoFechas(F.desde, F.hasta);
+      prev = rs.length ? `<div class="tw"><table><thead><tr><th>Trabajador</th>${dias.map(d => `<th class="r">${pD(d).getDate()}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>${rs.map(r => { const by = {}; r.rs.forEach(x => { by[x.fecha] = (by[x.fecha] || 0) + x.horas; if (x.tipo === "ausente" && !by[x.fecha]) by[x.fecha] = "F"; }); return `<tr><td><b>${esc(nomT(r.id))}</b></td>${dias.map(d => `<td class="r">${by[d] === "F" ? `<span style="color:var(--bad)">F</span>` : by[d] ? fN(by[d]) : ""}</td>`).join("")}<td class="r"><b>${fN(r.horas)}</b></td></tr>`; }).join("")}</tbody></table></div><div class="hint">F = no asistió. Las horas incluyen todos los dueños seleccionados.</div>` : vacioInf();
+    }
+  } else {
+    const n = registros({ ...fl, trabs: F.trabs });
+    const qs = porQuincena(n, r => precioD(r.duenoId));
+    prev = n.length ? `${grafica(n, F.desde, F.hasta, "Horas por día")}
+     <div class="tw"><table><thead><tr><th>Quincena</th><th>Dueño</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Mano de obra</th></tr></thead><tbody>${qs.map(q => `<tr><td>${esc(q.corto)}</td><td><i style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${colDueno(q.duenoId)};margin-right:6px"></i>${esc(nomD(q.duenoId))}</td><td class="r">${q.dias}</td><td class="r">${fN(q.horas)}</td><td class="r">${fE(q.importe)}</td></tr>`).join("")}</tbody></table></div>` : vacioInf();
+  }
+  const rc = rangoCampana(); const qsel = quincenasEntre(rc.desde, rc.hasta);
+  return `<div class="stack"><div><div class="lbl">${esc(camp().nombre)}</div><h1>Informes y cuentas</h1></div>
+  <div class="chips" role="group" aria-label="Tipo de informe">${tipos.map(([k, t]) => `<button class="chip" data-act="infTipo" data-k="${k}" aria-pressed="${F.tipo === k}">${t}</button>`).join("")}</div>
+  <div class="card stack">
+   <div class="grid2"><label class="f"><span>Desde</span><input type="date" id="infDesde" value="${F.desde}"></label><label class="f"><span>Hasta</span><input type="date" id="infHasta" value="${F.hasta}"></label></div>
+   <div class="row"><button class="btn sm" data-act="infRango" data-k="todo">Toda la campaña</button>${qsel.map(q => `<button class="btn sm" data-act="infRango" data-k="q" data-d="${q.desde}" data-h="${q.hasta}" ${F.desde === q.desde && F.hasta === q.hasta ? 'style="border-color:var(--olive);color:var(--olive)"' : ""}>${esc(q.corto)}</button>`).join("")}<button class="btn sm" data-act="infRango" data-k="mes">Este mes</button><button class="btn sm" data-act="infRango" data-k="semana">Últimos 7 días</button></div>
+   ${usaD ? `<div class="stack" style="gap:6px"><span class="lbl">Dueños ${F.duenos.length ? "" : "· todos"}</span><div class="chips">${ds.map(d => `<button class="chip" data-act="infD" data-id="${d.id}" aria-pressed="${F.duenos.includes(d.id)}">${esc(d.nombre)}</button>`).join("") || `<span class="muted">Sin dueños</span>`}</div></div>` : ""}
+   ${usaT ? `<div class="stack" style="gap:6px"><span class="lbl">Trabajadores ${F.trabs.length ? "" : "· todos"}</span><div class="chips">${ts.map(t => `<button class="chip" data-act="infT" data-id="${t.id}" aria-pressed="${F.trabs.includes(t.id)}">${esc(t.nombre)}</button>`).join("") || `<span class="muted">Sin trabajadores</span>`}</div></div>` : ""}
+  </div>
+  <div class="row"><button class="btn pri" data-act="infPdf">${ic("pdf")}Descargar PDF</button><button class="btn" data-act="infXls">${ic("xls")}Descargar Excel</button></div>
+  <section class="stack"><h2>Vista previa</h2>${prev}</section></div>`;
+}
+const vacioInf = () => `<div class="empty"><span>No hay datos para este periodo y selección.</span></div>`;
+after.informes = () => {
+  const a = $("#infDesde"), b = $("#infHasta");
+  if (a) a.onchange = () => { UI.inf.desde = a.value; render(); };
+  if (b) b.onchange = () => { UI.inf.hasta = b.value; render(); };
+};
+
+/* ---------- Documentos ---------- */
+function vDocumentos() {
+  const ps = plantillas(); const docs = lista("documentos").sort((a, b) => (b.creado || 0) - (a.creado || 0));
+  const grupos = {}; ps.forEach(p => (grupos[p.asesoria || "Sin asesoría"] ??= []).push(p));
+  return `<div class="stack"><div class="head"><div><h1>Documentos</h1><div class="muted small">Modelos de la asesoría que se rellenan con los datos de cada dueño.</div></div>
+   <div class="row"><button class="btn" data-act="plFoto" ${SAMPLE_IMG ? "" : "hidden"}>${ic("cam")}Crear modelo desde foto</button><button class="btn pri" data-act="nuevaPl">${ic("mas")}Nuevo modelo</button></div></div>
+  ${Object.entries(grupos).map(([g, arr]) => `<section class="stack"><h2>${esc(g)}</h2><div class="list">${arr.map(p => `<button class="li" data-act="editPl" data-id="${p.id}"><div class="grow"><div class="t">${esc(p.nombre)}</div><div class="muted small">Documento con texto${p.generica ? " · modelo genérico de ejemplo" : ""}</div></div></button>`).join("")}</div></section>`).join("")}
+  <section class="stack"><h2>Documentos creados</h2>
+  ${docs.length ? `<div class="list">${docs.map(x => `<button class="li" data-act="abrirDoc" data-id="${x.id}"><div class="grow"><div class="t">${esc(x.nombre || "Documento")}</div><div class="muted small">${esc(nomD(x.duenoId))} · ${fFechaL(x.fecha)}</div></div></button>`).join("")}</div>` : `<div class="empty"><span>Los documentos se crean desde la ficha de cada dueño, en «Nuevo documento».</span></div>`}</section></div>`;
+}
+function formPlantilla(pid, pre) {
+  const p = pid ? plantilla(pid) : (pre || { tipo: "texto", campos: [] });
+  const ro = !!p.generica;
+  const camposTxt = (p.campos || []).map(c => [c.clave, c.etiqueta, c.valor || ""].join(" | ")).join("\n");
+  openModal(`<div class="mh"><h2>${ro ? "Modelo genérico" : pid ? "Editar modelo" : "Nuevo modelo"}</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="fpl">${ro ? `<div class="banner info">Este es un modelo genérico de ejemplo. Puedes duplicarlo y adaptarlo al de tu asesoría.</div>` : ""}
+   <div class="grid2"><label class="f"><span>Nombre del modelo *</span><input name="nombre" value="${esc(p.nombre || "")}" ${ro ? "disabled" : ""}></label><label class="f"><span>Asesoría</span><input name="asesoria" value="${esc(p.asesoria || "")}" placeholder="Ej. Asesoría García" ${ro ? "disabled" : ""}></label></div>
+   <label class="f"><span>Título que sale en el papel</span><input name="titulo" value="${esc(p.titulo || "")}" ${ro ? "disabled" : ""}></label>
+   <label class="f"><span>Texto del documento</span><textarea name="cuerpo" id="plCuerpo" style="min-height:220px" ${ro ? "disabled" : ""}>${esc(p.cuerpo || "")}</textarea></label>
+   <div class="hint">Datos automáticos (pulsa para insertar): ${PH_BASE.map(([k, l]) => `<code class="ph" data-act="insPh" data-k="${k}" title="${esc(l)}">{{${k}}}</code>`).join(" ")}</div>
+   <label class="f"><span>Campos que rellena el usuario (uno por línea: clave | etiqueta | valor por defecto)</span><textarea name="campos" ${ro ? "disabled" : ""} placeholder="centro_salud | Centro de salud más cercano | Consultorio de…">${esc(camposTxt)}</textarea></label>
+   <div class="row between">${pid && !ro ? `<button class="btn danger" data-act="borrarPl" data-id="${pid}">Borrar</button>` : "<span></span>"}
+    <div class="row">${pid ? `<button class="btn" data-act="duplicarPl" data-id="${pid}">Duplicar</button>` : ""}${ro ? "" : `<button class="btn pri" data-act="guardarPl" data-id="${pid || ""}">Guardar modelo</button>`}</div></div></div>`, null, true);
+}
+function nuevoDocumento(did) {
+  const ps = plantillas();
+  openModal(`<div class="mh"><h2>Nuevo documento</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack"><div class="hint">Elige el modelo. Se rellenará con los datos de ${esc(nomD(did))}.</div>
+  <div class="list">${ps.map(p => `<button class="li" data-act="crearDoc" data-d="${did}" data-id="${p.id}"><div class="grow"><div class="t">${esc(p.nombre)}</div><div class="muted small">${esc(p.asesoria || "")} · documento con texto</div></div></button>`).join("")}</div></div>`);
+}
+function valoresDoc(doc, pl) {
+  const c = camp(); const d = S.duenos[doc.duenoId] || {}; const e = empresa();
+  const ps = partesCamp().filter(p => p.duenoId === doc.duenoId).map(p => p.fecha).sort();
+  const v = {
+    empresa: e.nombre, empresa_nif: e.nif, empresa_direccion: e.direccion, encargado: e.encargado,
+    dueno: d.nombre, dueno_nif: d.nif, dueno_direccion: d.direccion, dueno_telefono: d.telefono, finca: d.finca, municipio: d.municipio, poligono: d.poligono, parcela: d.parcela,
+    campana: c?.nombre, fecha: fFechaL(doc.fecha), fecha_inicio: fFechaL(doc.desde || ps[0]), fecha_fin: fFechaL(doc.hasta || ps[ps.length - 1]),
+    trabajadores: (doc.trabajadores || []).map(t => "- " + nomT(t) + (S.trabajadores[t]?.nif ? " (DNI " + S.trabajadores[t].nif + ")" : "")).join("\n"),
+    maquinas: (c?.maquinas || []).map(m => "- " + m.nombre).join("\n")
+  };
+  (pl?.campos || []).forEach(cp => v[cp.clave] = doc.campos?.[cp.clave] ?? cp.valor ?? "");
+  return v;
+}
+const rellenar = (txt, v) => String(txt || "").replace(/\{\{\s*([\w]+)\s*\}\}/g, (_, k) => (v[k] != null && String(v[k]).trim() !== "") ? String(v[k]) : "________");
+function abrirDocumento(docId) {
+  const doc = S.documentos[docId]; if (!doc) return;
+  const pl = plantilla(doc.plantillaId) || { nombre: doc.nombre, tipo: "texto", campos: [] };
+  const v = valoresDoc(doc, pl);
+  const trabs = (doc.trabajadores || []);
+  openModal(`<div class="mh"><h2>${esc(doc.nombre || pl.nombre)}</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="fdoc" data-id="${docId}">
+   <div class="muted small">${esc(nomD(doc.duenoId))} · modelo «${esc(pl.nombre)}» (${esc(pl.asesoria || "")})</div>
+   <div class="grid2"><label class="f"><span>Fecha del documento</span><input type="date" name="fecha" value="${doc.fecha || hoy()}"></label></div>
+   ${(pl.campos || []).length ? `<div class="stack"><div class="row between"><h3>Datos a rellenar</h3>${SAMPLE_IMG ? `<label class="btn sm">${ic("cam")}Leer de foto<input type="file" accept="image/*" capture="environment" id="docLeer" hidden></label>` : ""}</div><span id="docLeerMsg" class="hint"></span><div class="grid2">${pl.campos.map(cp => `<label class="f"><span>${esc(cp.etiqueta || cp.clave)}</span><input name="c_${esc(cp.clave)}" value="${esc(doc.campos?.[cp.clave] ?? cp.valor ?? "")}"></label>`).join("")}</div></div>` : ""}
+   <div class="stack"><h3>Trabajadores en el documento</h3><div class="chips">${lista("trabajadores").sort(byName).map(t => `<button class="chip" data-act="docTog" data-id="${t.id}" aria-pressed="${trabs.includes(t.id)}">${esc(t.nombre)}</button>`).join("")}</div></div>
+   <div class="stack"><h3>Fotos del papel</h3><div class="hint">Guarda aquí la foto del documento en papel, si lo tenéis.</div>
+    <div class="thumbs" id="docThumbs">${(doc.escaneos || []).map((s, i) => { const u = srcEscaneo(s); return `<img ${u ? `src="${esc(u)}"` : ""} ${s.foto ? `data-foto="${esc(s.foto)}"` : ""} alt="Foto ${i + 1} del documento">`; }).join("")}</div>
+    <label class="btn" style="align-self:flex-start">${ic("cam")}Añadir foto<input type="file" accept="image/*" capture="environment" id="docFoto" hidden></label></div>
+   <details><summary class="lbl" style="cursor:pointer">Ver texto rellenado</summary><pre style="white-space:pre-wrap;font-family:var(--f-body);font-size:13px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px">${esc(rellenar(pl.titulo, v) + "\n\n" + rellenar(pl.cuerpo, v))}</pre></details>
+   <div class="row between"><button class="btn danger" data-act="borrarDoc" data-id="${docId}">Borrar</button><div class="row"><button class="btn" data-act="guardarDoc" data-id="${docId}">Guardar</button><button class="btn pri" data-act="pdfDoc" data-id="${docId}">${ic("pdf")}Guardar y PDF</button></div></div>
+  </div>`, null, true);
+  pintarFotos($("#docThumbs"));
+  const f = $("#docFoto"); if (f) f.onchange = async () => { const file = f.files[0]; if (!file) return; toast("Subiendo foto…"); try { const s = await subirEscaneo(file); const d = clone(S.documentos[docId]); (d.escaneos ||= []).push(s); await put("documentos", docId, d); abrirDocumento(docId); toast("Foto guardada"); } catch (e) { toast("No se pudo guardar la foto."); } };
+  const pl2 = pl;
+  const lf = $("#docLeer"); if (lf) lf.onchange = async () => {
+    const file = lf.files[0]; if (!file) return; const msg = $("#docLeerMsg"); msg.textContent = "Leyendo la foto…";
+    try {
+      const claves = pl2.campos.map(c => `"${c.clave}": "" // ${c.etiqueta}`).join(",\n");
+      const r = await SAMPLE.json(`Esta foto es un documento de una asesoría española para la recolección de aceituna. Extrae los valores escritos para estos campos. Responde solo con un objeto JSON, cadena vacía si un campo no aparece:\n{\n${claves}\n}`, { images: [file] });
+      let n = 0; pl2.campos.forEach(c => { const el = $(`[name="c_${c.clave}"]`); if (el && r?.[c.clave]) { el.value = String(r[c.clave]); n++; } });
+      msg.textContent = n ? `Rellenados ${n} campos. Revísalos y guarda.` : "No se encontraron esos datos en la foto.";
+    } catch (e) { msg.textContent = sampleErr(e); }
+  };
+}
+function leerDocForm(docId) {
+  const d = clone(S.documentos[docId]); const pl = plantilla(d.plantillaId) || { campos: [] };
+  const box = $("#fdoc"); if (!box) return d;
+  d.fecha = $('[name="fecha"]', box)?.value || d.fecha; const de = $('[name="desde"]', box), ha = $('[name="hasta"]', box);
+  if (de) d.desde = de.value; if (ha) d.hasta = ha.value;
+  d.campos ||= {}; (pl.campos || []).forEach(c => { const el = $(`[name="c_${c.clave}"]`, box); if (el) d.campos[c.clave] = el.value; });
+  return d;
+}
+/* Fotos del papel. Cada foto de doc.escaneos es una de estas:
+   { asset }  en claude.ai con la nube (ASSETS);
+   { foto }   en este dispositivo: la imagen está en IndexedDB y en localStorage solo queda el id;
+   { data }   dataURL dentro del documento (versiones antiguas, o si no hay IndexedDB). */
+let idbP = null; const FOTO_URL = {};
+function idb() {
+  if (!idbP) idbP = new Promise(res => {
+    try { const r = indexedDB.open("campana-control", 1); r.onupgradeneeded = () => r.result.createObjectStore("fotos"); r.onsuccess = () => res(r.result); r.onerror = () => res(null); }
+    catch (e) { res(null); }
+  });
+  return idbP;
+}
+async function fotoTx(modo, fn) {
+  const db = await idb(); if (!db) throw new Error("sin IndexedDB");
+  return new Promise((res, rej) => { const t = db.transaction("fotos", modo); const r = fn(t.objectStore("fotos")); t.oncomplete = () => res(r.result); t.onerror = t.onabort = () => rej(t.error); });
+}
+// Se guarda como ArrayBuffer (no Blob) porque algunos Safari antiguos fallan con Blob en IndexedDB
+async function fotoPut(id, blob) { const b = await blob.arrayBuffer(); if (FOTO_URL[id]) { URL.revokeObjectURL(FOTO_URL[id]); delete FOTO_URL[id]; } return fotoTx("readwrite", st => st.put({ t: blob.type || "image/jpeg", b }, id)); }
+const fotoDel = id => fotoTx("readwrite", st => st.delete(id));
+const fotoKeys = () => fotoTx("readonly", st => st.getAllKeys());
+function dataABlob(u) { const [h, b64] = String(u).split(","); const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: (h.match(/data:([^;,]+)/) || [])[1] || "image/jpeg" }); }
+async function blobDeFoto(s) {
+  if (s.foto) { const r = await fotoTx("readonly", st => st.get(s.foto)); if (!r) throw new Error("no está"); return new Blob([r.b], { type: r.t }); }
+  if (s.asset) { const r = await fetch(srcEscaneo(s)); if (!r.ok) throw new Error("no está"); return r.blob(); }
+  return dataABlob(s.data);
+}
+const srcEscaneo = s => s.asset ? "/_blob/" + s.asset : s.data || FOTO_URL[s.foto] || "";
+// Las fotos de IndexedDB se leen después de pintar: <img data-foto="id">
+async function pintarFotos(box) {
+  for (const im of $$("img[data-foto]", box)) {
+    const id = im.dataset.foto;
+    if (!FOTO_URL[id]) { try { FOTO_URL[id] = URL.createObjectURL(await blobDeFoto({ foto: id })); } catch (e) { im.alt = "Foto no disponible en este dispositivo"; continue; } }
+    im.src = FOTO_URL[id];
+  }
+}
+async function guardarFoto(blob, id, limite = true) {
+  if (ASSETS) { const r = await ASSETS.upload(blob, { type: "image/jpeg" }); return { asset: r.id }; }
+  if (MODE === "local" && await idb()) { id ||= uid("f"); await fotoPut(id, blob); return { foto: id }; }
+  const data = await blobToData(blob); if (limite && data.length > 200000) throw new Error("grande"); return { data };
+}
+async function subirEscaneo(file) {
+  const amplio = ASSETS || (MODE === "local" && await idb());
+  return guardarFoto(await comprimir(file, amplio ? 1600 : 1000, amplio ? 0.75 : 0.55));
+}
+// Versiones anteriores guardaban la foto (dataURL) dentro de localStorage: se pasa a IndexedDB
+async function migrarFotos() {
+  if (MODE !== "local" || ASSETS || !(await idb())) return;
+  let n = 0;
+  for (const d of Object.values(S.documentos)) for (const [i, s] of (d.escaneos || []).entries()) {
+    if (!s.data) continue;
+    try { const id = uid("f"); await fotoPut(id, dataABlob(s.data)); d.escaneos[i] = { foto: id }; n++; } catch (e) { }
+  }
+  if (n) { saveLocal(); render(); }
+}
+// Borra de IndexedDB las fotos que ya no usa ningún documento
+async function limpiarFotos() {
+  try { const usadas = new Set(Object.values(S.documentos).flatMap(d => (d.escaneos || []).map(s => s.foto).filter(Boolean))); for (const k of await fotoKeys()) if (!usadas.has(k)) await fotoDel(k); } catch (e) { }
+}
+// Copia de seguridad → fotos de este dispositivo. Devuelve cuántas fotos no venían en la copia.
+async function fotosDeCopia(docs, fotos) {
+  let faltan = 0;
+  for (const d of Object.values(docs)) {
+    if (!Array.isArray(d.escaneos)) continue;
+    const out = [];
+    for (const s of d.escaneos) {
+      const data = s.foto ? fotos[s.foto] : (s.data && MODE === "local") ? s.data : null;
+      if (!data) { if (s.foto) faltan++; out.push(s); continue; }
+      try { out.push(await guardarFoto(dataABlob(data), s.foto, false)); } catch (e) { out.push({ data }); }
+    }
+    d.escaneos = out;
+  }
+  return faltan;
+}
+function comprimir(file, max, q) {
+  return new Promise((res, rej) => { const img = new Image(); const u = URL.createObjectURL(file); img.onload = () => { const s = Math.min(1, max / Math.max(img.width, img.height)); const c = document.createElement("canvas"); c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); x.drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(u); c.toBlob(b => b ? res(b) : rej(new Error("img")), "image/jpeg", q); }; img.onerror = rej; img.src = u; });
+}
+const blobToData = b => new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = j; fr.readAsDataURL(b); });
+function scanSetup(boxSel, inSel, msgSel, fn) {
+  const box = $(boxSel); if (!box || !SAMPLE_IMG) return; box.hidden = false;
+  const inp = $(inSel); inp.onchange = async () => { const file = inp.files[0]; if (!file) return; const m = $(msgSel); m.textContent = "Leyendo la foto… puede tardar unos segundos."; try { m.textContent = await fn(file); } catch (e) { m.textContent = sampleErr(e); } inp.value = ""; };
+}
+function sampleErr(e) {
+  const c = e?.code;
+  if (c === "not_granted" || c === "sampling_disabled") return "No se ha permitido usar Claude para leer fotos. Rellena los datos a mano.";
+  if (c === "rate_limited") return "Demasiadas lecturas seguidas. Espera un poco y prueba otra vez.";
+  if (c === "image_rejected") return "Esa imagen no se puede leer. Prueba con otra foto más nítida.";
+  if (c === "invalid_json") return "No se pudo interpretar la foto. Prueba otra vez.";
+  return "No se pudo leer la foto ahora mismo. Prueba otra vez.";
+}
+
+/* ---------- Instalación de la app web ---------- */
+// Enlaces de descarga del APK y del instalador de Windows. Déjalos vacíos hasta tener una versión firmada,
+// publicada en GitHub Releases y comprobada: solo entonces se muestran (nunca enlaces inventados).
+const DESCARGAS = { apk: "", exe: "" };
+const PREF_INSTALAR = "campana-control-aviso-instalar";   // preferencia de este dispositivo: aviso de Inicio cerrado
+let promptInstalar = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); promptInstalar = e; scheduleRender(); });
+window.addEventListener("appinstalled", () => { promptInstalar = null; toast("App instalada. Ábrela desde su icono."); scheduleRender(); });
+function entorno() {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const android = /Android/i.test(ua);
+  const mm = q => { try { return !!window.matchMedia(q).matches; } catch (e) { return false; } };
+  const app = window.Capacitor?.isNativePlatform?.() ? "apk" : /Electron\//.test(ua) ? "windows"
+    : (mm("(display-mode: standalone)") || mm("(display-mode: fullscreen)") || mm("(display-mode: minimal-ui)") || navigator.standalone === true) ? "web" : "";
+  const safari = ios && /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\//i.test(ua);
+  return { ios, android, safari, app, escritorio: !ios && !android, firefox: /Firefox\//i.test(ua) };
+}
+const avisoInstalarOculto = () => { try { return localStorage.getItem(PREF_INSTALAR) === "oculto"; } catch (e) { return false; } };
+// Aviso discreto en Inicio: solo si se puede instalar de verdad y no está ya instalada
+function avisoInstalar() {
+  if (!STANDALONE || avisoInstalarOculto()) return "";
+  const en = entorno(); if (en.app) return "";
+  if (!promptInstalar && !(en.ios && en.safari)) return "";
+  return `<div class="banner info row between" id="avisoInstalar" style="gap:8px"><span style="flex:1 1 200px">Puedes instalar CAMPAÑA CONTROL en este ${en.escritorio ? "ordenador" : "móvil"} y abrirla como una app, también sin conexión.</span>
+   <span class="row" style="gap:6px">${promptInstalar ? `<button class="btn sm pri" data-act="instalar">Instalar</button>` : `<a class="btn sm" href="#ajustes">Cómo instalar</a>`}<button class="btn sm ghost" data-act="ocultarInstalar">Ahora no</button></span></div>`;
+}
+function vInstalar() {
+  if (!STANDALONE) return "";
+  const en = entorno();
+  const separados = "Cada instalación guarda sus datos por separado (el navegador, la app instalada, el APK y el programa de Windows). Para pasarlos, exporta una copia de seguridad en el origen e impórtala en el destino.";
+  const pasos = l => `<ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px">${l.map(x => `<li>${x}</li>`).join("")}</ol>`;
+  let cuerpo;
+  if (en.app === "apk") cuerpo = `<p style="margin:0">Estás usando la app de Android (APK): ya está instalada. Para actualizarla, instala el APK nuevo encima; los datos se conservan.</p>`;
+  else if (en.app === "windows") cuerpo = `<p style="margin:0">Estás usando el programa de Windows: ya está instalado.</p>`;
+  else if (en.app === "web") cuerpo = `<p style="margin:0">La app ya está instalada en este dispositivo y funciona sin conexión.</p>`;
+  else if (promptInstalar) cuerpo = `<p style="margin:0">Este navegador permite instalarla como una app, con su icono y sin conexión.</p><button class="btn pri" data-act="instalar" style="align-self:flex-start">Instalar la app</button>`;
+  else if (en.ios && en.safari) cuerpo = `<p style="margin:0">En iPhone o iPad se instala desde Safari:</p>${pasos(["Pulsa el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba).", "Elige <b>Añadir a pantalla de inicio</b>.", "Si aparece, deja activado <b>Abrir como app web</b>.", "Pulsa <b>Añadir</b> y abre la app desde su icono, con conexión la primera vez."])}`;
+  else if (en.ios) cuerpo = `<p style="margin:0">Abre esta misma dirección en <b>Safari</b> y sigue allí los pasos de «Añadir a pantalla de inicio». En iOS 16.4 o posterior también funciona desde el botón Compartir de Chrome o Edge.</p>`;
+  else if (en.android) cuerpo = `<p style="margin:0">En Chrome para Android:</p>${pasos(["Abre el menú <b>⋮</b> (arriba a la derecha).", "Pulsa <b>Instalar aplicación</b> o <b>Añadir a pantalla de inicio</b>.", "Confirma y abre la app desde su icono."])}`;
+  else if (en.firefox) cuerpo = `<p style="margin:0">Firefox no instala apps web. Abre esta dirección en Chrome o Edge para instalarla${DESCARGAS.exe ? ", o usa el instalador de Windows" : ""}.</p>`;
+  else cuerpo = `<p style="margin:0">En Chrome o Edge para ordenador: pulsa el icono de <b>Instalar</b> que aparece a la derecha de la barra de direcciones, o en el menú elige <b>Instalar CAMPAÑA CONTROL</b> (en Edge: Aplicaciones → Instalar este sitio como aplicación).</p>`;
+  const extra = [];
+  if (!en.app && en.android && DESCARGAS.apk) extra.push(`<a class="btn sm" href="${esc(DESCARGAS.apk)}" rel="noopener">Descargar el APK para Android</a>`);
+  if (!en.app && en.escritorio && DESCARGAS.exe) extra.push(`<a class="btn sm" href="${esc(DESCARGAS.exe)}" rel="noopener">Descargar el instalador de Windows (.exe)</a>`);
+  return `<section class="card stack" id="instalar"><h2>Instalar la app</h2>${cuerpo}${extra.length ? `<div class="row">${extra.join("")}</div>` : ""}<div class="hint">${separados}</div></section>`;
+}
+
+/* ---------- Ajustes ---------- */
+function vAjustes() {
+  const c = camp(); const e = empresa();
+  const fe = (n, l) => `<label class="f"><span>${l}</span><input name="${n}" value="${esc(e[n] || "")}"></label>`;
+  return `<div class="stack"><h1>Ajustes</h1>
+  ${MODE === "local" ? `<div class="banner">${STANDALONE ? "Los datos se guardan en este dispositivo. Haz una copia de seguridad de vez en cuando, y úsala también para pasar la campaña a otro móvil u ordenador." : "Los datos se guardan solo en este dispositivo. Abre la app desde Claude con tu cuenta para tenerla sincronizada en el móvil y el ordenador."}</div>` : ""}
+  ${c ? `<section class="card stack" id="fcamp"><div class="row between"><h2>Campaña ${esc(c.nombre)}</h2><button class="btn sm" data-act="nuevaCamp">${ic("mas")}Nueva campaña</button></div>
+   <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="${esc(c.nombre)}"></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${esc(c.anio || "")}"></label><label class="f"><span>Fecha de inicio</span><input type="date" name="inicio" value="${esc(c.inicio || "")}"></label></div>
+   <div class="grid2"><label class="f"><span>Horas de un día normal</span><input name="horasDia" inputmode="decimal" value="${fN(c.horasDia)}"></label><label class="f"><span>Hora de entrada</span><input type="time" name="horaInicio" value="${esc(c.horaInicio)}"></label>
+   <label class="f"><span>€/hora que se paga al trabajador</span><input name="precioHoraTrab" inputmode="decimal" value="${fN(c.precioHoraTrab)}"></label><label class="f"><span>€/hora que se cobra al dueño</span><input name="precioHoraDueno" inputmode="decimal" value="${fN(c.precioHoraDueno)}"></label><label class="f"><span>IVA en las cuentas (%)</span><input name="iva" inputmode="decimal" value="${fN(c.iva)}"></label></div>
+   <h3>Maquinaria y precios</h3><div class="hint">El importe de cada máquina es cantidad usada × precio. Los cambios de precio afectan a todas las cuentas de esta campaña.</div>
+   <div class="stack" id="maqs">${c.maquinas.map((m, i) => maqRow(m, i)).join("")}</div>
+   <div class="row between"><button class="btn sm" data-act="addMaq">${ic("mas")}Añadir máquina</button><button class="btn pri" data-act="guardarCamp">Guardar campaña</button></div></section>` : `<div class="empty"><b>No hay campañas</b><button class="btn pri" data-act="nuevaCamp">${ic("mas")}Crear campaña</button></div>`}
+  <section class="card stack" id="femp"><h2>Datos de la empresa</h2><div class="hint">Salen en las cuentas en PDF y en los documentos.</div>
+   <div class="grid2">${fe("nombre", "Nombre o razón social")}${fe("nif", "NIF / CIF")}${fe("direccion", "Dirección")}${fe("telefono", "Teléfono")}${fe("encargado", "Encargado de la cuadrilla")}${fe("iban", "IBAN para las cuentas")}</div>
+   <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="guardarEmp">Guardar empresa</button></div></section>
+  <section class="card stack"><h2>Copia de seguridad</h2>
+   <div class="hint">Guarda todos los datos (campañas, trabajadores, dueños, partes, pagos y documentos con sus fotos) en un archivo. Con «Importar» se cargan en otro dispositivo o se recupera una copia.</div>
+   <div class="row"><button class="btn pri" data-act="exportar">${ic("pdf")}Exportar copia</button><label class="btn">Importar copia<input type="file" accept=".json,application/json" id="impCopia" hidden></label></div>
+   <div class="muted small">Versión ${APP_VERSION}${STANDALONE ? " · app instalable" : ""}</div></section>
+  ${vInstalar()}
+  <section class="stack"><h2>Campañas</h2><div class="list">${lista("campanas").sort((a, b) => (+b.anio || 0) - (+a.anio || 0)).map(x => `<div class="mrow"><div class="grow"><b>${esc(x.nombre)}</b><div class="muted small">${lista("duenos").filter(d => d.campanaId === x.id).length || (x.id === c?.id ? duenosCamp().length : "")} dueños</div></div>${x.id === c?.id ? `<span class="pill p-normal">Activa</span>` : `<button class="btn sm" data-act="activarCamp" data-id="${x.id}">Activar</button>`}</div>`).join("")}</div></section>
+  </div>`;
+}
+after.ajustes = () => {
+  const inp = $("#impCopia"); if (!inp) return;
+  inp.onchange = async () => {
+    const f = inp.files[0]; inp.value = ""; if (!f) return;
+    let j; try { j = JSON.parse(await f.text()); } catch (e) { return toast("Ese archivo no es una copia de CAMPAÑA CONTROL."); }
+    if (j?.app !== "campana-control" || !j.S) return toast("Ese archivo no es una copia de CAMPAÑA CONTROL.");
+    const n = COLS.reduce((a, c) => a + Object.keys(j.S[c] || {}).length, 0); const nf = Object.keys(j.fotos || {}).length;
+    const incompleta = j.incompleta ? ` Atención: esta copia está incompleta, le ${+j.fotosFaltan === 1 ? "falta 1 foto" : "faltan " + (+j.fotosFaltan || "algunas") + " fotos"} de documentos.` : "";
+    confirmar(`Se cargarán ${n} registros${nf ? ` y ${nf} fotos` : ""} de la copia del ${fFechaL((j.fecha || "").slice(0, 10)) || "archivo"}. Lo que tengas ahora en este dispositivo se sustituye por la copia.${incompleta}`, async () => {
+      if (nf) toast("Cargando las fotos…");
+      const S2 = { ...j.S, documentos: clone(j.S.documentos || {}) };
+      const faltan = await fotosDeCopia(S2.documentos, j.fotos || {});
+      if (MODE === "local") { COLS.forEach(c => S[c] = S2[c] || {}); saveLocal(); limpiarFotos(); }
+      else { for (const c of COLS) for (const [id, d] of Object.entries(S2[c] || {})) await put(c, id, d); }
+      UI.inf = null; UI.draft = null; UI.dueVer = null; UI.trabVer = null; ensureCampSubs(); toast(faltan ? `Copia importada. ${faltan === 1 ? "1 foto no venía" : faltan + " fotos no venían"} en la copia.` : "Copia importada"); render();
+    }, "Sí, importar");
+  };
+};
+const maqRow = (m, i) => `<div class="row maq" data-i="${i}" data-id="${esc(m.id)}"><input name="mnombre" value="${esc(m.nombre)}" placeholder="Máquina" style="flex:2 1 150px"><input name="mprecio" inputmode="decimal" value="${fN(m.precio)}" placeholder="€" style="flex:1 1 70px" aria-label="Precio"><select name="munidad" style="flex:1 1 90px" aria-label="Por"><option ${m.unidad !== "hora" && m.unidad !== "jornada" ? "selected" : ""}>día</option><option ${m.unidad === "jornada" ? "selected" : ""}>jornada</option><option ${m.unidad === "hora" ? "selected" : ""}>hora</option></select><button class="btn ghost sm" data-act="delMaq" aria-label="Quitar máquina">${ic("x")}</button></div>`;
+function nuevaCampana() {
+  const y = new Date().getFullYear();
+  openModal(`<div class="mh"><h2>Nueva campaña</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="fnc"><div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="Campaña ${y}"></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${y}"></label><label class="f"><span>Inicio</span><input type="date" name="inicio" value="${hoy()}"></label></div>
+  <div class="hint">Se copian las horas, precios y máquinas de la campaña activa. Los trabajadores son los mismos para todas las campañas.</div>
+  <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="crearCamp">Crear y activar</button></div></div>`);
+}
+
+/* ===================== Modal, pagos y toast ===================== */
+let modalClose = null;
+function openModal(html, onClose, wide) {
+  $("#modal").innerHTML = `<div class="ov" data-ov="1"><div class="md ${wide ? "wide" : ""}" role="dialog" aria-modal="true">${html}</div></div>`;
+  modalClose = onClose || null;
+  setTimeout(() => $("#modal input:not([type=file]):not([disabled]), #modal button")?.focus?.(), 30);
+}
+function closeModal() { $("#modal").innerHTML = ""; const f = modalClose; modalClose = null; f?.(); if (renderPending) { renderPending = false; render(); } }
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("#modal").innerHTML) closeModal(); });
+let tT = null;
+function toast(t) { const el = $("#toast"); el.textContent = t; el.hidden = false; clearTimeout(tT); tT = setTimeout(() => el.hidden = true, 2800); }
+
+function formPago(tipo, personaId, pagoId) {
+  const p = pagoId ? S.pagos[pagoId] : { fecha: hoy(), hora: ahoraHM(), forma: "efectivo" };
+  const quien = tipo === "trabajador" ? nomT(personaId) : nomD(personaId);
+  const r = tipo === "trabajador" ? resumenTrab(personaId) : cuentaDueno(personaId);
+  const falta = r.pendiente + (pagoId ? +p.importe || 0 : 0);
+  openModal(`<div class="mh"><div><div class="lbl">${tipo === "trabajador" ? "Entrega de dinero a" : "Pago de"}</div><h2>${esc(quien)}</h2></div><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+  <div class="stack" id="fpago">
+   <div class="banner info">${tipo === "trabajador" ? "Le queda por cobrar" : "Le falta pagar"} ${fE(falta)} en toda la campaña.</div>
+   <div class="grid2"><label class="f"><span>Importe (€) *</span><input name="importe" inputmode="decimal" value="${p.importe != null ? fN(p.importe) : ""}" placeholder="Ej. 50"></label>
+    <label class="f"><span>Forma de pago</span><select name="forma">${FORMAS.map(([k, n]) => `<option value="${k}" ${p.forma === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+    <label class="f"><span>Día</span><input type="date" name="fecha" value="${esc(p.fecha || hoy())}"></label><label class="f"><span>Hora</span><input type="time" name="hora" value="${esc(p.hora || "")}"></label></div>
+   <label class="f"><span>Nota</span><input name="nota" value="${esc(p.nota || "")}" placeholder="${tipo === "trabajador" ? "Adelanto, liquidación final…" : "Primer pago, resto de la cuenta…"}"></label>
+   <div class="row between">${pagoId ? `<button class="btn danger" data-act="borrarPago" data-id="${pagoId}">Borrar</button>` : "<span></span>"}<button class="btn pri" data-act="guardarPago" data-tipo="${tipo}" data-persona="${esc(personaId)}" data-id="${pagoId || ""}">Guardar</button></div>
+  </div>`);
+}
+
+/* ===================== Acciones ===================== */
+function leer(sel) { const o = {}; $$(`${sel} [name]`).forEach(el => o[el.name] = el.type === "checkbox" ? el.checked : el.value.trim()); return o; }
+const A = {
+  cerrar: () => closeModal(),
+  nuevaCamp: () => nuevaCampana(),
+  async crearCamp() {
+    const f = leer("#fnc"); if (!f.nombre) return toast("Pon un nombre a la campaña");
+    const prev = camp(); const id = "c" + (f.anio || "") + "-" + uid().slice(-5);
+    const data = { nombre: f.nombre, anio: +f.anio || null, inicio: f.inicio || hoy(), horasDia: prev?.horasDia ?? 7.5, horaInicio: prev?.horaInicio || "08:00", precioHoraTrab: prev?.precioHoraTrab ?? 10, precioHoraDueno: prev?.precioHoraDueno ?? 10, iva: prev?.iva ?? 0, maquinas: clone(prev?.maquinas || MAQ_DEF), creado: Date.now() };
+    await put("campanas", id, data); await put("ajustes", "general", { ...aj(), campanaActiva: id });
+    UI.inf = null; UI.draft = null; UI.dueVer = null; closeModal(); toast("Campaña creada"); ensureCampSubs(); render();
+  },
+  async activarCamp(el) { await put("ajustes", "general", { ...aj(), campanaActiva: el.dataset.id }); UI.inf = null; UI.draft = null; UI.dueVer = null; ensureCampSubs(); toast("Campaña activada"); },
+  async guardarCamp() {
+    const c = camp(); const f = leer("#fcamp");
+    const maqs = $$("#maqs .maq").map(r => ({ id: r.dataset.id, nombre: $('[name="mnombre"]', r).value.trim(), precio: num($('[name="mprecio"]', r).value) || 0, unidad: $('[name="munidad"]', r).value })).filter(m => m.nombre);
+    const data = { ...S.campanas[c.id], nombre: f.nombre || c.nombre, anio: +f.anio || null, inicio: f.inicio, horasDia: num(f.horasDia) ?? 7.5, horaInicio: f.horaInicio || "08:00", precioHoraTrab: num(f.precioHoraTrab) ?? 0, precioHoraDueno: num(f.precioHoraDueno) ?? 0, iva: num(f.iva) ?? 0, maquinas: maqs };
+    await put("campanas", c.id, data); toast("Campaña guardada");
+  },
+  addMaq() { const box = $("#maqs"); box.insertAdjacentHTML("beforeend", maqRow({ id: uid("m"), nombre: "", precio: 0, unidad: "día" }, box.children.length)); $("#maqs .maq:last-child input")?.focus(); },
+  delMaq(el) { el.closest(".maq").remove(); },
+  async guardarEmp() { await put("ajustes", "general", { ...aj(), empresa: leer("#femp") }); toast("Datos de empresa guardados"); },
+
+  parteHoy() { UI.fecha = hoy(); UI.draft = null; },
+  async selDueno(el) { if (UI.draft?.dirty) await guardarParte(true); UI.duenoSel = el.dataset.id; UI.draft = null; render(); },
+  async diaMenos() { if (UI.draft?.dirty) await guardarParte(true); UI.fecha = addDays(UI.fecha, -1); UI.draft = null; render(); },
+  async diaMas() { if (UI.draft?.dirty) await guardarParte(true); UI.fecha = addDays(UI.fecha, 1); UI.draft = null; render(); },
+  abrirParte(el) { UI.duenoSel = el.dataset.d; UI.fecha = el.dataset.f; UI.draft = null; UI.dueVer = null; location.hash = "#partes"; render(); },
+  parteDueno(el) { UI.duenoSel = el.dataset.id; UI.fecha = hoy(); UI.draft = null; location.hash = "#partes"; },
+  quitarT(el) { delete UI.draft.data.filas[el.dataset.id]; UI.draft.dirty = true; render(); },
+  addT() { const v = $("#addT").value; if (!v) return; UI.draft.data.filas[v] = { tipo: "normal", horas: null, nota: "" }; UI.draft.dirty = true; render(); },
+  addTodos() { trabajadoresAct().forEach(t => { if (!UI.draft.data.filas[t.id]) UI.draft.data.filas[t.id] = { tipo: "normal", horas: null, nota: "" }; }); UI.draft.dirty = true; render(); },
+  maqMenos(el) { const m = UI.draft.data.maquinas ||= {}; m[el.dataset.id] = Math.max(0, (+m[el.dataset.id] || 0) - 1); UI.draft.dirty = true; render(); },
+  maqMas(el) { const m = UI.draft.data.maquinas ||= {}; m[el.dataset.id] = (+m[el.dataset.id] || 0) + 1; UI.draft.dirty = true; render(); },
+  guardarParte: () => guardarParte(),
+  borrarParte() {
+    confirmar("¿Borrar el parte de este día? Se perderán sus horas, máquinas y kilos.", async () => {
+      const d = UI.draft;
+      await del("partes", d.key); UI.draft = null; toast("Parte borrado"); render();
+    });
+  },
+  copiarAnterior() {
+    const prev = partesCamp().filter(p => p.duenoId === UI.duenoSel && p.fecha < UI.fecha).sort((a, b) => b.fecha.localeCompare(a.fecha))[0]
+      || partesCamp().filter(p => p.fecha < UI.fecha).sort((a, b) => b.fecha.localeCompare(a.fecha))[0];
+    if (!prev) return toast("No hay partes anteriores para copiar");
+    const filas = {}; Object.entries(prev.filas || {}).forEach(([t, f]) => filas[t] = { tipo: f.tipo === "ausente" ? "normal" : f.tipo, horas: f.horas ?? null, nota: "" });
+    UI.draft.data.filas = filas; UI.draft.data.maquinas = clone(prev.maquinas); UI.draft.dirty = true; render(); toast("Copiado del " + fFecha(prev.fecha) + ". Revisa y guarda.");
+  },
+  // periodos (toda la campaña, quincenas, fechas a mano)
+  perSet(el) {
+    const key = el.dataset.key, k = el.dataset.k; const rc = rangoCampana(); const cur = UI.per[key] || {};
+    UI.per[key] = k === "todo" ? { k } : k === "custom" ? { k, desde: cur.desde || rc.desde, hasta: cur.hasta || rc.hasta } : { k, desde: el.dataset.d, hasta: el.dataset.h };
+    render();
+  },
+  // entregas a trabajadores y pagos de dueños
+  nuevoPago: el => formPago(el.dataset.tipo, el.dataset.id, null),
+  editPago(el) { const p = S.pagos[el.dataset.id]; if (p) formPago(p.tipo, p.personaId, el.dataset.id); },
+  async guardarPago(el) {
+    const f = leer("#fpago"); const imp = num(f.importe);
+    if (!imp || imp <= 0) return toast("Escribe el importe");
+    if (!f.fecha) return toast("Elige el día");
+    const id = el.dataset.id || uid("pg"); const old = S.pagos[id] || {};
+    await put("pagos", id, { ...old, campanaId: camp().id, tipo: el.dataset.tipo, personaId: el.dataset.persona, importe: Math.round(imp * 100) / 100, fecha: f.fecha, hora: f.hora, forma: f.forma, nota: f.nota, creado: old.creado || Date.now() });
+    closeModal(); toast(el.dataset.tipo === "trabajador" ? "Entrega guardada" : "Pago guardado");
+  },
+  borrarPago(el) { const id = el.dataset.id; confirmar("¿Borrar este pago? Se volverá a sumar a lo pendiente.", async () => { await del("pagos", id); toast("Pago borrado"); }); },
+
+  nuevoDueno: () => formDueno(null),
+  editDueno: el => formDueno(el.dataset.id),
+  verDueno(el) { UI.dueVer = el.dataset.id; location.hash = "#duenos"; render(); },
+  volverDuenos() { UI.dueVer = null; render(); },
+  async guardarDueno(el) {
+    const f = leer("#fdueno"); if (!f.nombre) return toast("Falta el nombre del dueño");
+    const id = el.dataset.id || uid("d"); const old = S.duenos[id] || {};
+    const data = { ...old, ...f, precioHora: num(f.precioHora), kilosTotal: num(f.kilosTotal), campanaId: old.campanaId || camp().id, trabajadores: old.trabajadores || trabajadoresAct().map(t => t.id), num: old.num || duenosCamp().length + 1, creado: old.creado || Date.now() };
+    await put("duenos", id, data); closeModal(); toast("Dueño guardado"); if (!el.dataset.id) { UI.dueVer = id; location.hash = "#duenos"; } render();
+  },
+  borrarDueno(el) {
+    const id = el.dataset.id; const n = partesCamp().filter(p => p.duenoId === id).length;
+    confirmar(`¿Borrar a ${nomD(id)}${n ? ` y sus ${n} partes` : ""}? No se puede deshacer.`, async () => {
+      for (const p of partesCamp().filter(p => p.duenoId === id)) await del("partes", p.id);
+      await del("duenos", id); UI.dueVer = null; toast("Dueño borrado");
+    });
+  },
+  asignar(el) {
+    const did = el.dataset.id; const sel = new Set(S.duenos[did].trabajadores || []);
+    openModal(`<div class="mh"><h2>Trabajadores de ${esc(nomD(did))}</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+    <div class="stack" id="fasig"><div class="chips">${lista("trabajadores").sort(byName).map(t => `<button class="chip" data-act="tog" data-id="${t.id}" aria-pressed="${sel.has(t.id)}">${esc(t.nombre)}</button>`).join("") || `<span class="muted">Primero añade trabajadores.</span>`}</div>
+    <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="guardarAsig" data-id="${did}">Guardar</button></div></div>`);
+  },
+  tog(el) { el.setAttribute("aria-pressed", el.getAttribute("aria-pressed") !== "true"); },
+  async guardarAsig(el) { const did = el.dataset.id; const ids = $$('#fasig .chip[aria-pressed="true"]').map(c => c.dataset.id); await put("duenos", did, { ...S.duenos[did], trabajadores: ids }); closeModal(); toast("Asignación guardada"); },
+
+  nuevoT: () => formTrab(null), editT: el => formTrab(el.dataset.id),
+  verT(el) { UI.trabVer = el.dataset.id; location.hash = "#trabajadores"; render(); }, volverT() { UI.trabVer = null; render(); },
+  async guardarT(el) {
+    const f = leer("#ftrab"); if (!f.nombre) return toast("Falta el nombre");
+    const id = el.dataset.id || uid("t"); const old = S.trabajadores[id] || {};
+    await put("trabajadores", id, { ...old, nombre: f.nombre, nif: f.nif, telefono: f.telefono, nss: f.nss, precioHora: num(f.precioHora), activo: !f.baja, creado: old.creado || Date.now() });
+    closeModal(); toast("Trabajador guardado");
+  },
+  borrarT(el) { const id = el.dataset.id; confirmar(`¿Borrar a ${nomT(id)}? Sus horas en partes antiguos seguirán contando pero sin nombre. Si ya no trabaja, mejor márcalo «De baja».`, async () => { await del("trabajadores", id); UI.trabVer = null; toast("Trabajador borrado"); }); },
+  variosT() {
+    openModal(`<div class="mh"><h2>Añadir varios trabajadores</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+    <div class="stack"><label class="f"><span>Un nombre por línea (puedes añadir el DNI tras una coma)</span><textarea id="varios" style="min-height:200px" placeholder="Antonio Pérez Ruiz, 12345678A&#10;María López García"></textarea></label><div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="guardarVarios">Añadir</button></div></div>`);
+  },
+  async guardarVarios() {
+    const lines = $("#varios").value.split("\n").map(l => l.trim()).filter(Boolean); let n = 0;
+    for (const l of lines) { const [nombre, nif] = l.split(/[,;\t]/).map(s => s.trim()); if (!nombre) continue; await put("trabajadores", uid("t"), { nombre, nif: nif || "", activo: true, creado: Date.now() }); n++; }
+    closeModal(); toast(n + " trabajadores añadidos");
+  },
+
+  infTipo(el) { UI.inf.tipo = el.dataset.k; render(); },
+  infD(el) { const a = UI.inf.duenos; const i = a.indexOf(el.dataset.id); i < 0 ? a.push(el.dataset.id) : a.splice(i, 1); render(); },
+  infT(el) { const a = UI.inf.trabs; const i = a.indexOf(el.dataset.id); i < 0 ? a.push(el.dataset.id) : a.splice(i, 1); render(); },
+  infRango(el) {
+    const k = el.dataset.k; const F = UI.inf;
+    if (k === "todo") { const d = infDef(); F.desde = d.desde; F.hasta = d.hasta; }
+    if (k === "mes") { const d = new Date(); F.desde = isoD(new Date(d.getFullYear(), d.getMonth(), 1)); F.hasta = isoD(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
+    if (k === "semana") { F.hasta = hoy(); F.desde = addDays(hoy(), -6); }
+    if (k === "q") { F.desde = el.dataset.d; F.hasta = el.dataset.h; }
+    render();
+  },
+  async infPdf() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await pdfDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await pdfTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await pdfRegistro(fl); else await pdfGrafica(fl); },
+  async infXls() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await xlsDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await xlsTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await xlsRegistro(fl); else await xlsGrafica(fl); },
+  pdfDueno: el => pdfDuenos([el.dataset.id], perFl(UI.per.dueno)), xlsDueno: el => xlsDuenos([el.dataset.id], perFl(UI.per.dueno)),
+  pdfTrab: el => pdfTrabs([el.dataset.id], perFl(UI.per.trab)), xlsTrab: el => xlsTrabs([el.dataset.id], perFl(UI.per.trab)),
+
+  nuevaPl: () => formPlantilla(null), editPl: el => formPlantilla(el.dataset.id),
+  duplicarPl(el) { const p = plantilla(el.dataset.id); closeModal(); formPlantilla(null, { ...clone(p), generica: false, nombre: p.nombre + " (copia)", asesoria: p.generica ? "" : p.asesoria }); },
+  insPh(el) { const ta = $("#plCuerpo"); if (!ta || ta.disabled) return; const s = ta.selectionStart ?? ta.value.length; const t = "{{" + el.dataset.k + "}}"; ta.value = ta.value.slice(0, s) + t + ta.value.slice(ta.selectionEnd ?? s); ta.focus(); ta.selectionStart = ta.selectionEnd = s + t.length; },
+  async guardarPl(el) {
+    const f = leer("#fpl"); if (!f.nombre) return toast("Pon un nombre al modelo");
+    const campos = f.campos.split("\n").map(l => l.split("|").map(s => s.trim())).filter(a => a[0]).map(([clave, etiqueta, valor]) => ({ clave: clave.replace(/[^\w]/g, "_"), etiqueta: etiqueta || clave, valor: valor || "" }));
+    const id = el.dataset.id || uid("pl");
+    await put("plantillas", id, { nombre: f.nombre, asesoria: f.asesoria, tipo: "texto", titulo: f.titulo, cuerpo: $("#plCuerpo").value, campos, actualizado: Date.now() });
+    closeModal(); toast("Modelo guardado");
+  },
+  borrarPl(el) { confirmar("¿Borrar este modelo? Los documentos ya creados con él se quedarán sin modelo.", async () => { await del("plantillas", el.dataset.id); }); },
+  plFoto() {
+    openModal(`<div class="mh"><h2>Crear modelo desde foto</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+    <div class="stack"><div class="hint">Haz una foto al documento en blanco de tu asesoría. Claude lo transcribe y marca los huecos con los datos automáticos ({{dueno}}, {{finca}}…). Luego lo revisas y guardas.</div>
+    <label class="btn pri" style="align-self:flex-start">${ic("cam")}Hacer foto o elegir imagen<input type="file" accept="image/*" capture="environment" id="plIn" hidden></label><span class="hint" id="plMsg"></span></div>`);
+    const inp = $("#plIn"); inp.onchange = async () => {
+      const file = inp.files[0]; if (!file) return; const m = $("#plMsg"); m.textContent = "Leyendo el documento… puede tardar hasta un minuto.";
+      try {
+        const r = await SAMPLE.json(`Esta foto es un documento en blanco de una asesoría laboral española para la campaña de recolección de aceituna (por ejemplo, un documento de riesgos laborales). Transcríbelo en español como plantilla. Sustituye los huecos a rellenar por marcadores con doble llave. Usa estos marcadores automáticos cuando corresponda: ${PH_BASE.map(p => "{{" + p[0] + "}} (" + p[1] + ")").join(", ")}. Para cualquier otro hueco crea una clave en minúsculas sin acentos, úsala como {{clave}} y añádela a "campos". Responde solo con JSON: {"nombre":"nombre corto del documento","titulo":"título en mayúsculas","cuerpo":"texto completo con saltos de línea \\n","campos":[{"clave":"","etiqueta":""}]}. No incluyas casillas ni líneas para firmar.`, { images: [file], modelTier: "default" });
+        if (!r || !r.cuerpo) { m.textContent = "No se pudo transcribir el documento. Prueba con una foto más nítida."; return; }
+        closeModal(); formPlantilla(null, { nombre: r.nombre || "Modelo de la asesoría", titulo: r.titulo || "", tipo: "texto", cuerpo: r.cuerpo, campos: Array.isArray(r.campos) ? r.campos.map(c => ({ clave: String(c.clave || "").replace(/[^\w]/g, "_"), etiqueta: c.etiqueta || c.clave, valor: "" })).filter(c => c.clave) : [], asesoria: "" });
+        toast("Revisa el modelo y guárdalo");
+      } catch (e) { m.textContent = sampleErr(e); }
+    };
+  },
+  nuevoDoc: el => nuevoDocumento(el.dataset.id),
+  async crearDoc(el) {
+    const did = el.dataset.d, pid = el.dataset.id; const pl = plantilla(pid); const id = uid("doc");
+    const campos = {}; (pl.campos || []).forEach(c => campos[c.clave] = c.valor || "");
+    const ps = partesCamp().filter(p => p.duenoId === did).map(p => p.fecha).sort();
+    await put("documentos", id, { campanaId: camp().id, duenoId: did, plantillaId: pid, nombre: pl.nombre, fecha: hoy(), desde: ps[0] || camp().inicio || hoy(), hasta: ps[ps.length - 1] || hoy(), campos, trabajadores: (S.duenos[did].trabajadores || []).filter(t => S.trabajadores[t]), escaneos: [], creado: Date.now() });
+    closeModal(); abrirDocumento(id);
+  },
+  abrirDoc: el => abrirDocumento(el.dataset.id),
+  async docTog(el) { const id = $("#fdoc").dataset.id; const d = leerDocForm(id); const t = el.dataset.id; d.trabajadores ||= []; const i = d.trabajadores.indexOf(t); i < 0 ? d.trabajadores.push(t) : d.trabajadores.splice(i, 1); await put("documentos", id, d); abrirDocumento(id); },
+  async guardarDoc(el) { const id = el.dataset.id; await put("documentos", id, leerDocForm(id)); toast("Documento guardado"); },
+  async pdfDoc(el) { const id = el.dataset.id; await put("documentos", id, leerDocForm(id)); await pdfDocumento(id); },
+  async exportar() {
+    const all = {}; COLS.forEach(c => all[c] = S[c]);
+    if (MODE === "nube") for (const c of ["duenos", "partes", "documentos", "pagos"]) { try { const q = await DB.collection(c).get(); all[c] = {}; q.docs.forEach(d => all[c][d.id] = d.data()); } catch (e) { } }
+    // Las fotos de IndexedDB o de la nube van aparte, en «fotos», y el documento apunta a ellas con { foto }
+    const cab = { app: "campana-control", version: APP_VERSION, fecha: new Date().toISOString() };
+    const docs = clone(all.documentos || {}); const fotos = {}; let perdidas = 0;
+    if (Object.values(docs).some(d => (d.escaneos || []).some(s => !s.data))) toast("Preparando la copia con las fotos…");
+    for (const d of Object.values(docs)) for (const [i, s] of (d.escaneos || []).entries()) {
+      if (s.data) continue;
+      try { const k = s.foto || "a" + s.asset; fotos[k] = await blobToData(await blobDeFoto(s)); d.escaneos[i] = { foto: k }; } catch (e) { perdidas++; }
+    }
+    // Si falta alguna foto la copia lo dice dentro (incompleta, fotosFaltan) y se avisa con una ventana, no solo un mensaje breve
+    const total = Object.values(docs).reduce((s, d) => s + (d.escaneos || []).length, 0);
+    let data, aviso = perdidas ? (perdidas === 1 ? "1 foto no se pudo leer y no va en la copia." : `${perdidas} fotos no se pudieron leer y no van en la copia.`) : "";
+    try { data = JSON.stringify({ ...cab, ...(perdidas ? { incompleta: true, fotosFaltan: perdidas } : {}), S: { ...all, documentos: docs }, fotos }, null, 1); }
+    catch (e) {
+      const sinData = Object.values(all.documentos || {}).reduce((s, d) => s + (d.escaneos || []).filter(x => !x.data).length, 0);
+      data = JSON.stringify({ ...cab, ...(sinData ? { incompleta: true, fotosFaltan: sinData } : {}), S: all }, null, 1);
+      aviso = "Las fotos ocupan demasiado para un solo archivo y la copia se ha guardado sin ellas. Siguen en este dispositivo.";
+    }
+    await guardarArchivo(`CampanaControl-copia-${hoy()}.json`, new Blob([data], { type: "application/json" }));
+    if (aviso) openModal(`<div class="stack"><h2>Copia incompleta</h2><p style="margin:0">${esc(aviso)}</p><p class="muted small" style="margin:0">La copia lleva todos los datos, pero no ${total > 1 ? "todas las fotos" : "la foto"} de los documentos. Al importarla se avisará de lo que falta.</p><div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="cerrar">Entendido</button></div></div>`);
+  },
+  async instalar() {
+    const p = promptInstalar; if (!p) return toast("Usa el menú del navegador para instalarla (mira Ajustes → Instalar la app).");
+    promptInstalar = null; p.prompt();
+    try { const r = await p.userChoice; if (r?.outcome !== "accepted") toast("Instalación cancelada. Puedes hacerlo más tarde desde Ajustes."); } catch (e) { }
+    render();
+  },
+  ocultarInstalar() { try { localStorage.setItem(PREF_INSTALAR, "oculto"); } catch (e) { } render(); },
+  async descargarDanado() {
+    let raw = null; try { raw = localStorage.getItem(DANADO?.copia ? DANADO.clave : LKEY); } catch (e) { }
+    if (raw == null) return toast("No se encuentra el contenido dañado.");
+    await guardarArchivo(`CampanaControl-datos-danados-${hoy()}.txt`, new Blob([raw], { type: "text/plain" }));
+  },
+  borrarDoc(el) { const id = el.dataset.id; confirmar("¿Borrar este documento?", async () => { const fs = (S.documentos[id]?.escaneos || []).filter(s => s.foto); await del("documentos", id); for (const s of fs) await fotoDel(s.foto).catch(() => {}); }); }
+};
+function confirmar(txt, ok, boton = "Sí, borrar") {
+  openModal(`<div class="stack"><h2>¿Seguro?</h2><p style="margin:0">${esc(txt)}</p><div class="row" style="justify-content:flex-end"><button class="btn" data-act="cerrar">Cancelar</button><button class="btn pri" id="cfOk">${esc(boton)}</button></div></div>`);
+  $("#cfOk").onclick = async () => { closeModal(); await ok(); render(); };
+}
+document.addEventListener("click", async e => {
+  const ov = e.target.closest("[data-ov]"); if (ov && e.target === ov) { closeModal(); return; }
+  const el = e.target.closest("[data-act]"); if (!el || el.tagName === "SELECT" || (el.tagName === "INPUT" && el.type !== "button")) return;
+  const fn = A[el.dataset.act]; if (!fn) return;
+  if (el.tagName === "A" && el.getAttribute("href")?.startsWith("#") && el.dataset.act !== "parteHoy") e.preventDefault();
+  try { await fn(el, e); } catch (err) { console.error(err); toast("Algo ha fallado. Inténtalo otra vez."); }
+});
+document.addEventListener("change", e => {
+  const pk = e.target.dataset?.per; if (pk && e.target.value) { UI.per[pk] = { ...UI.per[pk], k: "custom", [e.target.dataset.campo]: e.target.value }; render(); return; }
+  const el = e.target; const a = el.dataset?.act; if (!a || !UI.draft) return;
+  const f = UI.draft.data.filas?.[el.dataset.id];
+  if (a === "tipoT" && f) { const c = camp(); const t = el.value; f.tipo = t; if (t === "mas") f.horas = +c.horasDia + 1; else if (t === "menos") f.horas = Math.max(0, +c.horasDia - 1); else if (t === "especial") f.horas = +c.horasDia; else f.horas = null; UI.draft.dirty = true; render(); }
+  if (a === "maqQ") { (UI.draft.data.maquinas ||= {})[el.dataset.id] = Math.max(0, parseInt(el.value) || 0); UI.draft.dirty = true; render(); }
+});
+document.addEventListener("input", e => {
+  const el = e.target; const a = el.dataset?.act; if (!a || !UI.draft) return;
+  const f = UI.draft.data.filas?.[el.dataset.id];
+  if (a === "horasT" && f) { f.horas = num(el.value); markDirty(); }
+  if (a === "notaT" && f) { f.nota = el.value; markDirty(); }
+});
+$("#campsel").onchange = async e => { await put("ajustes", "general", { ...aj(), campanaActiva: e.target.value }); UI.inf = null; UI.draft = null; UI.dueVer = null; ensureCampSubs(); };
+window.addEventListener("hashchange", () => { if (route() !== "duenos") UI.dueVer = UI.dueVer; window.scrollTo(0, 0); render(); });
+window.addEventListener("beforeunload", e => { if (UI.draft?.dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+/* ===================== Descargas ===================== */
+async function guardarArchivo(nombre, blob) {
+  if (DL) {
+    try { await DL.save({ filename: nombre, data: blob }); toast("Archivo listo: " + nombre); }
+    catch (e) { if (e?.code === "declined") return; if (e?.code === "rate_limited") toast("Espera un momento y vuelve a pulsar."); else toast("No se pudo descargar el archivo en esta vista."); }
+    return;
+  }
+  if (!STANDALONE) { toast("No se pudo descargar el archivo en esta vista."); return; }
+  // APK de Android (Capacitor): el WebView no descarga ni comparte archivos; se guarda en la caché de la app
+  // y se abre la hoja de compartir de Android (Drive, WhatsApp, correo, «Guardar en Archivos»…)
+  const cap = window.Capacitor?.isNativePlatform?.() ? window.Capacitor.Plugins : null;
+  if (cap?.Filesystem && cap?.Share) {
+    try {
+      const data = (await blobToData(blob)).split(",")[1];
+      const r = await cap.Filesystem.writeFile({ path: nombre, data, directory: "CACHE" });
+      await cap.Share.share({ title: nombre, files: [r.uri], dialogTitle: "Guardar o enviar " + nombre });
+    } catch (e) { if (!/cancel/i.test(e?.message || "")) toast("No se pudo guardar el archivo."); }
+    return;
+  }
+  try {
+    const file = new File([blob], nombre, { type: blob.type || "application/octet-stream" });
+    // En el móvil, la hoja de compartir permite guardar en Archivos, enviar por WhatsApp, etc.
+    if (/Android|iPhone|iPad/i.test(navigator.userAgent) && navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: nombre }); return; }
+  } catch (e) { if (e?.name === "AbortError") return; }
+  const url = URL.createObjectURL(blob); const a = document.createElement("a");
+  a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000); toast("Archivo descargado: " + nombre);
+}
+const slug = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "x";
+const periodoTxt = fl => (fl.desde || fl.hasta) ? `del ${fFechaL(fl.desde) || "inicio"} al ${fFechaL(fl.hasta) || "hoy"}` : "toda la campaña";
+
+/* ---------- PDF ---------- */
+const OLIVA = [70, 86, 28], OLIVA2 = [233, 236, 224], ORO = [168, 127, 18];
+function nuevoPdf(orient) { if (!window.jspdf) { toast("No se pudo cargar el generador de PDF. Revisa la conexión."); return null; } return new window.jspdf.jsPDF({ orientation: orient || "p", unit: "mm", format: "a4" }); }
+function pdfCab(doc, titulo, sub) {
+  const W = doc.internal.pageSize.getWidth(); const e = empresa();
+  doc.setFillColor(...OLIVA); doc.rect(0, 0, W, 24, "F");
+  doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.text(e.nombre || "CAMPAÑA CONTROL", 14, 10);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.text([e.nif && "NIF " + e.nif, e.direccion, e.telefono].filter(Boolean).join("  ·  ") || "Control de campaña de aceituna", 14, 16);
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12.5); doc.text(titulo, W - 14, 10, { align: "right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.text(sub || "", W - 14, 16, { align: "right" });
+  doc.setTextColor(28, 33, 19); return 32;
+}
+function pdfPie(doc) {
+  const n = doc.getNumberOfPages(); const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(120); doc.text("CAMPAÑA CONTROL · " + (camp()?.nombre || ""), 14, H - 7); doc.text("Página " + i + " de " + n, W - 14, H - 7, { align: "right" }); }
+}
+const T = (doc, opt) => { doc.autoTable({ theme: "grid", styles: { fontSize: 8.6, cellPadding: 1.8, lineColor: [213, 217, 199], lineWidth: .2, textColor: [28, 33, 19] }, headStyles: { fillColor: OLIVA, textColor: 255, fontStyle: "bold" }, footStyles: { fillColor: OLIVA2, textColor: [28, 33, 19], fontStyle: "bold" }, alternateRowStyles: { fillColor: [248, 249, 244] }, margin: { left: 14, right: 14 }, ...opt }); return doc.lastAutoTable.finalY; };
+const fNp = (n, d = 2) => fN(n, d);
+const fEp = n => fN(n, 2).replace(/^(-?\d+)$/, "$1,00") + " €";
+function eur(n) { return (+n || 0).toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €"; }
+function pdfBloque(doc, x, y, w, titulo, lineas) {
+  doc.setFillColor(...OLIVA2); doc.roundedRect(x, y, w, 7 + lineas.length * 4.6, 2, 2, "F");
+  doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...OLIVA); doc.text(titulo.toUpperCase(), x + 4, y + 5);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(28, 33, 19);
+  lineas.forEach((l, i) => doc.text(String(l), x + 4, y + 10 + i * 4.6, { maxWidth: w - 8 }));
+  return y + 7 + lineas.length * 4.6;
+}
+function espacio(doc, y, need) { const H = doc.internal.pageSize.getHeight(); if (y + need > H - 16) { doc.addPage(); return 18; } return y; }
+function pdfTitulo(doc, y, t) { doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.setTextColor(28, 33, 19); doc.text(t, 14, y); return y + 2; }
+// Barras apiladas de horas por día, un color por dueño. Devuelve la nueva y.
+function pdfChart(doc, y, rs, desde, hasta, alto = 52) {
+  const dias = rangoFechas(desde, hasta); if (!dias.length) return y;
+  const by = {}; rs.forEach(r => { if (r.tipo === "ausente") return; const o = by[r.fecha] ??= {}; o[r.duenoId] = (o[r.duenoId] || 0) + r.horas; });
+  const tot = d => Object.values(by[d] || {}).reduce((a, b) => a + b, 0); const mx = Math.max(0, ...dias.map(tot)); if (!mx) return y;
+  const step = mx <= 10 ? 2 : mx <= 25 ? 5 : mx <= 60 ? 10 : mx <= 150 ? 25 : 50; const top = Math.ceil(mx / step) * step;
+  y = espacio(doc, y, alto + 22);
+  const W = doc.internal.pageSize.getWidth(); const L = 24, Rr = W - 14, T = y, Bt = y + alto; const cw = (Rr - L) / dias.length; const bw = Math.min(6, cw * .72);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7); doc.setTextColor(110); doc.setDrawColor(213, 217, 199); doc.setLineWidth(.2);
+  for (let v = 0; v <= top + 1e-9; v += step) { const yy = Bt - v / top * alto; doc.line(L, yy, Rr, yy); doc.text(fN(v, 1), L - 2, yy + 1, { align: "right" }); }
+  const order = duenosCamp().map(d => d.id); const every = dias.length > 40 ? 5 : dias.length > 20 ? 2 : 1;
+  dias.forEach((d, i) => {
+    const x = L + i * cw + (cw - bw) / 2; let acc = 0; const o = by[d] || {};
+    [...order, ...Object.keys(o).filter(k => !order.includes(k))].forEach(did => { const h = o[did]; if (!h) return; const c = PAL_RGB[idxDueno(did)]; doc.setFillColor(...c); const h0 = acc / top * alto, h1 = (acc + h) / top * alto; doc.rect(x, Bt - h1, bw, h1 - h0, "F"); acc += h; });
+    const dn = +d.slice(8);
+    if (dn === 16 && i) { doc.setDrawColor(150); doc.setLineDashPattern([1, 1], 0); doc.line(L + i * cw, T, L + i * cw, Bt); doc.setLineDashPattern([], 0); doc.setDrawColor(213, 217, 199); }
+    if (i % every === 0 || dn === 1 || dn === 16) doc.text(String(dn), x + bw / 2, Bt + 4, { align: "center" });
+  });
+  let lx = L, ly = Bt + 10; doc.setFontSize(7.5); doc.setTextColor(80);
+  order.filter(did => dias.some(d => by[d]?.[did])).forEach(did => { const c = PAL_RGB[idxDueno(did)]; const t = nomD(did); const w = doc.getTextWidth(t) + 9; if (lx + w > Rr) { lx = L; ly += 4.5; } doc.setFillColor(...c); doc.rect(lx, ly - 2.6, 3, 3, "F"); doc.text(t, lx + 4.5, ly); lx += w + 4; });
+  doc.text("Horas por día · la línea discontinua separa las quincenas", Rr, ly, { align: "right" });
+  doc.setTextColor(28, 33, 19);
+  return ly + 6;
+}
+function pdfPagos(doc, y, titulo, pagos, totalTxt, total, pagado) {
+  y = espacio(doc, y, 34); y = pdfTitulo(doc, y, titulo);
+  if (pagos.length) y = T(doc, { startY: y, head: [["Día", "Hora", "Forma", "Nota", "Importe"]], body: pagos.map(p => [fFechaL(p.fecha), p.hora || "", formaTxt(p.forma), p.nota || "", eur(p.importe)]), foot: [["Total", "", "", "", eur(pagado)]], columnStyles: { 4: { halign: "right" } } }) + 6;
+  else { doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(110); doc.text("Sin pagos en este periodo.", 14, y + 5); doc.setTextColor(28, 33, 19); y += 10; }
+  // caja de saldo
+  y = espacio(doc, y, 30); const W = doc.internal.pageSize.getWidth(); const bx = W - 14 - 86; const resto = total - pagado;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+  [[totalTxt, eur(total)], ["Pagado", "− " + eur(pagado)]].forEach((f, j) => { doc.text(f[0], bx, y + 5 + j * 5.5); doc.text(f[1], W - 14, y + 5 + j * 5.5, { align: "right" }); });
+  const ty = y + 5 + 2 * 5.5; doc.setFillColor(...(resto < -0.004 ? [168, 53, 38] : OLIVA)); doc.roundedRect(bx - 3, ty - 1, 89, 10, 1.5, 1.5, "F");
+  doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(11.5); doc.text(resto < -0.004 ? "PAGADO DE MÁS" : "QUEDA PENDIENTE", bx, ty + 5.8); doc.text(eur(Math.abs(resto)), W - 14, ty + 5.8, { align: "right" });
+  doc.setTextColor(28, 33, 19);
+  return ty + 16;
+}
+
+async function pdfDuenos(ids, fl) {
+  const doc = nuevoPdf(); if (!doc) return; const c = camp(); const e = empresa();
+  const ks = ids.map(id => cuentaDueno(id, fl)).filter(k => k.dias.length || ids.length === 1);
+  if (!ks.length) return toast("No hay datos para esa selección");
+  ks.forEach((k, i) => {
+    if (i) doc.addPage();
+    const nume = "CC" + (c.anio || "") + "-" + pad2(k.d.num || i + 1) + (fl.hasta ? "-" + fl.hasta.slice(5).replace("-", "") : "");
+    let y = pdfCab(doc, "CUENTA DE RECOLECCIÓN", "Nº " + nume + "  ·  " + fFechaL(hoy()));
+    const W = doc.internal.pageSize.getWidth(); const half = (W - 28 - 6) / 2;
+    const y1 = pdfBloque(doc, 14, y, half, "Cliente (dueño)", [k.d.nombre || "", k.d.nif ? "NIF " + k.d.nif : "", k.d.direccion || "", [k.d.finca, k.d.municipio].filter(Boolean).join(", ")].filter(Boolean));
+    const y2 = pdfBloque(doc, 14 + half + 6, y, half, "Datos", [c.nombre, "Periodo: " + (k.dias.length ? fFechaL(k.dias[0].fecha) + " – " + fFechaL(k.dias[k.dias.length - 1].fecha) : periodoTxt(fl)), "Días trabajados: " + k.dias.length, "Precio hora: " + eur(k.precio)]);
+    y = Math.max(y1, y2) + 6;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text("Mano de obra", 14, y); y += 2;
+    y = T(doc, { startY: y, head: [["Trabajador", "Días", "Horas", "€/hora", "Importe"]], body: k.mano.map(m => [m.nombre, m.dias, fNp(m.horas), eur(m.precio), eur(m.importe)]), foot: [["Total mano de obra", "", fNp(k.horas), "", eur(k.tMano)]], columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } } }) + 6;
+    if (k.maquinas.length) {
+      y = espacio(doc, y, 30); doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text("Maquinaria", 14, y); y += 2;
+      y = T(doc, { startY: y, head: [["Máquina", "Unidades", "Precio", "Importe"]], body: k.maquinas.map(m => [m.nombre, fNp(m.ud) + " " + m.unidad + (m.ud === 1 ? "" : "s"), eur(m.precio) + " / " + m.unidad, eur(m.importe)]), foot: [["Total maquinaria", "", "", eur(k.tMaq)]], columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" } } }) + 6;
+    }
+    y = espacio(doc, y, 44);
+    const bx = W - 14 - 80; const filas = [["Mano de obra", eur(k.tMano)], ["Maquinaria", eur(k.tMaq)], ["Base", eur(k.base)]];
+    if (+c.iva) filas.push(["IVA " + fN(c.iva) + " %", eur(k.iva)]);
+    doc.setFontSize(9.5); filas.forEach((f, j) => { doc.setFont("helvetica", "normal"); doc.text(f[0], bx, y + 5 + j * 5.5); doc.text(f[1], W - 14, y + 5 + j * 5.5, { align: "right" }); });
+    const ty = y + 5 + filas.length * 5.5; doc.setFillColor(...OLIVA); doc.roundedRect(bx - 3, ty - 1, 83, 10, 1.5, 1.5, "F"); doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("TOTAL", bx, ty + 5.8); doc.text(eur(k.total), W - 14, ty + 5.8, { align: "right" }); doc.setTextColor(28, 33, 19);
+    let ly = y + 5; doc.setFontSize(9); doc.setFont("helvetica", "normal");
+    if (k.kilos) { doc.setFont("helvetica", "bold"); doc.text("Kilos recogidos: " + fN(k.kilos, 0) + " kg", 14, ly); doc.setFont("helvetica", "normal"); ly += 5; doc.text("Coste por kilo: " + fN(k.total / k.kilos, 3) + " €/kg", 14, ly); ly += 5; }
+    if (e.iban) { doc.text("Pago por transferencia a: " + e.iban, 14, ly); ly += 5; }
+    y = Math.max(ty + 16, ly + 4);
+    y = pdfPagos(doc, y, "Pagos del dueño", k.pagos, "Total cuenta", k.total, k.pagado);
+    if (k.dias.length) {
+      const rc = rangoCampana(); y = pdfTitulo(doc, espacio(doc, y, 80), "Horas por día") + 4; y = pdfChart(doc, y, k.rs, fl.desde || k.dias[0].fecha || rc.desde, fl.hasta || k.dias[k.dias.length - 1].fecha || rc.hasta);
+      y = espacio(doc, y, 30); doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text("Detalle por día", 14, y); y += 2;
+      T(doc, { startY: y, head: [["Fecha", "Trabajadores", "Faltas", "Horas", "Maquinaria", "Kilos"]], body: k.dias.map(x => [fFechaL(x.fecha), x.n, x.aus || "", fNp(x.horas), x.maq || "—", x.kilos != null ? fN(x.kilos, 0) : ""]), styles: { fontSize: 8 }, columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 5: { halign: "right" } } });
+    }
+  });
+  if (ks.length > 1) {
+    doc.addPage(); let y = pdfCab(doc, "RESUMEN DE DUEÑOS", periodoTxt(fl));
+    const sm = f => ks.reduce((s, k) => s + f(k), 0);
+    T(doc, { startY: y, head: [["Dueño", "Días", "Horas", "Mano de obra", "Maquinaria", "Total", "Pagado", "Pendiente"]], body: ks.map(k => [k.d.nombre, k.dias.length, fNp(k.horas), eur(k.tMano), eur(k.tMaq), eur(k.total), eur(k.pagado), eur(k.pendiente)]), foot: [["Total", "", fNp(sm(k => k.horas)), eur(sm(k => k.tMano)), eur(sm(k => k.tMaq)), eur(sm(k => k.total)), eur(sm(k => k.pagado)), eur(sm(k => k.pendiente))]], columnStyles: { 1: { halign: "right" }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } });
+  }
+  pdfPie(doc);
+  await guardarArchivo(`Cuenta-${ks.length === 1 ? slug(ks[0].d.nombre) : "duenos"}-${slug(c.nombre)}.pdf`, doc.output("blob"));
+}
+async function pdfTrabs(ids, fl) {
+  const doc = nuevoPdf(); if (!doc) return; const c = camp();
+  const rs = ids.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length || r.entregas.length || ids.length === 1).sort((a, b) => nomT(a.id).localeCompare(nomT(b.id), "es"));
+  if (!rs.length) return toast("No hay datos para esa selección");
+  let first = true;
+  if (rs.length > 1) {
+    let y = pdfCab(doc, "LIQUIDACIÓN DE TRABAJADORES", periodoTxt(fl)); first = false; const sm = f => rs.reduce((s, r) => s + f(r), 0);
+    T(doc, { startY: y, head: [["Trabajador", "DNI", "Días", "Faltas", "Horas", "Ganado", "Entregado", "Le queda"]], body: rs.map(r => [nomT(r.id), S.trabajadores[r.id]?.nif || "", r.dias, r.faltas || "", fNp(r.horas), eur(r.importe), eur(r.entregado), eur(r.pendiente)]), foot: [["Total", "", "", "", fNp(sm(r => r.horas)), eur(sm(r => r.importe)), eur(sm(r => r.entregado)), eur(sm(r => r.pendiente))]], columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" }, 5: { halign: "right" }, 6: { halign: "right" }, 7: { halign: "right" } } });
+  }
+  const rc = rangoCampana();
+  rs.forEach(r => {
+    if (!first) doc.addPage(); first = false;
+    const t = S.trabajadores[r.id] || {}; let y = pdfCab(doc, "CUENTA DEL TRABAJADOR", c.nombre + " · " + periodoTxt(fl));
+    const W = doc.internal.pageSize.getWidth(); const half = (W - 34) / 2;
+    const nd = new Set(r.rs.filter(x => x.tipo !== "ausente").map(x => x.duenoId)).size;
+    const y1 = pdfBloque(doc, 14, y, half, "Trabajador", [t.nombre || nomT(r.id), t.nif ? "DNI " + t.nif : "", t.nss ? "NSS " + t.nss : ""].filter(Boolean));
+    const y2 = pdfBloque(doc, 14 + half + 6, y, half, "Resumen", ["Días trabajados: " + r.dias + (r.faltas ? "   ·   Faltas: " + r.faltas : "") + "   ·   Dueños: " + nd, "Horas: " + fNp(r.horas) + "   ·   " + eur(r.precio) + "/h", "Ganado: " + eur(r.importe) + "   ·   Entregado: " + eur(r.entregado)]);
+    y = Math.max(y1, y2) + 6;
+    // saldo arriba, bien visible
+    doc.setFillColor(...(r.pendiente < -0.004 ? [168, 53, 38] : OLIVA)); doc.roundedRect(14, y, W - 28, 12, 2, 2, "F"); doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(12);
+    doc.text(r.pendiente < -0.004 ? "Se le ha adelantado de más" : "Te queda por cobrar", 19, y + 7.8); doc.text(eur(Math.abs(r.pendiente)), W - 19, y + 7.8, { align: "right" }); doc.setTextColor(28, 33, 19); y += 19;
+    if (r.rs.length) {
+      const ds = r.rs.map(x => x.fecha).sort();
+      y = pdfTitulo(doc, y, "Horas por día") + 4; y = pdfChart(doc, y, r.rs, fl.desde || ds[0] || rc.desde, fl.hasta || ds[ds.length - 1] || rc.hasta);
+      const qs = porQuincena(r.rs, () => r.precio);
+      if (qs.length) { y = pdfTitulo(doc, espacio(doc, y, 30), "Por quincena y dueño"); y = T(doc, { startY: y, head: [["Quincena", "Dueño", "Días", "Horas", "Importe"]], body: qs.map(q => [q.corto, nomD(q.duenoId), q.dias, fNp(q.horas), eur(q.importe)]), foot: [["Total", "", r.dias, fNp(r.horas), eur(r.importe)]], columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } } }) + 6; }
+    }
+    y = pdfPagos(doc, y, "Entregas de dinero", r.entregas, "Ganado", r.importe, r.entregado);
+    if (r.rs.length) {
+      y = pdfTitulo(doc, espacio(doc, y, 30), "Detalle diario");
+      T(doc, { startY: y, head: [["Fecha", "Dueño", "Tipo de día", "Horas", "Importe", "Nota"]], body: r.rs.map(x => [fFechaL(x.fecha), nomD(x.duenoId), tipoTxt(x.tipo), x.tipo === "ausente" ? "—" : fNp(x.horas), x.tipo === "ausente" ? "" : eur(x.horas * r.precio), x.nota]), foot: [["Total", "", "", fNp(r.horas), eur(r.importe), ""]], columnStyles: { 3: { halign: "right" }, 4: { halign: "right" } }, styles: { fontSize: 8 },
+        didParseCell: d => { if (d.section === "body" && r.rs[d.row.index]?.tipo === "ausente") d.cell.styles.textColor = [168, 53, 38]; } });
+    }
+  });
+  pdfPie(doc);
+  await guardarArchivo(`Cuenta-${rs.length === 1 ? slug(nomT(rs[0].id)) : "trabajadores"}-${slug(c.nombre)}.pdf`, doc.output("blob"));
+}
+async function pdfGrafica(fl) {
+  const doc = nuevoPdf("l"); if (!doc) return; const c = camp();
+  const n = registros({ ...fl, trabs: fl.trabs }); if (!n.length) return toast("No hay datos para esa selección");
+  let y = pdfCab(doc, "GRÁFICA DE LA CAMPAÑA", periodoTxt(fl) + (fl.duenos?.length ? " · " + fl.duenos.map(nomD).join(", ") : " · todos los dueños"));
+  y = pdfChart(doc, y + 2, n, fl.desde, fl.hasta, 80);
+  const qs = porQuincena(n, r => precioD(r.duenoId));
+  y = pdfTitulo(doc, espacio(doc, y, 30), "Por quincena y dueño");
+  y = T(doc, { startY: y, head: [["Quincena", "Dueño", "Días con parte", "Horas", "Mano de obra"]], body: qs.map(q => [q.corto, nomD(q.duenoId), q.dias, fNp(q.horas), eur(q.importe)]), foot: [["Total", "", "", fNp(qs.reduce((s, q) => s + q.horas, 0)), eur(qs.reduce((s, q) => s + q.importe, 0))]], columnStyles: { 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } } });
+  pdfPie(doc);
+  await guardarArchivo(`Grafica-${slug(c.nombre)}-${(fl.desde || "").slice(5)}_${(fl.hasta || "").slice(5)}.pdf`, doc.output("blob"));
+}
+async function pdfRegistro(fl) {
+  const doc = nuevoPdf("l"); if (!doc) return; const c = camp();
+  const ids = (fl.trabs?.length ? fl.trabs : lista("trabajadores").map(t => t.id));
+  const rs = ids.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length).sort((a, b) => nomT(a.id).localeCompare(nomT(b.id), "es"));
+  if (!rs.length) return toast("No hay datos para esa selección");
+  const dias = rangoFechas(fl.desde, fl.hasta);
+  let y = pdfCab(doc, "REGISTRO DE HORAS", periodoTxt(fl) + (fl.duenos?.length ? " · " + fl.duenos.map(nomD).join(", ") : " · todos los dueños"));
+  const chunks = []; for (let i = 0; i < dias.length; i += 16) chunks.push(dias.slice(i, i + 16));
+  chunks.forEach((ch, ci) => {
+    if (ci) { doc.addPage(); y = 18; }
+    T(doc, { startY: y, head: [["Trabajador", ...ch.map(d => pD(d).toLocaleDateString("es-ES", { weekday: "narrow" }) + " " + pD(d).getDate() + "/" + (pD(d).getMonth() + 1)), "Total"]], body: rs.map(r => { const by = {}; r.rs.forEach(x => { if (x.tipo === "ausente") { if (!by[x.fecha]) by[x.fecha] = "F"; } else by[x.fecha] = (by[x.fecha] === "F" ? 0 : by[x.fecha] || 0) + x.horas; }); return [nomT(r.id), ...ch.map(d => by[d] === "F" ? "F" : by[d] ? fNp(by[d]) : ""), fNp(r.rs.filter(x => ch.includes(x.fecha)).reduce((s, x) => s + x.horas, 0))]; }), styles: { fontSize: 7.5, halign: "center", cellPadding: 1.4 }, columnStyles: { 0: { halign: "left", cellWidth: 42 } },
+      didParseCell: d => { if (d.section === "body" && d.cell.raw === "F") { d.cell.styles.textColor = [168, 53, 38]; d.cell.styles.fontStyle = "bold"; } } });
+  });
+  doc.addPage(); y = 18;
+  rs.forEach(r => {
+    const meses = [...new Set(r.rs.map(x => x.fecha.slice(0, 7)))].sort();
+    meses.forEach(m => { y = espacio(doc, y, 62); y = calPdf(doc, y, nomT(r.id), m, r.rs); });
+  });
+  doc.setPage(1); doc.setFontSize(8); doc.setTextColor(90); doc.text("F = no asistió. Horas totales por trabajador en el periodo y los dueños seleccionados.", 14, doc.internal.pageSize.getHeight() - 12);
+  pdfPie(doc);
+  await guardarArchivo(`Registro-horas-${slug(c.nombre)}.pdf`, doc.output("blob"));
+}
+function calPdf(doc, y, nombre, ym, rs) {
+  const [yy, mm] = ym.split("-").map(Number); const first = new Date(yy, mm - 1, 1); const n = new Date(yy, mm, 0).getDate(); const off = (first.getDay() + 6) % 7;
+  const by = {}; let tot = 0; rs.forEach(x => { if (x.fecha.startsWith(ym)) { (by[x.fecha] ??= []).push(x); tot += x.horas; } });
+  doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.setTextColor(28, 33, 19);
+  doc.text(nombre + " — " + first.toLocaleDateString("es-ES", { month: "long", year: "numeric" }) + " — " + fNp(tot) + " h", 14, y + 4);
+  const cw = 26, chh = 8; const x0 = 14; let yy0 = y + 7;
+  ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].forEach((d, i) => { doc.setFontSize(7.5); doc.setTextColor(90); doc.text(d, x0 + i * cw + 1.5, yy0 + 3); });
+  yy0 += 4.5;
+  for (let d = 1; d <= n; d++) {
+    const idx = off + d - 1; const col = idx % 7, row = Math.floor(idx / 7);
+    const x = x0 + col * cw, yc = yy0 + row * chh; const k = ym + "-" + pad2(d); const xs = by[k] || [];
+    const aus = xs.length && xs.every(z => z.tipo === "ausente"); const h = xs.reduce((s, z) => s + z.horas, 0);
+    if (xs.length) { doc.setFillColor(...(aus ? [246, 220, 215] : OLIVA2)); doc.rect(x, yc, cw, chh, "F"); }
+    doc.setDrawColor(213, 217, 199); doc.rect(x, yc, cw, chh);
+    doc.setFontSize(7); doc.setTextColor(110); doc.setFont("helvetica", "normal"); doc.text(String(d), x + 1.3, yc + 2.9);
+    if (xs.length) { doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.setTextColor(...(aus ? [168, 53, 38] : OLIVA)); doc.text(aus ? "Falta" : fNp(h) + " h", x + cw - 1.5, yc + 6.4, { align: "right" }); }
+  }
+  doc.setTextColor(28, 33, 19); doc.setFont("helvetica", "normal");
+  return yy0 + Math.ceil((off + n) / 7) * chh + 7;
+}
+function imgSize(data) { return new Promise(r => { const im = new Image(); im.onload = () => r([im.width, im.height]); im.onerror = () => r([3, 1]); im.src = data; }); }
+async function pdfDocumento(docId) {
+  const d = S.documentos[docId]; const pl = plantilla(d.plantillaId);
+  if (!pl) return toast("El modelo de este documento ya no existe");
+  const doc = nuevoPdf(); if (!doc) return; const v = valoresDoc(d, pl); const W = doc.internal.pageSize.getWidth();
+  let y = pdfCab(doc, (pl.asesoria || "DOCUMENTO").toUpperCase().slice(0, 40), nomD(d.duenoId));
+  doc.setFont("helvetica", "bold"); doc.setFontSize(12); const tl = doc.splitTextToSize(rellenar(pl.titulo, v), W - 28); doc.text(tl, W / 2, y + 2, { align: "center" }); y += tl.length * 5.5 + 5;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+  for (const par of rellenar(pl.cuerpo, v).split("\n")) {
+    const ls = doc.splitTextToSize(par || " ", W - 28);
+    for (const l of ls) { y = espacio(doc, y, 6); const bold = /^\d+\.\s[A-ZÁÉÍÓÚÑ ]{4,}/.test(l); doc.setFont("helvetica", bold ? "bold" : "normal"); doc.text(l, 14, y); y += 4.6; }
+    y += 1.2;
+  }
+  for (const s of d.escaneos || []) {
+    try {
+      const data = s.data || await blobToData(await blobDeFoto(s));
+      const [iw, ih] = await imgSize(data); doc.addPage(); const H = doc.internal.pageSize.getHeight();
+      const sc = Math.min((W - 20) / iw, (H - 30) / ih); doc.setFontSize(8.5); doc.text("Foto del documento en papel", 10, 10);
+      doc.addImage(data, "JPEG", (W - iw * sc) / 2, 14, iw * sc, ih * sc);
+    } catch (e) { }
+  }
+  pdfPie(doc);
+  await guardarArchivo(`${slug(pl.nombre)}-${slug(nomD(d.duenoId))}.pdf`, doc.output("blob"));
+}
+
+/* ---------- Excel ---------- */
+function hoja(aoa, anchos) { const ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = (anchos || aoa[0].map(() => 14)).map(w => ({ wch: w })); return ws; }
+function nombreHoja(wb, n) { let b = String(n).replace(/[\\\/\?\*\[\]:]/g, " ").slice(0, 28) || "Hoja"; let s = b, i = 2; while (wb.SheetNames.includes(s)) s = b.slice(0, 26) + " " + i++; return s; }
+async function libro(wb, nombre) { if (!window.XLSX) return toast("No se pudo cargar el generador de Excel."); const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }); await guardarArchivo(nombre, new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })); }
+const r2 = n => Math.round((+n || 0) * 100) / 100;
+async function xlsDuenos(ids, fl) {
+  if (!window.XLSX) return toast("No se pudo cargar el generador de Excel."); const c = camp();
+  const ks = ids.map(id => cuentaDueno(id, fl)).filter(k => k.dias.length || ids.length === 1); if (!ks.length) return toast("No hay datos para esa selección");
+  const wb = XLSX.utils.book_new();
+  const res = [["Cuentas de dueños", c.nombre, periodoTxt(fl)], [], ["Dueño", "NIF", "Días", "Horas", "€/hora", "Mano de obra (€)", "Maquinaria (€)", "Base (€)", "IVA (€)", "Total (€)", "Pagado (€)", "Pendiente (€)", "Kilos"]];
+  ks.forEach(k => res.push([k.d.nombre, k.d.nif || "", k.dias.length, r2(k.horas), k.precio, r2(k.tMano), r2(k.tMaq), r2(k.base), r2(k.iva), r2(k.total), r2(k.pagado), r2(k.pendiente), k.kilos || ""]));
+  const sm = f => r2(ks.reduce((s, k) => s + f(k), 0));
+  res.push(["TOTAL", "", "", sm(k => k.horas), "", sm(k => k.tMano), sm(k => k.tMaq), sm(k => k.base), sm(k => k.iva), sm(k => k.total), sm(k => k.pagado), sm(k => k.pendiente), ks.reduce((s, k) => s + k.kilos, 0) || ""]);
+  XLSX.utils.book_append_sheet(wb, hoja(res, [28, 12, 7, 9, 8, 15, 14, 12, 10, 12, 12, 13, 10]), "Resumen");
+  ks.forEach(k => {
+    const a = [["Cuenta de " + k.d.nombre, c.nombre, periodoTxt(fl)], [], ["MANO DE OBRA"], ["Trabajador", "Días", "Horas", "€/hora", "Importe (€)"]];
+    k.mano.forEach(m => a.push([m.nombre, m.dias, r2(m.horas), m.precio, r2(m.importe)])); a.push(["Total mano de obra", "", r2(k.horas), "", r2(k.tMano)], []);
+    a.push(["MAQUINARIA"], ["Máquina", "Unidades", "Precio (€)", "Por", "Importe (€)"]); k.maquinas.forEach(m => a.push([m.nombre, m.ud, m.precio, m.unidad, r2(m.importe)])); a.push(["Total maquinaria", "", "", "", r2(k.tMaq)], []);
+    a.push(["Base", "", "", "", r2(k.base)], ["IVA " + (c.iva || 0) + "%", "", "", "", r2(k.iva)], ["TOTAL", "", "", "", r2(k.total)], ["Kilos", "", "", "", k.kilos || ""], []);
+    a.push(["PAGOS DEL DUEÑO"], ["Día", "Hora", "Forma", "Nota", "Importe (€)"]); k.pagos.forEach(p => a.push([fFechaL(p.fecha), p.hora || "", formaTxt(p.forma), p.nota || "", r2(p.importe)]));
+    a.push(["Total pagado", "", "", "", r2(k.pagado)], ["PENDIENTE", "", "", "", r2(k.pendiente)], []);
+    a.push(["DETALLE POR DÍA"], ["Fecha", "Trabajadores", "Faltas", "Horas", "Maquinaria", "Kilos"]); k.dias.forEach(x => a.push([fFechaL(x.fecha), x.n, x.aus, r2(x.horas), x.maq, x.kilos ?? ""]));
+    a.push([], ["DETALLE POR TRABAJADOR Y DÍA"], ["Fecha", "Trabajador", "Tipo", "Horas", "Nota"]);
+    registros({ ...fl, duenos: [k.d.id], trabs: [] }).forEach(r => a.push([fFechaL(r.fecha), nomT(r.trabId), tipoTxt(r.tipo), r2(r.horas), r.nota]));
+    XLSX.utils.book_append_sheet(wb, hoja(a, [26, 22, 14, 10, 30, 10]), nombreHoja(wb, k.d.nombre));
+  });
+  await libro(wb, `Cuenta-${ks.length === 1 ? slug(ks[0].d.nombre) : "duenos"}-${slug(c.nombre)}.xlsx`);
+}
+async function xlsTrabs(ids, fl) {
+  if (!window.XLSX) return toast("No se pudo cargar el generador de Excel."); const c = camp();
+  const rs = ids.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length || ids.length === 1).sort((a, b) => nomT(a.id).localeCompare(nomT(b.id), "es"));
+  if (!rs.length) return toast("No hay datos para esa selección");
+  const wb = XLSX.utils.book_new();
+  const res = [["Cuentas de trabajadores", c.nombre, periodoTxt(fl)], [], ["Trabajador", "DNI", "Días", "Faltas", "Horas", "€/hora", "Ganado (€)", "Entregado (€)", "Le queda (€)"]];
+  rs.forEach(r => res.push([nomT(r.id), S.trabajadores[r.id]?.nif || "", r.dias, r.faltas, r2(r.horas), r.precio, r2(r.importe), r2(r.entregado), r2(r.pendiente)]));
+  const sm = f => r2(rs.reduce((s, r) => s + f(r), 0));
+  res.push(["TOTAL", "", "", "", sm(r => r.horas), "", sm(r => r.importe), sm(r => r.entregado), sm(r => r.pendiente)]);
+  XLSX.utils.book_append_sheet(wb, hoja(res, [28, 12, 7, 7, 9, 8, 12, 13, 12]), "Resumen");
+  const qd = [["Trabajador", "Quincena", "Dueño", "Días", "Horas", "Importe (€)"]];
+  rs.forEach(r => porQuincena(r.rs, () => r.precio).forEach(q => qd.push([nomT(r.id), q.corto, nomD(q.duenoId), q.dias, r2(q.horas), r2(q.importe)])));
+  XLSX.utils.book_append_sheet(wb, hoja(qd, [26, 14, 24, 7, 9, 12]), "Por quincena");
+  const en = [["Trabajador", "Día", "Hora", "Forma", "Nota", "Importe (€)"]];
+  rs.forEach(r => r.entregas.forEach(p => en.push([nomT(r.id), fFechaL(p.fecha), p.hora || "", formaTxt(p.forma), p.nota || "", r2(p.importe)])));
+  XLSX.utils.book_append_sheet(wb, hoja(en, [26, 12, 8, 14, 26, 12]), "Entregas");
+  const det = [["Fecha", "Trabajador", "Dueño", "Tipo", "Horas", "€/hora", "Importe (€)", "Nota"]];
+  rs.forEach(r => r.rs.forEach(x => det.push([fFechaL(x.fecha), nomT(r.id), nomD(x.duenoId), tipoTxt(x.tipo), r2(x.horas), r.precio, r2(x.horas * r.precio), x.nota])));
+  XLSX.utils.book_append_sheet(wb, hoja(det, [12, 26, 24, 13, 7, 8, 11, 24]), "Detalle diario");
+  await libro(wb, `Cuenta-${rs.length === 1 ? slug(nomT(rs[0].id)) : "trabajadores"}-${slug(c.nombre)}.xlsx`);
+}
+async function xlsRegistro(fl) {
+  if (!window.XLSX) return toast("No se pudo cargar el generador de Excel."); const c = camp();
+  const ids = fl.trabs?.length ? fl.trabs : lista("trabajadores").map(t => t.id);
+  const rs = ids.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length).sort((a, b) => nomT(a.id).localeCompare(nomT(b.id), "es"));
+  if (!rs.length) return toast("No hay datos para esa selección");
+  const dias = rangoFechas(fl.desde, fl.hasta);
+  const a = [["Registro de horas", c.nombre, periodoTxt(fl), fl.duenos?.length ? fl.duenos.map(nomD).join(", ") : "Todos los dueños"], [], ["Trabajador", ...dias.map(d => fFechaL(d)), "Total horas", "Días", "Faltas", "Importe (€)"]];
+  rs.forEach(r => { const by = {}; r.rs.forEach(x => { if (x.tipo === "ausente") { if (by[x.fecha] == null) by[x.fecha] = "F"; } else by[x.fecha] = (by[x.fecha] === "F" ? 0 : by[x.fecha] || 0) + x.horas; }); a.push([nomT(r.id), ...dias.map(d => by[d] === "F" ? "F" : by[d] ? r2(by[d]) : ""), r2(r.horas), r.dias, r.faltas, r2(r.importe)]); });
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, hoja(a, [26, ...dias.map(() => 10), 11, 6, 7, 11]), "Registro");
+  const pd = [["Dueño", "Trabajador", "Días", "Horas"]]; const agg = {};
+  registros(fl).forEach(r => { if (r.tipo === "ausente" || (fl.trabs?.length && !fl.trabs.includes(r.trabId))) return; const k = r.duenoId + "|" + r.trabId; const o = agg[k] ??= { d: r.duenoId, t: r.trabId, dias: 0, h: 0 }; o.dias++; o.h += r.horas; });
+  Object.values(agg).sort((x, y) => nomD(x.d).localeCompare(nomD(y.d), "es") || nomT(x.t).localeCompare(nomT(y.t), "es")).forEach(o => pd.push([nomD(o.d), nomT(o.t), o.dias, r2(o.h)]));
+  XLSX.utils.book_append_sheet(wb, hoja(pd, [26, 26, 7, 9]), "Por dueño");
+  await libro(wb, `Registro-horas-${slug(c.nombre)}.xlsx`);
+}
+
+async function xlsGrafica(fl) {
+  if (!window.XLSX) return toast("No se pudo cargar el generador de Excel."); const c = camp();
+  const n = registros({ ...fl, trabs: fl.trabs }); if (!n.length) return toast("No hay datos para esa selección");
+  const wb = XLSX.utils.book_new();
+  const q = [["Gráfica de la campaña", c.nombre, periodoTxt(fl)], [], ["Quincena", "Dueño", "Días con parte", "Horas", "Mano de obra (€)"]];
+  porQuincena(n, r => precioD(r.duenoId)).forEach(x => q.push([x.corto, nomD(x.duenoId), x.dias, r2(x.horas), r2(x.importe)]));
+  XLSX.utils.book_append_sheet(wb, hoja(q, [16, 26, 14, 10, 16]), "Por quincena");
+  const ds = duenosCamp().filter(d => n.some(r => r.duenoId === d.id)); const dias = rangoFechas(fl.desde, fl.hasta);
+  const t = [["Día", ...ds.map(d => d.nombre), "Total horas"]];
+  dias.forEach(d => { const v = ds.map(x => r2(n.filter(r => r.fecha === d && r.duenoId === x.id && r.tipo !== "ausente").reduce((s, r) => s + r.horas, 0))); t.push([fFechaL(d), ...v.map(x => x || ""), r2(v.reduce((a, b) => a + b, 0)) || ""]); });
+  XLSX.utils.book_append_sheet(wb, hoja(t, [12, ...ds.map(() => 18), 12]), "Horas por día");
+  await libro(wb, `Grafica-${slug(c.nombre)}.xlsx`);
+}
+
+/* ===================== Arranque ===================== */
+async function boot() {
+  render();
+  const cl = window.claude;
+  if (!cl?.use) {
+    MODE = "local"; loadLocal(); render(); migrarFotos();
+    navigator.storage?.persist?.().catch(() => {}); // pide al navegador que no borre los datos si falta espacio
+    return;
+  }
+  const [db, as, dl, sm] = await Promise.all(["db", "assets", "downloads", "sample"].map(n => cl.use(n).catch(() => null)));
+  ASSETS = as; DL = dl; SAMPLE = sm;
+  if (sm) { try { const l = await sm.limits(); SAMPLE_IMG = !!l?.images; } catch (e) { SAMPLE_IMG = false; } }
+  if (db) { DB = db; MODE = "nube"; subscribeGlobal(); }
+  else { MODE = "local"; loadLocal(); migrarFotos(); }
+  render();
+}
+boot();
+</script>

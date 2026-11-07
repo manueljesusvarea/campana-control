@@ -1,0 +1,21 @@
+{
+  "id": "./index.html",
+  "name": "CAMPAÑA CONTROL",
+  "short_name": "Campaña",
+  "description": "Control de la campaña de aceituna: partes diarios, horas, maquinaria, kilos, pagos y cuentas.",
+  "lang": "es-ES",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f2f3ec",
+  "theme_color": "#46561c",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

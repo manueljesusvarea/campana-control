@@ -1,0 +1,80 @@
+apply plugin: 'com.android.application'
+
+// Versión del APK:
+//  - versionName = APP_VERSION del código fuente (claude-artifact/campana-control.html), para que no haya dos números
+//  - versionCode = versión × 1000 + número de compilación de GitHub Actions (0 al compilar en local).
+//    Tiene que subir siempre para que Android acepte la actualización sin desinstalar:
+//    2.3.0 local → 20300000, 2.3.0 en GitHub (ejecución 7) → 20300007, 2.4.0 → 20400000…
+def fuenteApp = file('../../claude-artifact/campana-control.html').getText('UTF-8')
+def versionApp = (fuenteApp =~ /const APP_VERSION = "([^"]+)"/)[0][1]
+def partesVersion = versionApp.tokenize('.').collect { it.replaceAll(/\D.*/, '') as Integer } + [0, 0, 0]
+def ejecucion = ((System.getenv('GITHUB_RUN_NUMBER') ?: '0') as Integer) % 1000
+def codigoApp = ((partesVersion[0] * 100 + partesVersion[1]) * 100 + partesVersion[2]) * 1000 + ejecucion
+
+// Firma: si existen estas variables (GitHub Actions las crea desde los secretos del repositorio)
+// el APK de «release» se firma con la clave propia, y así se puede actualizar sin desinstalar.
+def claveFirma = System.getenv('ANDROID_KEYSTORE_FILE')
+
+android {
+    namespace = "es.campanacontrol.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "es.campanacontrol.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode codigoApp
+        versionName versionApp
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (claveFirma) {
+            release {
+                storeFile file(claveFirma)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (claveFirma) { signingConfig signingConfigs.release }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

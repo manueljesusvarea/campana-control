@@ -1,0 +1,83 @@
+# Genera el instalador de Windows (.exe) en cada cambio de la rama main (gratis en GitHub Actions)
+# y lo publica en «Releases», junto al APK de la misma versión.
+# No está firmado (un certificado cuesta dinero): Windows avisará de «editor desconocido».
+#
+# Seguridad: solo «push» a main o a mano (nunca pull requests). Este flujo no usa secretos.
+# La compilación tiene permiso de solo lectura; la «Release» se crea en otro trabajo.
+
+name: Instalador de Windows
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.ver }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Generar www/index.html desde el código fuente
+        run: python herramientas/construir_www.py
+
+      - name: Instalar Electron (sin ejecutar scripts de paquetes)
+        working-directory: windows
+        run: npm ci --ignore-scripts
+
+      - name: Crear el instalador
+        working-directory: windows
+        run: node construir.js
+
+      - name: Versión
+        id: version
+        run: |
+          VER=$(sed -n 's/.*const APP_VERSION = "\([^"]*\)".*/\1/p' claude-artifact/campana-control.html)
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Guardar el instalador en la ejecución
+        uses: actions/upload-artifact@v5
+        with:
+          name: exe
+          path: windows/dist/CampanaControl-Setup-*.exe
+          if-no-files-found: error
+
+  # Misma «Release» que el APK (v2.3.0…). Si la versión no cambia, se sustituye el .exe.
+  publicar:
+    needs: exe
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: exe
+      - name: Publicar en Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VER: ${{ needs.exe.outputs.version }}
+        run: |
+          gh release view "v$VER" > /dev/null 2>&1 || gh release create "v$VER" --target "$GITHUB_SHA" --title "CAMPAÑA CONTROL $VER" \
+            --notes "Android: descarga el archivo .apk en el móvil y ábrelo. Windows: descarga el .exe y ejecútalo (Más información → Ejecutar de todas formas)." || true
+          gh release upload "v$VER" "CampanaControl-Setup-$VER.exe" --clobber

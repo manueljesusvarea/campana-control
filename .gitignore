@@ -1,0 +1,9 @@
+node_modules/
+android/app/build/
+*.keystore
+*.jks
+.DS_Store
+Thumbs.db
+windows/dist/
+herramientas/pruebas/resultado*.json
+windows/dist-*/
