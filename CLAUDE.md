@@ -39,6 +39,8 @@ docs/DATOS.md                          ← modelo de datos y cálculos
 
 **Versión:** `APP_VERSION` del código fuente es la única. El APK (`versionName`), el instalador de Windows y las «Releases» de GitHub la leen de ahí. Súbela en cada versión que se publique.
 
+**Publicación.** Repositorio público https://github.com/manueljesusvarea/campana-control; web https://manueljesusvarea.github.io/campana-control/. Cada `push` a `main` publica la web y compila el APK firmado y el `.exe` en la Release `v<APP_VERSION>`. Usa `[skip ci]` en commits solo de documentación. No hagas push sin autorización del dueño del proyecto.
+
 **Plataformas.** Al subir a la rama `main` de GitHub, los tres flujos generan el APK, el `.exe` y la web. Para compilarlos en este ordenador:
 - APK: `npx cap sync android` y después `gradlew assembleRelease` dentro de `android/`, con `JAVA_HOME` (JDK 21) y las variables `ANDROID_KEYSTORE_FILE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` y `ANDROID_KEY_PASSWORD` (ver `..\..\clave-android\LEEME-CLAVE.txt`). **Gradle no compila en rutas con «Ñ»** («CAMPAÑA CONTROL»): copia el proyecto a una ruta solo ASCII y compila allí.
 - Windows: `npm ci` y `node construir.js` dentro de `windows/`. Con Node 26 o posterior, npm no ejecuta los scripts de instalación: si falta `node_modules/electron/dist`, ejecuta `node node_modules/electron/install.js`.

@@ -1,11 +1,71 @@
 # Guía de publicación piloto · CAMPAÑA CONTROL 2.3.0
 
-Fecha de la verificación: 6-11-2026. **No se ha publicado nada todavía:** no hay repositorio en GitHub, push, release ni web en internet.
+Verificación previa: 6-11-2026. **Publicada el 7-11-2026** (ver § 0). Los apartados 1 a 12 son la guía original; lo que dicen como «pendiente de GitHub» ya está resuelto en § 0.
 
 **Cómo leer el estado de cada cosa:**
-- ✅ **Comprobado**: probado de verdad en este ordenador.
+- ✅ **Comprobado**: probado de verdad en este ordenador o en GitHub.
 - 🔶 **Simulado**: probado imitando el entorno (por ejemplo, la identificación del navegador de un iPhone).
-- ⬜ **Pendiente**: necesita un teléfono real o la cuenta de GitHub. **No se ha usado ningún iPhone ni ningún Android.**
+- ⬜ **Pendiente**: necesita un teléfono real. **No se ha usado ningún iPhone ni ningún Android.**
+
+---
+
+## 0. Resultado real de la publicación (7-11-2026)
+
+| Qué | Dónde / estado | Comprobado |
+| --- | --- | --- |
+| **Web (PWA)** | **https://manueljesusvarea.github.io/campana-control/** | ✅ |
+| Repositorio (público) | https://github.com/manueljesusvarea/campana-control (commit `8643d93`, 133 archivos) | ✅ |
+| APK Android | https://github.com/manueljesusvarea/campana-control/releases/download/v2.3.0/CampanaControl-2.3.0.apk | ✅ |
+| Instalador Windows | https://github.com/manueljesusvarea/campana-control/releases/download/v2.3.0/CampanaControl-Setup-2.3.0.exe | ✅ |
+| Página de la versión | https://github.com/manueljesusvarea/campana-control/releases/tag/v2.3.0 | ✅ |
+
+**Flujos de GitHub Actions** (ejecución del primer `push`, 7-11-2026): los tres ✅ correctos.
+- «Web (GitHub Pages)»: publicado con `deploy-pages`.
+- «APK de Android»:
+  - se ejecutó el paso **«Compilar APK firmado»** y el APK de pruebas se omitió;
+  - el trabajo «publicar» subió el APK a la Release.
+- «Instalador de Windows»: compilado y subido a la Release.
+
+**Secretos:** `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` y `ANDROID_KEY_PASSWORD`, configurados el 7-11-2026.
+- Salen de los archivos originales de `clave-android`. No se generó ninguna clave nueva.
+- Antes se comprobó que esa clave es la que firmó los APK 2.2.0 y 2.3.0 (certificado SHA-256 `2ec5f7c9…b9d5`).
+- Los valores no se mostraron en ningún momento y no aparecen en los registros (comprobado en las 660 líneas del registro del APK).
+
+**GitHub Pages:**
+- origen «GitHub Actions» y HTTPS obligatorio;
+- `http://…` y `/campana-control` sin barra redirigen (301) a la dirección HTTPS con barra.
+
+**Comprobaciones hechas sobre lo publicado** (automáticas, desde este ordenador):
+
+| Comprobación | Resultado |
+| --- | --- |
+| La web responde | ✅ HTTP 200. Certificado HTTPS válido (verificación estricta de `curl`). |
+| Versión | ✅ «2.3.0» en `index.html`; caché `2.3.0-adc46213f6` |
+| Archivos del service worker | ✅ Los 22 responden 200 con su tipo correcto (HTML, JS, CSS, manifiesto, PNG, WOFF2). |
+| Contenido | ✅ Igual al comprobado en local, salvo los fines de línea y la huella de caché, que GitHub recalcula al reconstruir en Linux. |
+| PWA en Chrome (perfil vacío) | ✅ Service worker activo con alcance `/campana-control/`. **0 errores de manifiesto y 0 de instalabilidad.** Iconos 192, 512, maskable 512 y 180 (iPhone) con su tamaño real. 0 peticiones externas, 0 errores de consola, fuentes y librerías cargadas. |
+| Sin conexión | ✅ Con todas las peticiones de red bloqueadas, la app reabre desde la copia guardada **sin ninguna petición de red**. Funcionan la versión 2.3.0, el PDF y el Excel. |
+| APK de la Release | ✅ `es.campanacontrol.app`, versión 2.3.0, `versionCode` **20300001** (mayor que el 20300000 local). Firmado con la **misma clave original**, así que se instala encima sin desinstalar. |
+| EXE de la Release | ✅ Programa de Windows válido, versión 2.3.0 (116 MB) |
+| Datos locales existentes | ✅ No se han tocado. La web publicada es otra dirección: sus datos empiezan vacíos y no afectan a `localhost:8000`, al APK ni al programa de Windows. Para pasarlos, usa la copia (§ 3.3). |
+
+**Problemas encontrados y cómo se resolvieron:**
+1. **Inicio de sesión de GitHub CLI**: varios intentos con códigos de dispositivo no llegaron a completarse. Se resolvió con **Git Credential Manager** (incluido en Git para Windows): ventana «Sign in with your browser» y autorización en el navegador. El acceso se guarda en el Administrador de credenciales de Windows; `gh` lo usa solo durante cada orden, sin guardarlo aparte.
+2. **Seguridad de los flujos** (antes de usar los secretos):
+   - la clave solo llega al paso de firma;
+   - compilar tiene permiso de solo lectura y la Release se crea en otro trabajo sin la clave;
+   - `npm ci --ignore-scripts` y `checkout` sin guardar credenciales;
+   - `.gitattributes` para los fines de línea.
+
+   Todo esto se probó compilando a partir de una copia exacta de los 133 archivos.
+3. **Fines de línea** (sin efecto en la app): `construir_www.py` escribe CRLF en Windows y LF en Linux. Por eso la huella de caché de GitHub no coincide con la del PC. Propuesta para más adelante: que el script escriba siempre LF.
+
+**Pendiente:**
+- las pruebas en teléfonos reales del § 10: iPhone con Safari y desde el icono, Android con el APK y la PWA, cámara, hoja de compartir, modo avión y actualizar el APK encima;
+- instalar el `.exe` en un Windows;
+- decidir si se rellenan los enlaces de descarga dentro de la app (`DESCARGAS.apk` y `DESCARGAS.exe`, ahora vacíos) con las URL verificadas de arriba. Es un cambio de código: habría que hacer un commit y otra compilación.
+
+**Actualizar en el futuro:** cada `git push` a `main` vuelve a publicar la web y a compilar el APK y el `.exe`. Para cambios que solo afectan a la documentación, pon `[skip ci]` en el mensaje del commit y no se recompila nada.
 
 ---
 

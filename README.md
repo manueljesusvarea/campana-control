@@ -2,6 +2,8 @@
 
 Control de la campaña de aceituna: partes diarios, horas de cada trabajador, maquinaria, kilos, entregas de dinero, pagos de los dueños, gráficas por quincena, documentos de la asesoría y cuentas en PDF y Excel.
 
+**Abrir la app:** https://manueljesusvarea.github.io/campana-control/ · **Descargas (APK y Windows):** https://github.com/manueljesusvarea/campana-control/releases/latest
+
 Los datos se guardan en cada dispositivo. Para pasarlos a otro, o guardar una copia, usa **Ajustes → Copia de seguridad → Exportar copia**, y en el otro dispositivo **Importar copia**. La copia lleva también las fotos de los documentos.
 
 ## Probar en local antes de publicar

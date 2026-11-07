@@ -72,3 +72,10 @@ Falta que el dueño cree la cuenta de GitHub y autorice publicar.
 ## Más adelante (no hacer sin pedirlo)
 - Usuarios, contraseñas y roles (administrador, creador, lector para dueños y trabajadores). El dueño del proyecto lo ha aparcado.
 - Sincronización automática entre dispositivos. Necesitaría un servidor; de momento se usa la copia de seguridad.
+
+### 9. Publicación piloto ✔ Hecho (7-11-2026)
+- Web: https://manueljesusvarea.github.io/campana-control/
+- Repositorio: https://github.com/manueljesusvarea/campana-control
+- Release v2.3.0 con el APK firmado y el `.exe`.
+- Resultado y comprobaciones en `docs/GUIA_PUBLICACION_PILOTO.md` § 0.
+- Pendiente: pruebas en teléfonos reales.
