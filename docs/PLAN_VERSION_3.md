@@ -26,7 +26,7 @@ Las condiciones de los planes gratuitos se comprobaron el 7-11-2026 en las fuent
 | Etapa | Contenido | Estado |
 | --- | --- | --- |
 | A · Preparación | Rama, análisis, elección de backend, modelo de datos, permisos (RLS) y pruebas de seguridad en PostgreSQL real | ✔ Hecha (7-11-2026). Ver «Resultado de la etapa A». |
-| B · Autenticación | Proyecto Supabase, migraciones aplicadas, alta e inicio de sesión en la app, superadministrador, pruebas contra el proyecto real | Necesita que el dueño cree la cuenta y el proyecto de Supabase |
+| B · Autenticación | Proyecto Supabase, migraciones aplicadas, alta e inicio de sesión en la app, superadministrador, pruebas contra el proyecto real | En curso: proyecto de pruebas creado y verificado (14/14 pruebas reales, 7-11-2026). Falta la pantalla de inicio de sesión en la app. |
 | C · Campañas y roles | Selector de campaña, invitaciones, gestión de roles y equipos en la interfaz | — |
 | D · Funciones compartidas | Partes, pagos, maquinaria y cuentas contra la base de datos; tiempo real; avisos de conflicto y de falta de conexión | — |
 | E · Informes y migración | PDF y Excel locales a partir de los datos autorizados; fotos privadas; asistente de migración desde la copia 2.3.0 | — |

@@ -73,6 +73,37 @@ Si el jefe también trabaja, recibe además el rol de trabajador con su ficha, y
 | La auditoría registra quién cambió horas y pagos, y nadie puede borrarla ni falsearla | ✅ |
 | Cuentas exactas (caso de control 2.3.0) en trabajador y dueño | ✅ |
 
+## Pruebas contra Supabase real (etapa B, 7-11-2026)
+
+**Proyecto de pruebas:** `campana-control-pruebas`, en la organización Free «Campana Control», región Europa. Configuración:
+- Data API activa;
+- «exponer tablas nuevas automáticamente» desactivado;
+- RLS automática activada;
+- «Confirm email» desactivado **solo en este proyecto y temporalmente**.
+
+**Migraciones aplicadas:** `…000001`, `…000002`, `…000003` y `supabase/pruebas/solo_proyecto_pruebas.sql`.
+
+La URL y la clave pública de ese proyecto **no están en el repositorio**: van en `supabase/pruebas/.env.pruebas`, ignorado por git. Motivo: el proyecto de pruebas tiene una regla que hace superadministrador a quien se registre como `superadmin…@pruebas.example.com`.
+
+`supabase/pruebas/real.test.mjs`: **14 de 14 correctas**. Son peticiones directas a la API de Supabase, con 11 cuentas ficticias y una sesión independiente para cada una:
+
+| Comprobado contra Supabase real | Resultado |
+| --- | --- |
+| Las 22 tablas existen; un anónimo no lee ninguna | ✅ |
+| Diagnóstico interno: RLS activada y forzada en las 22; 73 políticas, 35 claves foráneas, 26 comprobaciones | ✅ |
+| Creador autorizado: campaña, fichas, asignaciones y 7 invitaciones canjeadas | ✅ |
+| Dos sesiones: el creador registra 8 h y el administrador las ve al instante | ✅ |
+| El trabajador ve sus 8 h y 80 € y nada más; el jefe de otro equipo no ve el registro | ✅ |
+| Nadie se hace superadministrador, creador ni administrador por su cuenta | ✅ |
+| Un usuario sin campaña no ve ningún dato privado | ✅ |
+| Jefe, trabajador, dueño y administrador: 7 intentos de escritura cada uno, todos rechazados | ✅ |
+| Cuenta del dueño: 8 h × 12 € = 96 €; otro dueño no la ve | ✅ |
+| Campañas separadas, también al intentar enlazar fichas ajenas | ✅ |
+| Conflicto entre dos sesiones: la edición antigua recibe `CONFLICTO` (HTTP 409) | ✅ |
+| Auditoría con el autor de las jornadas; el trabajador no la lee | ✅ |
+
+**Incidencia encontrada y corregida:** el código `40001` de los conflictos hacía que la API de Supabase reintentara hasta agotar el tiempo. Ahora es `PT409` (HTTP 409), en la migración `…000003`. En PostgreSQL local no se veía.
+
 **Pendiente:**
-- repetir las pruebas contra el proyecto Supabase real, incluidas las de Storage (fotos);
-- pruebas de la app con sesiones simultáneas desde varios dispositivos (etapas B a D).
+- probar Storage (fotos) con la app;
+- pruebas de la interfaz con sesiones en varios dispositivos (etapas B a D).
