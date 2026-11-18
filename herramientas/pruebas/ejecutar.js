@@ -602,9 +602,11 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
     await ev(movil, `await t.ir("#campanas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombreCamp)}); t.rellenar('#fnueva [name="horas"]', "8");
       t.rellenar('#fnueva [name="ptrab"]', "10"); t.rellenar('#fnueva [name="pdueno"]', "12"); await t.pulsar('[data-act="nCrearCampana"]');
       await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombreCamp)} && NUBE.d, 20000, "crear campaña"); return true;`);
-    const fichas = await ev(movil, `await t.ir("#n-personas");
-      for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]'); await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); }
-      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño");
+    const fichas = await ev(movil, `await t.ir("#n-personas"); const aviso = () => " · aviso en pantalla: «" + (t.q("#toast")?.textContent || "") + "» · vista: " + location.hash;
+      for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]');
+        try { await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); } catch (e) { throw new Error(e.message + aviso()); } }
+      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]');
+      try { await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño"); } catch (e) { throw new Error(e.message + aviso()); }
       const id = n => NUBE.d.trab.find(x => x.nombre === n).id; return { t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: NUBE.d.duenos[0].id };`);
     const codAdmin = await invitar(movil, "admin", ""), codTrab = await invitar(movil, "trabajador", "t:" + fichas.t1), codJefe = await invitar(movil, "jefe", "");
 
@@ -656,6 +658,14 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
       await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.borrador?.version === ${parte.version + 1}, 15000, "recarga tras el conflicto");
       return { antes, despues: { version: NUBE.borrador.version, kilos: +NUBE.d.partes[0].kilos }, aviso: document.body.innerText.includes("Otra persona ha cambiado esto") };`);
     ok(conflicto.antes.version === parte.version && conflicto.despues.kilos === 2400 && conflicto.aviso, "conflicto: " + JSON.stringify(conflicto));
+    // Capturas de lo que ve cada uno (solo si se pide con CAPTURAS=<carpeta>; datos ficticios)
+    if (process.env.CAPTURAS) {
+      fs.mkdirSync(process.env.CAPTURAS, { recursive: true });
+      for (const [nombre, w, h] of [["1-creador-android", movil, "#n-inicio"], ["2-admin-windows", pc, "#n-inicio"], ["3-trabajador-iphone", iphone, "#n-mis-jornadas"], ["4-jefe-otro-equipo", jefe, "#n-equipo"], ["5-conflicto-pc", pc2, "#n-parte"]]) {
+        if (nombre !== "5-conflicto-pc") await ev(w, `await t.ir(${JSON.stringify(h)}); render(); await t.dormir(300); return true;`);
+        fs.writeFileSync(path.join(process.env.CAPTURAS, nombre + ".png"), (await w.webContents.capturePage()).toPNG());
+      }
+    }
     return { campana: nombreCamp, roles: { admin: rolesAdmin, trabajador: rolesTrab, jefe: rolesJefe }, parte,
       tiempoReal_ms: { administrador: admin.ms - t0, trabajador: trab.ms - t0 }, trabajador: { horas: trab.horas, euros: trab.importe / 100 }, jefeVe: jef.equipo, conflicto };
   } finally { SRV.nube = false; }

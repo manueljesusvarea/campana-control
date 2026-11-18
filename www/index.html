@@ -1751,8 +1751,11 @@ async function nubeElegir(id, sinRender) {
   if (!sinRender) render();
 }
 // Carga selectiva: cada rol pide solo lo suyo (las políticas RLS filtran igualmente en el servidor)
+// Solo vale la carga más reciente: si una recarga por tiempo real empezó antes de guardar algo y termina
+// después, sus datos (anteriores al cambio) no deben pisar los nuevos.
+let nCargaN = 0;
 async function nubeCargar() {
-  const sb = NUBE.sb, c = NUBE.c.campana_id, d = { campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
+  const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
   d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia").eq("id", c).single());
   if (nConsulta()) {
     const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
@@ -1773,6 +1776,7 @@ async function nubeCargar() {
   if (NUBE.roles.includes("trabajador")) d.resumen = await nq(sb.rpc("resumen_trabajador", { p_campana: c }));
   if (NUBE.roles.includes("dueno")) d.cuenta = await nq(sb.rpc("cuenta_dueno", { p_campana: c }));
   if (NUBE.roles.includes("jefe")) d.equipo = await nq(sb.rpc("jornadas_equipo", { p_campana: c }));
+  if (n !== nCargaN || NUBE.c?.campana_id !== c) return;   // llegó otra carga más reciente (o se cambió de campaña)
   NUBE.d = d; NUBE.cuentas = {};
 }
 // Tiempo real: solo se avisa de cambios en esta campaña (Realtime respeta RLS) y se recarga una vez, agrupando avisos
