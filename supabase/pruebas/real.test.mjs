@@ -1,35 +1,29 @@
-// Pruebas de seguridad CONTRA EL PROYECTO SUPABASE DE PRUEBAS (no producción), con peticiones directas a la API.
-// Cada usuario ficticio tiene su propio cliente y su propia sesión (como dispositivos distintos).
-// Configuración (no se sube a git): supabase/pruebas/.env.pruebas con
-//   SUPABASE_URL=https://xxxx.supabase.co
-//   SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-// Requiere haber aplicado las migraciones y solo_proyecto_pruebas.sql en ese proyecto.
+// Pruebas de seguridad CONTRA EL PROYECTO SUPABASE DE PRUEBAS (no producción) · cuentas privadas (migraciones 000006-7).
+// Peticiones directas a la API y a la Edge Function «gestion-usuarios», cada usuario ficticio con su propia sesión
+// (como dispositivos distintos). No se usa la interfaz: así se prueban las políticas y las operaciones del servidor.
 //
-// Cuentas con permisos (superadministrador y dos creadores): son FIJAS y sus permisos los da el propietario del
-// proyecto con SQL, por uuid (nunca por el correo). Primera vez:
-//   node real.test.mjs --preparar   → crea las 3 cuentas ficticias con contraseñas aleatorias guardadas solo en
-//                                     .cuentas-pruebas.json (ignorado por git; nunca se muestran) y escribe el SQL
-//                                     de designación fuera del repositorio. Ejecútalo en el editor SQL del panel.
-// El resto de cuentas (administrador, jefes, trabajadores, dueños) se crean nuevas en cada ejecución y solo
-// obtienen acceso canjeando un código de invitación, como en la realidad.
+// Configuración (no se sube a git): .env.pruebas (URL y clave pública) y .cuentas-pruebas.json con el
+// superadministrador de pruebas «propietario.pruebas» (su contraseña la guarda esta prueba al cambiar la temporal).
 // Uso: node real.test.mjs
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import crypto from "node:crypto";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const env = { ...process.env };
-const fenv = path.join(dir, ".env.pruebas");
-if (existsSync(fenv)) for (const l of readFileSync(fenv, "utf8").split(/\r?\n/)) { const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.+?)\s*$/); if (m) env[m[1]] ??= m[2]; }
+for (const l of readFileSync(path.join(dir, ".env.pruebas"), "utf8").split(/\r?\n/)) { const m = l.match(/^\s*([A-Z_]+)\s*=\s*(.+?)\s*$/); if (m) env[m[1]] ??= m[2]; }
 const URL_ = env.SUPABASE_URL, KEY = env.SUPABASE_PUBLISHABLE_KEY;
-if (!URL_ || !KEY) { console.error("Falta SUPABASE_URL o SUPABASE_PUBLISHABLE_KEY (supabase/pruebas/.env.pruebas)"); process.exit(2); }
-if (/sb_secret|service_role/i.test(KEY)) { console.error("Esa es una clave SECRETA: no se usa en las pruebas ni en la app."); process.exit(2); }
-if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(URL_)) { console.error("La URL no parece de Supabase: " + URL_); process.exit(2); }
+if (!URL_ || !KEY || /sb_secret|service_role/i.test(KEY)) { console.error("Falta la URL o la clave PÚBLICA (nunca una secreta) en .env.pruebas"); process.exit(2); }
+const FCUENTAS = path.join(dir, ".cuentas-pruebas.json");
+const F = existsSync(FCUENTAS) ? JSON.parse(readFileSync(FCUENTAS, "utf8")) : {};
+if (!F.propietario) { console.error("Falta el superadministrador de pruebas (propietario) en .cuentas-pruebas.json"); process.exit(2); }
 
+const DOMINIO = "@usuarios.campana-control.invalid";
 const TABLAS = ["perfiles", "superadmin", "campanas", "campanas_economia", "trabajadores", "trabajadores_privado", "duenos", "duenos_privado", "duenos_trabajadores",
-  "miembros", "asignaciones_equipo", "maquinas", "partes", "partes_filas", "partes_maquinas", "pagos", "plantillas", "documentos", "fotos", "invitaciones", "auditoria", "importaciones", "autorizaciones_creador"];
+  "miembros", "asignaciones_equipo", "maquinas", "partes", "partes_filas", "partes_maquinas", "pagos", "plantillas", "documentos", "fotos", "invitaciones", "auditoria",
+  "importaciones", "autorizaciones_creador", "altas_pendientes"];
 const nuevo = () => createClient(URL_, KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
 const resultados = [];
 const ok = (c, m) => { if (!c) throw new Error(m); };
@@ -37,283 +31,270 @@ async function prueba(nombre, fn) {
   try { const d = await fn(); resultados.push({ nombre, ok: true }); console.log("OK     " + nombre + (d ? "  → " + d : "")); }
   catch (e) { resultados.push({ nombre, ok: false }); console.log("FALLA  " + nombre + "\n       → " + e.message); }
 }
-// Errores esperados: la API devuelve error (permiso, RLS, conflicto) → devuelve el mensaje
-const espera_error = async (p, txt) => { const { error } = await p; ok(error, "se permitió: " + txt); return error.message; };
-// Cambios sin efecto: RLS deja la operación en 0 filas
-const cero_filas = async (p, txt) => { const { data, error } = await p; ok(error || (data || []).length === 0, "se modificaron filas: " + txt); };
+const espera_error = async (p, txt) => { const r = await p; ok(r.error, "se permitió: " + txt); return r.error.message; };
+const cero = async (p, txt) => { const r = await p; ok(r.error || !(r.data || []).length, "se modificaron filas: " + txt); };
+const nq = async (p, txt = "") => { const r = await p; if (r.error) throw new Error(txt + r.error.message); return r.data; };
+const run = Date.now().toString(36).slice(-5);
+const S = {};   // sesiones por persona: { cli, usuario, clave, id }
 
-const run = Date.now().toString(36) + crypto.randomBytes(2).toString("hex");
-const C = {};   // clientes (sesiones independientes) por usuario
-// Alta como en la app: desde la 000004 solo con un código de invitación válido (lo comprueba y gasta el servidor)
-async function cuenta(nombre, codigo) {
-  const c = nuevo(); const email = `${nombre}-${run}@pruebas.example.com`; const password = crypto.randomBytes(18).toString("base64url");
-  const { data, error } = await c.auth.signUp({ email, password, options: { data: { nombre: nombre + " (ficticio)", ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
-  if (error) throw new Error(`alta de ${nombre}: ${error.message}`);
-  if (!data.session) throw new Error(`alta de ${nombre}: sin sesión (¿«Confirm email» sigue activo en el proyecto de pruebas?)`);
-  c.id = data.user.id; c.email = email; C[nombre] = c; return c;
+// Edge Function: devuelve { estado, datos }
+async function funcion(cli, cuerpo) {
+  const r = await cli.functions.invoke("gestion-usuarios", { body: cuerpo });
+  if (!r.error) return { estado: 200, datos: r.data };
+  let datos = {}; try { datos = await r.error.context.json(); } catch (_) { }
+  return { estado: r.error.context?.status || 0, datos };
 }
-async function altaRechazada(nombre, codigo) {
-  const c = nuevo(); const { data, error } = await c.auth.signUp({ email: `${nombre}-${run}@pruebas.example.com`, password: crypto.randomBytes(18).toString("base64url"),
-    options: { data: { nombre, ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
-  ok(error && !data?.session && !data?.user?.id, `alta «${nombre}» permitida`); return error.message;
+const entrar = async (usuario, clave) => { const cli = nuevo(); const r = await cli.auth.signInWithPassword({ email: usuario + DOMINIO, password: clave }); return { cli, error: r.error, id: r.data?.user?.id }; };
+const claveNueva = () => crypto.randomBytes(12).toString("base64url");
+// Alta completa como en la app: quien crea → contraseña temporal → la persona entra y pone la suya
+async function alta(quien, nombreClave, datos) {
+  const usuario = (nombreClave + "." + run).toLowerCase();
+  const r = await funcion(S[quien].cli, { accion: "crear", usuario, nombre: datos.nombre || nombreClave, ...datos });
+  ok(r.estado === 200 && r.datos.clave_temporal, `alta de ${usuario}: ${r.estado} ${JSON.stringify(r.datos)}`);
+  const e = await entrar(usuario, r.datos.clave_temporal); ok(!e.error, "entrar con la temporal: " + e.error?.message);
+  const clave = claveNueva();
+  const c = await funcion(e.cli, { accion: "cambiar_clave", actual: r.datos.clave_temporal, nueva: clave });
+  ok(c.estado === 200 && c.datos.activo === true, "cambiar la temporal: " + JSON.stringify(c));
+  // Al cambiar la contraseña, Supabase cierra las sesiones anteriores: se vuelve a entrar con la nueva
+  const e2 = await entrar(usuario, clave); ok(!e2.error, "entrar con la nueva: " + e2.error?.message);
+  S[nombreClave] = { cli: e2.cli, usuario, clave, id: e2.id };
+  return S[nombreClave];
 }
-// Cuentas fijas con permisos: contraseñas solo en este ordenador (.cuentas-pruebas.json, ignorado por git)
-const FIJAS = ["superadmin", "creadorA", "creadorB"];
-const fcuentas = path.join(dir, ".cuentas-pruebas.json");
-const leerFijas = () => existsSync(fcuentas) ? JSON.parse(readFileSync(fcuentas, "utf8")) : {};
-async function cuentaFija(nombre) {
-  const f = leerFijas()[nombre];
-  if (!f) throw new Error(`falta la cuenta fija «${nombre}»: ejecuta  node real.test.mjs --preparar`);
-  const c = nuevo(); const { data, error } = await c.auth.signInWithPassword({ email: f.email, password: f.password });
-  if (error) throw new Error(`entrada de ${nombre}: ${error.message}`);
-  c.id = data.user.id; C[nombre] = c; return c;
-}
-if (process.argv.includes("--preparar")) {
-  // Con el alta controlada (000004) cada cuenta nueva necesita un código. En un proyecto nuevo, el propietario
-  // genera tres en el editor SQL —  select cc_priv.emitir_autorizacion_creador(1, null);  — y los pasa en la
-  // variable CODIGOS_ALTA="C1,C2,C3" (no se guardan). Después se designa por uuid como siempre.
-  const fijas = leerFijas(), codigos = (env.CODIGOS_ALTA || "").split(",").map(x => x.trim()).filter(Boolean);
-  for (const n of FIJAS) {
-    if (fijas[n]) continue;
-    const email = `${n.toLowerCase()}-fija-${crypto.randomBytes(4).toString("hex")}@pruebas.example.com`, password = crypto.randomBytes(24).toString("base64url");
-    const codigo = codigos.shift();
-    const { data, error } = await nuevo().auth.signUp({ email, password, options: { data: { nombre: n + " (ficticio, fijo)", ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
-    if (error || !data.user) { console.error(`Alta de ${n}: ${error?.message || "sin usuario"}${codigo ? "" : " (falta un código: ver CODIGOS_ALTA)"}`); process.exit(1); }
-    fijas[n] = { email, password, id: data.user.id };
-    writeFileSync(fcuentas, JSON.stringify(fijas, null, 2), { mode: 0o600 });   // tras cada alta, para no perder ninguna
-  }
-  const sqlDir = path.resolve(dir, "../../../../supabase-sql"); mkdirSync(sqlDir, { recursive: true });
-  const fsql = path.join(sqlDir, "03-designar-cuentas-prueba.sql");
-  writeFileSync(fsql, `-- ⚠️ SOLO PROYECTO DE PRUEBAS. Generado por real.test.mjs --preparar el ${new Date().toISOString().slice(0, 10)}.
--- Da permisos a las cuentas ficticias fijas POR SU UUID (no por el correo). Ejecutar después de solo_proyecto_pruebas.sql.
-update public.perfiles set puede_crear_campanas = (id in ('${fijas.creadorA.id}', '${fijas.creadorB.id}'));
-insert into public.superadmin (user_id) values ('${fijas.superadmin.id}')
-  on conflict (unico) do update set user_id = excluded.user_id;
-select 'superadmin' as que, user_id::text as id from public.superadmin
-union all select 'puede_crear_campanas', id::text from public.perfiles where puede_crear_campanas
-union all select 'disparador por correo (debe salir 0)', count(*)::text from pg_trigger where tgname in ('zz_preparar_prueba', 'preparar_prueba');
-`);
-  console.log("Cuentas fijas listas (contraseñas solo en .cuentas-pruebas.json):");
-  for (const n of FIJAS) console.log(`  ${n.padEnd(10)} ${fijas[n].id}`);
-  console.log("Ejecuta en el editor SQL del proyecto de PRUEBAS: solo_proyecto_pruebas.sql y después\n  " + fsql);
-  process.exit(0);
-}
-const rpc = (c, f, args) => c.rpc(f, args).then(r => { if (r.error) throw new Error(f + ": " + r.error.message); return r.data; });
-const ins = (c, t, fila) => c.from(t).insert(fila).select().single().then(r => { if (r.error) throw new Error(t + ": " + r.error.message); return r.data; });
 
-/* ---------- 1. Esquema visto desde fuera (anónimo) ---------- */
+/* ---------- 0. Nadie entra por otra puerta ---------- */
 const anon = nuevo();
-await prueba(`Las ${TABLAS.length} tablas existen y un anónimo no puede leer ninguna`, async () => {
-  const faltan = [], legibles = [];
-  for (const t of TABLAS) {
-    const { data, error } = await anon.from(t).select("*").limit(1);
-    if (error && /PGRST205|does not exist|Could not find the table/i.test(error.code + error.message)) faltan.push(t);
-    else if (!error && data.length) legibles.push(t);
-    else if (!error) legibles.push(t + " (vacía, pero sin error de permiso)");
+await prueba(`Sin sesión: las ${TABLAS.length} tablas cerradas, registro público rechazado, Edge Function y funciones de alta rechazadas`, async () => {
+  const legibles = [];
+  for (const t of TABLAS) { const { data, error } = await anon.from(t).select("*").limit(1); if (!error && data?.length) legibles.push(t); }
+  ok(!legibles.length, "un anónimo lee: " + legibles.join(", "));
+  const reg = await anon.auth.signUp({ email: "colado." + run + DOMINIO, password: claveNueva() });
+  ok(reg.error && !reg.data?.user?.id, "el registro público creó una cuenta");
+  await espera_error(anon.from("altas_pendientes").insert({ usuario: "colado", nombre: "x", tipo: "superadmin" }), "anónimo inserta un alta");
+  await espera_error(anon.rpc("preparar_alta", { p_usuario: "colado", p_nombre: "x", p_tipo: "creador" }), "anónimo prepara un alta");
+  const f = await funcion(anon, { accion: "crear", tipo: "creador", usuario: "colado." + run, nombre: "x" });
+  ok(f.estado === 401, "la Edge Function sin sesión respondió " + f.estado);
+  return `0 tablas legibles · registro: ${reg.error.status} · función: 401`;
+});
+
+/* ---------- 1. Superadministrador (cuenta privada) ---------- */
+await prueba("El superadministrador entra con usuario y contraseña (y pone la suya si tenía una temporal)", async () => {
+  let e = await entrar(F.propietario.usuario, F.propietario.password); ok(!e.error, "entrar: " + e.error?.message);
+  if (F.propietario.temporal) {
+    await espera_error(e.cli.rpc("admin_estadisticas"), "panel global con la contraseña temporal");
+    const nueva = claveNueva();
+    const c = await funcion(e.cli, { accion: "cambiar_clave", actual: F.propietario.password, nueva });
+    ok(c.estado === 200 && c.datos.activo, "cambiar la temporal: " + JSON.stringify(c));
+    F.propietario.password = nueva; delete F.propietario.temporal; writeFileSync(FCUENTAS, JSON.stringify(F, null, 2), { mode: 0o600 });
+    e = await entrar(F.propietario.usuario, nueva); ok(!e.error, "entrar con la nueva: " + e.error?.message);
   }
-  ok(!faltan.length, "faltan tablas: " + faltan.join(", "));
-  ok(!legibles.length, "un anónimo puede consultar: " + legibles.join(", "));
-  await espera_error(anon.rpc("mis_campanas"), "anónimo llamando a mis_campanas");
-  return `${TABLAS.length}/${TABLAS.length} tablas · 0 legibles sin sesión`;
+  S.super = { cli: e.cli, usuario: F.propietario.usuario, id: e.id };
+  const d = await nq(e.cli.rpc("diagnostico_esquema"));
+  const mal = d.filter(x => !x.rls || !x.rls_forzado || x.anon_puede_leer);
+  ok(!mal.length, "tablas sin RLS forzada: " + mal.map(x => x.tabla).join(", "));
+  return `${d.length} tablas con RLS forzada`;
 });
 
-/* ---------- 2. Cuentas ficticias (cada una con su sesión) ---------- */
-for (const n of FIJAS) await cuentaFija(n);
+/* ---------- 2-4. Creador ---------- */
+await prueba("1-4 · El superadministrador crea un creador; el creador entra, cambia su contraseña temporal y crea su campaña", async () => {
+  const usuario = "gestor." + run;
+  const r = await funcion(S.super.cli, { accion: "crear", tipo: "creador", usuario, nombre: "Gestor " + run });
+  ok(r.estado === 200 && r.datos.clave_temporal?.length === 12, "alta: " + JSON.stringify(r));
+  const e = await entrar(usuario, r.datos.clave_temporal); ok(!e.error, "entrar con la temporal");
+  await espera_error(e.cli.rpc("crear_campana", { p_nombre: "No" }), "crear campaña con la temporal");
+  // Cambiar la contraseña solo por la vía controlada (Auth directo no habilita la cuenta)
+  const directo = claveNueva(); await e.cli.auth.updateUser({ password: directo });
+  await espera_error(e.cli.rpc("crear_campana", { p_nombre: "No" }), "crear campaña tras cambiar la contraseña por fuera");
+  ok((await funcion(e.cli, { accion: "cambiar_clave", actual: "incorrecta", nueva: claveNueva() })).estado === 403, "aceptó una contraseña actual incorrecta");
+  ok((await funcion(e.cli, { accion: "cambiar_clave", actual: directo, nueva: "corta" })).estado === 400, "aceptó una contraseña corta");
+  const clave = claveNueva(); const c = await funcion(e.cli, { accion: "cambiar_clave", actual: directo, nueva: clave });
+  ok(c.estado === 200 && c.datos.activo, "cambiar: " + JSON.stringify(c));
+  ok((await entrar(usuario, r.datos.clave_temporal)).error, "la temporal sigue sirviendo");
+  S.gestor = { cli: (await entrar(usuario, clave)).cli, usuario, clave };
+  const cli = S.gestor.cli;
+  S.c = await nq(cli.rpc("crear_campana", { p_nombre: "Campaña real " + run, p_anio: 2026, p_inicio: "2026-11-01", p_horas_dia: 8, p_precio_trab_cent: 1000, p_precio_dueno_cent: 1200, p_iva: 0 }));
+  const ts = await nq(cli.from("trabajadores").insert([{ campana_id: S.c, nombre: "Trabajador Uno" }, { campana_id: S.c, nombre: "Trabajador Dos" }]).select("id, nombre"));
+  S.t1 = ts.find(x => x.nombre === "Trabajador Uno").id; S.t2 = ts.find(x => x.nombre === "Trabajador Dos").id;
+  S.d = (await nq(cli.from("duenos").insert({ campana_id: S.c, nombre: "Dueño Real" }).select().single())).id;
+  return "contraseña temporal de 12 caracteres · sin acceso hasta cambiarla (también si se cambia por fuera) · campaña creada";
+});
 
-await prueba("Permisos de las cuentas fijas dados por uuid", async () => {
-  const sa = await C.superadmin.from("superadmin").select("user_id");
-  ok(!sa.error && sa.data.length === 1 && sa.data[0].user_id === C.superadmin.id, "la cuenta fija no es la superadministradora (¿aplicaste 03-designar-cuentas-prueba.sql?)");
-  for (const n of ["creadorA", "creadorB"]) {
-    const p = await C[n].from("perfiles").select("puede_crear_campanas").eq("id", C[n].id).single();
-    ok(p.data?.puede_crear_campanas === true, n + " sin permiso de crear campañas (¿aplicaste 03-designar-cuentas-prueba.sql?)");
+await prueba("Un segundo creador con su propia campaña (para comprobar el aislamiento)", async () => {
+  const usuario = "gestor2." + run;
+  const r = await funcion(S.super.cli, { accion: "crear", tipo: "creador", usuario, nombre: "Gestor dos" });
+  const e = await entrar(usuario, r.datos.clave_temporal); const clave = claveNueva();
+  ok((await funcion(e.cli, { accion: "cambiar_clave", actual: r.datos.clave_temporal, nueva: clave })).estado === 200, "cambiar la temporal del creador 2");
+  S.gestor2 = { cli: (await entrar(usuario, clave)).cli, usuario, clave };
+  S.c2 = await nq(S.gestor2.cli.rpc("crear_campana", { p_nombre: "Campaña ajena " + run }));
+  S.tB = (await nq(S.gestor2.cli.from("trabajadores").insert({ campana_id: S.c2, nombre: "Trabajador de B" }).select().single())).id;
+  await alta("gestor2", "trabB", { campana: S.c2, rol: "trabajador", trabajador: S.tB });
+  return "creador 2 con su campaña y un trabajador";
+});
+
+/* ---------- 5, 9. Cuentas de la campaña ---------- */
+await prueba("5 y 9 · El creador crea dos administradores (lector y editor), un jefe, dos trabajadores y un dueño", async () => {
+  await alta("gestor", "lector", { campana: S.c, rol: "admin" });
+  await alta("gestor", "editor", { campana: S.c, rol: "admin", editor: true });
+  await alta("gestor", "jefe", { campana: S.c, rol: "jefe" });
+  await alta("gestor", "trab1", { campana: S.c, rol: "trabajador", trabajador: S.t1 });
+  await alta("gestor", "trab2", { campana: S.c, rol: "trabajador", trabajador: S.t2 });
+  await alta("gestor", "dueno", { campana: S.c, rol: "dueno", dueno: S.d });
+  for (const k of ["lector", "editor", "jefe", "trab1", "trab2", "dueno"]) {
+    const m = await nq(S[k].cli.rpc("mis_campanas"));
+    ok(m.length === 1 && m[0].campana_id === S.c, k + " no está en su campaña: " + JSON.stringify(m));
   }
-  return "superadmin y 2 creadores por uuid";
+  const p = await nq(S.editor.cli.rpc("mis_permisos", { p_campana: S.c })), q = await nq(S.lector.cli.rpc("mis_permisos", { p_campana: S.c }));
+  ok(p.edita && !p.gestiona && !q.edita && q.consulta, "permisos: " + JSON.stringify({ editor: p, lector: q }));
+  await nq(S.gestor.cli.from("asignaciones_equipo").insert({ campana_id: S.c, jefe_user_id: S.jefe.id, trabajador_id: S.t1, desde: "2026-11-01" }));
+  return "6 cuentas con su rol · editor puede editar, lector solo consultar";
 });
 
-await prueba("Diagnóstico interno: RLS activada y forzada en todas las tablas, con políticas y claves foráneas", async () => {
-  const d = await rpc(C.superadmin, "diagnostico_esquema");
-  const pub = d.filter(x => TABLAS.includes(x.tabla));
-  ok(pub.length === TABLAS.length, "el diagnóstico ve " + pub.length + " tablas");
-  const mal = pub.filter(x => !x.rls || !x.rls_forzado || x.anon_puede_leer);
-  ok(!mal.length, "tablas sin RLS forzada o legibles por anon: " + mal.map(x => x.tabla).join(", "));
-  const sinPol = pub.filter(x => x.politicas === 0);
-  ok(!sinPol.length, "tablas sin ninguna política: " + sinPol.map(x => x.tabla).join(", "));
-  return `${pub.reduce((s, x) => s + x.politicas, 0)} políticas · ${pub.reduce((s, x) => s + x.claves_foraneas, 0)} claves foráneas · ${pub.reduce((s, x) => s + x.restricciones_check, 0)} comprobaciones`;
-});
-await prueba("El diagnóstico interno solo lo puede pedir el superadministrador", () => espera_error(C.creadorA.rpc("diagnostico_esquema"), "diagnóstico pedido por un creador").then(() => undefined));
-
-/* ---------- 3. Campaña real de pruebas creada por creadorA ---------- */
-const A = {};
-await prueba("Creador autorizado crea una campaña, fichas e invitaciones; cada persona crea su cuenta con su código", async () => {
-  A.c = await rpc(C.creadorA, "crear_campana", { p_nombre: "Campaña de prueba " + run, p_anio: 2026, p_inicio: "2026-11-01", p_horas_dia: 8, p_precio_trab_cent: 1000, p_precio_dueno_cent: 1200, p_iva: 0 });
-  A.t1 = (await ins(C.creadorA, "trabajadores", { campana_id: A.c, nombre: "Trabajador Uno" })).id;
-  A.t2 = (await ins(C.creadorA, "trabajadores", { campana_id: A.c, nombre: "Trabajador Dos" })).id;
-  await ins(C.creadorA, "trabajadores_privado", { trabajador_id: A.t1, campana_id: A.c, nif: "00000000T" });
-  A.d1 = (await ins(C.creadorA, "duenos", { campana_id: A.c, nombre: "Dueño Uno" })).id;
-  A.d2 = (await ins(C.creadorA, "duenos", { campana_id: A.c, nombre: "Dueño Dos" })).id;
-  for (const [n, rol, t, d] of [["admin", "admin"], ["jefe1", "jefe"], ["jefe2", "jefe"], ["trab1", "trabajador", A.t1], ["trab2", "trabajador", A.t2], ["dueno1", "dueno", null, A.d1], ["dueno2", "dueno", null, A.d2]]) {
-    A["cod_" + n] = await rpc(C.creadorA, "crear_invitacion", { p_campana: A.c, p_rol: rol, p_trabajador: t || null, p_dueno: d || null, p_dias: 1 });
-    await cuenta(n, A["cod_" + n]);                                   // la cuenta nace ya unida a su campaña y rol
-    const m = await C[n].rpc("mis_campanas");
-    ok(!m.error && m.data.length === 1 && m.data[0].campana_id === A.c && m.data[0].roles.join() === rol, n + ": " + JSON.stringify(m.error || m.data));
+await prueba("Altas indebidas rechazadas por el servidor (Edge Function + base de datos)", async () => {
+  const intentos = [
+    [S.gestor, { tipo: "creador", usuario: "otro.creador." + run }, 403],
+    [S.gestor, { campana: S.c2, rol: "admin", usuario: "en.ajena." + run }, 403],
+    [S.gestor2, { campana: S.c, rol: "admin", usuario: "en.otra." + run }, 403],
+    [S.editor, { campana: S.c, rol: "trabajador", trabajador: S.t1, usuario: "por.editor." + run }, 403],
+    [S.lector, { campana: S.c, rol: "admin", usuario: "por.lector." + run }, 403],
+    [S.trab1, { campana: S.c, rol: "admin", usuario: "por.trab." + run }, 403],
+    [S.gestor, { campana: S.c, rol: "creador", usuario: "cocreador." + run }, 403],
+    [S.gestor, { campana: S.c, rol: "jefe", editor: true, usuario: "jefe.editor." + run }, 400],
+    [S.gestor, { campana: S.c, rol: "trabajador", trabajador: S.t1, usuario: "ficha.repetida." + run }, 400],
+    [S.gestor, { campana: S.c, rol: "admin", usuario: S.lector.usuario }, 400],
+    [S.gestor, { campana: S.c, rol: "admin", usuario: "Mal Nombre" }, 400]];
+  for (const [quien, datos, esperado] of intentos) {
+    const r = await funcion(quien.cli, { accion: "crear", nombre: "X", ...datos });
+    ok(r.estado === esperado, `${quien.usuario} → ${JSON.stringify(datos)}: ${r.estado} ${JSON.stringify(r.datos)}`);
   }
-  await ins(C.creadorA, "asignaciones_equipo", { campana_id: A.c, jefe_user_id: C.jefe1.id, trabajador_id: A.t1, desde: "2026-11-01" });
-  await ins(C.creadorA, "asignaciones_equipo", { campana_id: A.c, jefe_user_id: C.jefe2.id, trabajador_id: A.t2, desde: "2026-11-01" });
-  // «sinCampana»: se unió a una campaña de B y B le quitó el acceso
-  A.cB = await rpc(C.creadorB, "crear_campana", { p_nombre: "Campaña B inicial " + run });
-  await cuenta("sinCampana", await rpc(C.creadorB, "crear_invitacion", { p_campana: A.cB, p_rol: "admin" }));
-  const q = await C.creadorB.from("miembros").delete().eq("campana_id", A.cB).eq("user_id", C.sinCampana.id).select();
-  ok(!q.error && q.data.length === 1, "B no pudo quitar el acceso: " + JSON.stringify(q.error));
-  return "8 cuentas creadas con código; cada una con exactamente su campaña y rol";
+  // Y por la API, sin pasar por la función
+  await espera_error(S.gestor.cli.from("altas_pendientes").insert({ usuario: "colado." + run, nombre: "x", tipo: "creador" }), "insertar altas");
+  await espera_error(S.gestor.cli.rpc("clave_cambiada_servidor", { p_user: S.trab1.id }), "habilitar una cuenta");
+  await espera_error(S.gestor.cli.rpc("hook_alta_con_codigo", { event: {} }), "llamar al hook");
+  for (const k of ["lector", "editor"]) await cero(S[k].cli.from("miembros").update({ puede_editar: true, rol: "creador" }).eq("user_id", S[k].id).select(), k + " cambia su rol");
+  await espera_error(S.trab1.cli.from("perfiles").update({ debe_cambiar_clave: false, puede_crear_campanas: true }).eq("id", S.trab1.id), "trabajador se da permisos");
+  return `${intentos.length} altas rechazadas · 5 accesos directos rechazados`;
 });
 
-await prueba("Alta controlada: sin código, con código inventado o ya usado no se crea cuenta; un correo «superadmin…» no da nada", async () => {
-  const sin = await altaRechazada("sin-codigo");
-  await altaRechazada("inventado", "ABCD-EF01-2345-6789");
-  await altaRechazada("reutilizado", A.cod_trab1);
-  const hook = /ALTA/.test(sin) ? "hook activo (mensaje claro)" : "hook NO activo: lo frena el disparador (" + sin.slice(0, 40) + ")";
-  const intruso = await cuenta("superadmin-intruso", await rpc(C.creadorA, "crear_invitacion", { p_campana: A.c, p_rol: "admin" }));
-  ok((await intruso.from("superadmin").select("user_id").eq("user_id", intruso.id)).data.length === 0, "un correo «superadmin…» dio superadministrador");
-  const pi = await intruso.from("perfiles").select("puede_crear_campanas").eq("id", intruso.id).single();
-  ok(pi.data?.puede_crear_campanas === false, "una cuenta nueva recibió permiso de crear campañas");
-  await espera_error(intruso.rpc("diagnostico_esquema"), "diagnóstico pedido por el intruso");
-  await espera_error(intruso.rpc("crear_autorizacion_creador", { p_dias: 7 }), "el intruso autoriza creadores");
-  return "3 altas rechazadas · intruso solo con su rol · " + hook;
+/* ---------- 6-8. Edición y lectura ---------- */
+await prueba("6-8 · El administrador editor modifica una jornada y anota un pago; el lector la ve pero no puede modificarla", async () => {
+  const p = await nq(S.gestor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: null, p_kilos: 2000, p_notas: null,
+    p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "normal" }], p_maquinas: [] }));
+  const p2 = await nq(S.editor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p.version, p_kilos: 2100, p_notas: "editado por el administrador",
+    p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "especial", horas: 6 }], p_maquinas: [] }), "editor: ");
+  ok(p2.version === p.version + 1, "versión " + p2.version);
+  await nq(S.editor.cli.from("pagos").insert({ campana_id: S.c, tipo: "trabajador", trabajador_id: S.t1, importe_cent: 2500, fecha: "2026-11-18" }), "pago del editor: ");
+  const v = await nq(S.lector.cli.from("partes_filas").select("trabajador_id, horas, tipo").eq("campana_id", S.c));
+  ok(v.length === 2 && v.some(f => f.trabajador_id === S.t2 && +f.horas === 6), "el lector no ve la jornada editada: " + JSON.stringify(v));
+  await espera_error(S.lector.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p2.version, p_kilos: 1, p_notas: null, p_filas: [], p_maquinas: [] }), "el lector guarda el parte");
+  await cero(S.lector.cli.from("partes_filas").update({ horas: 1 }).eq("campana_id", S.c).select(), "el lector cambia horas");
+  await espera_error(S.lector.cli.from("pagos").insert({ campana_id: S.c, tipo: "trabajador", trabajador_id: S.t1, importe_cent: 1, fecha: "2026-11-18" }), "el lector anota un pago");
+  await cero(S.lector.cli.from("pagos").delete().eq("campana_id", S.c).select(), "el lector borra pagos");
+  await espera_error(S.editor.cli.from("trabajadores").insert({ campana_id: S.c, nombre: "No" }), "el editor crea trabajadores");
+  await espera_error(S.editor.cli.from("maquinas").insert({ campana_id: S.c, nombre: "No", precio_cent: 1 }), "el editor crea maquinaria");
+  return `editor: parte v${p2.version} y pago de 25 € · lector: lo ve, 4 cambios rechazados`;
 });
 
-await prueba("Solo el superadministrador autoriza creadores; la cuenta creada con esa autorización crea su campaña y no ve las ajenas", async () => {
-  for (const n of ["creadorA", "admin", "trab1"]) await espera_error(C[n].rpc("crear_autorizacion_creador", { p_dias: 7 }), n + " autoriza creadores");
-  const codigo = await rpc(C.superadmin, "crear_autorizacion_creador", { p_dias: 1 });
-  const nuevoCreador = await cuenta("creador-nuevo", codigo);
-  ok((await nuevoCreador.from("perfiles").select("puede_crear_campanas").eq("id", nuevoCreador.id).single()).data?.puede_crear_campanas === true, "sin permiso de crear campañas");
-  ok((await nuevoCreador.from("partes").select("id").eq("campana_id", A.c)).data.length === 0, "el creador nuevo ve la campaña A");
-  await rpc(nuevoCreador, "crear_campana", { p_nombre: "Campaña del creador nuevo " + run });
-  await altaRechazada("autorizacion-reutilizada", codigo);
-  return "autorización de un solo uso · campaña propia creada";
-});
-
-await prueba("Correo: las cuentas nuevas quedan confirmadas y activas; nadie marca su correo como confirmado; el servidor rechaza un código de correo incorrecto", async () => {
-  // Proyecto de pruebas con «Confirm email» desactivado: Supabase confirma al crear la cuenta y el disparador lo copia
-  const p = await C.trab1.from("perfiles").select("activo, correo_confirmado, bloqueado").eq("id", C.trab1.id).single();
-  ok(!p.error && p.data.activo && p.data.correo_confirmado && !p.data.bloqueado, "perfil nuevo: " + JSON.stringify(p.error || p.data));
-  for (const cambio of [{ correo_confirmado: false }, { bloqueado: true }, { activo: false }]) {
-    const r = await C.trab1.from("perfiles").update(cambio).eq("id", C.trab1.id).select();
-    ok(r.error || !r.data.length, "el trabajador cambió " + Object.keys(cambio)[0]);
+/* ---------- 10-12. Lo de cada uno ---------- */
+await prueba("10-12 · El jefe ve solo su equipo; cada trabajador solo sus horas y ganancias; el dueño su cuenta; nadie de otra campaña ve nada", async () => {
+  const eq = await nq(S.jefe.cli.rpc("jornadas_equipo", { p_campana: S.c }));
+  ok(eq.length === 1 && eq[0].trabajador === "Trabajador Uno", "jefe: " + JSON.stringify(eq.map(x => x.trabajador)));
+  const r1 = await nq(S.trab1.cli.rpc("resumen_trabajador", { p_campana: S.c })), r2 = await nq(S.trab2.cli.rpc("resumen_trabajador", { p_campana: S.c }));
+  ok(+r1.horas === 8 && +r1.importe_cent === 8000 && +r1.entregado_cent === 2500 && +r1.pendiente_cent === 5500, "trabajador 1: " + JSON.stringify(r1));
+  ok(+r2.horas === 6 && +r2.importe_cent === 6000, "trabajador 2: " + JSON.stringify(r2));
+  ok((await nq(S.trab2.cli.from("partes_filas").select("trabajador_id"))).every(f => f.trabajador_id === S.t2), "el trabajador 2 ve jornadas ajenas");
+  ok((await nq(S.trab2.cli.from("pagos").select("*"))).length === 0, "el trabajador 2 ve pagos ajenos");
+  const cu = await nq(S.dueno.cli.rpc("cuenta_dueno", { p_campana: S.c }));
+  ok(+cu.horas === 14 && +cu.total_cent === 16800, "dueño: " + JSON.stringify({ h: cu.horas, t: cu.total_cent }));
+  for (const k of ["trab1", "trab2", "jefe", "dueno"]) for (const t of ["trabajadores_privado", "miembros", "asignaciones_equipo", "auditoria"]) {
+    const { data } = await S[k].cli.from(t).select("*").eq("campana_id", S.c);
+    ok(!(data || []).filter(x => !(t === "miembros" && x.user_id === S[k].id) && !(t === "asignaciones_equipo" && k === "jefe")).length, `${k} ve ${t}`);
   }
-  const r2 = await C.superadmin.from("perfiles").update({ correo_confirmado: false }).eq("id", C.trab1.id).select();
-  ok(r2.error, "el superadministrador cambió la confirmación del correo");
-  // Código de correo incorrecto: Supabase Auth lo rechaza (alta y recuperación). El correo real no se prueba aquí.
-  const mensajes = [];
-  for (const type of ["email", "recovery"]) {
-    const { data, error } = await nuevo().auth.verifyOtp({ email: C.trab1.email, token: "000000", type });
-    ok(error && !data?.session, "código incorrecto aceptado (" + type + ")");
-    ok(/expired|invalid/i.test(error.message + " " + (error.code || "")), "mensaje inesperado (" + type + "): " + error.message);
-    mensajes.push(type + ": " + (error.code || error.message));
-  }
-  return "perfil confirmado y activo · 4 cambios indebidos rechazados · " + mensajes.join(" · ");
+  for (const k of ["gestor2", "trabB"]) for (const t of ["partes", "partes_filas", "pagos", "trabajadores", "duenos", "miembros"])
+    ok(!(await S[k].cli.from(t).select("*").eq("campana_id", S.c)).data?.length, `${k} (otra campaña) ve ${t}`);
+  await espera_error(S.gestor2.cli.rpc("resumen_trabajador", { p_campana: S.c }), "otro creador pide un resumen");
+  await espera_error(S.trabB.cli.rpc("jornadas_equipo", { p_campana: S.c }), "otra campaña pide jornadas");
+  return "jefe: 1 trabajador · trab1 8 h, 80 €, le quedan 55 € · trab2 6 h, 60 € · dueño 14 h, 168 € · otra campaña: nada";
 });
 
-/* ---------- 4. Requisito: creador registra 8 h en Android; administrador lo ve en Windows; trabajador en iPhone ---------- */
-await prueba("Dos sesiones independientes: el creador registra 8 h y el administrador las ve al instante", async () => {
-  A.p = await rpc(C.creadorA, "guardar_parte", { p_campana: A.c, p_dueno: A.d1, p_fecha: "2026-11-15", p_version: null, p_kilos: 2350, p_notas: null,
-    p_filas: [{ trabajador_id: A.t1, tipo: "normal" }], p_maquinas: [] });
-  const { data, error } = await C.admin.from("partes_filas").select("trabajador_id, tipo, horas, fecha").eq("campana_id", A.c);
-  ok(!error && data.length === 1 && data[0].trabajador_id === A.t1 && data[0].tipo === "normal", "el administrador no ve la jornada: " + JSON.stringify(error || data));
-  return "jornada visible en la sesión del administrador";
-});
-await prueba("El trabajador (otra sesión) ve sus 8 h y 80,00 € ganados; nada más", async () => {
-  const r = await rpc(C.trab1, "resumen_trabajador", { p_campana: A.c });
-  ok(+r.horas === 8 && +r.importe_cent === 8000 && +r.pendiente_cent === 8000, JSON.stringify(r));
-  const { data } = await C.trab1.from("partes_filas").select("trabajador_id");
-  ok(data.every(f => f.trabajador_id === A.t1), "ve jornadas ajenas");
-  return "8 h · 80,00 €";
-});
-await prueba("Un jefe de otro equipo no ve ese registro", async () => {
-  const { data } = await C.jefe2.from("partes_filas").select("*");
-  ok(data.length === 0, "el jefe 2 ve " + data.length + " filas del equipo del jefe 1");
-  const e = await rpc(C.jefe2, "jornadas_equipo", { p_campana: A.c });
-  ok(e.length === 0, "su panel muestra jornadas ajenas");
-  const j1 = await rpc(C.jefe1, "jornadas_equipo", { p_campana: A.c });
-  ok(j1.length === 1 && +j1[0].horas === 8, "el jefe 1 no ve a su trabajador: " + JSON.stringify(j1));
+/* ---------- 14. Restablecer contraseña ---------- */
+await prueba("14 · Restablecer contraseña: solo quien gestiona a esa persona; la antigua deja de valer y no hay acceso hasta poner una propia", async () => {
+  for (const k of ["lector", "editor", "trab1", "gestor2"]) ok((await funcion(S[k].cli, { accion: "restablecer", usuario: S.trab2.usuario })).estado === 403, k + " restablece");
+  ok((await funcion(S.gestor.cli, { accion: "restablecer", usuario: S.gestor2.usuario })).estado === 403, "un creador restablece a otro creador");
+  ok((await funcion(S.gestor.cli, { accion: "restablecer", usuario: F.propietario.usuario })).estado === 403, "un creador restablece al superadministrador");
+  const r = await funcion(S.gestor.cli, { accion: "restablecer", usuario: S.trab2.usuario });
+  ok(r.estado === 200 && r.datos.clave_temporal, "restablecer: " + JSON.stringify(r));
+  ok((await entrar(S.trab2.usuario, S.trab2.clave)).error, "la contraseña antigua sigue sirviendo");
+  ok(!(await S.trab2.cli.from("partes_filas").select("*")).data?.length, "la sesión antigua sigue viendo datos");
+  const e = await entrar(S.trab2.usuario, r.datos.clave_temporal); ok(!e.error, "entrar con la temporal");
+  await espera_error(e.cli.rpc("resumen_trabajador", { p_campana: S.c }), "datos con la temporal");
+  const clave = claveNueva(); ok((await funcion(e.cli, { accion: "cambiar_clave", actual: r.datos.clave_temporal, nueva: clave })).estado === 200, "cambiar la temporal");
+  const e2 = await entrar(S.trab2.usuario, clave);
+  ok(+(await nq(e2.cli.rpc("resumen_trabajador", { p_campana: S.c }))).horas === 6, "no recuperó el acceso con su contraseña");
+  S.trab2 = { ...S.trab2, cli: e2.cli, clave };
+  return "6 intentos sin permiso rechazados · temporal nueva · antigua anulada · acceso solo tras poner la suya";
 });
 
-/* ---------- 5. Escalada de privilegios ---------- */
-await prueba("Nadie puede hacerse superadministrador, creador o administrador por su cuenta", async () => {
-  for (const n of ["creadorA", "trab1", "sinCampana"]) {
-    await espera_error(C[n].from("superadmin").insert({ user_id: C[n].id }), n + " → superadmin");
-    await cero_filas(C[n].from("superadmin").update({ user_id: C[n].id }).neq("user_id", C[n].id).select(), n + " cambia superadmin");
-    await espera_error(C[n].from("miembros").insert({ campana_id: A.c, user_id: C[n].id, rol: "creador" }), n + " → creador");
-    await espera_error(C[n].from("miembros").insert({ campana_id: A.c, user_id: C[n].id, rol: "admin" }), n + " → admin");
-  }
-  await espera_error(C.trab1.from("perfiles").update({ puede_crear_campanas: true }).eq("id", C.trab1.id), "trabajador se da permiso de crear campañas");
-  await espera_error(C.creadorA.rpc("crear_invitacion", { p_campana: A.c, p_rol: "creador" }), "creador invita a otro creador");
-  await cero_filas(C.trab1.from("miembros").update({ rol: "admin" }).eq("user_id", C.trab1.id).select(), "trabajador cambia su rol");
-  await espera_error(C.trab1.rpc("crear_campana", { p_nombre: "Mía" }), "trabajador crea campaña");
-  await espera_error(C.sinCampana.rpc("admin_usuarios"), "panel global sin ser superadministrador");
+/* ---------- 13. Bloqueo ---------- */
+await prueba("13 · El superadministrador bloquea una cuenta: pierde el acceso al momento y no lo recupera con cambios de contraseña ni de sesión", async () => {
+  ok((await funcion(S.lector.cli, { accion: "bloquear", usuario: S.trab1.usuario, bloquear: true })).estado === 403, "un administrador bloquea");
+  ok((await funcion(S.gestor2.cli, { accion: "bloquear", usuario: S.trab1.usuario, bloquear: true })).estado === 403, "otro creador bloquea");
+  const b = await funcion(S.super.cli, { accion: "bloquear", usuario: S.trab1.usuario, bloquear: true }); ok(b.estado === 200, "bloquear: " + JSON.stringify(b));
+  ok(!(await S.trab1.cli.from("partes_filas").select("*")).data?.length, "la sesión abierta sigue viendo jornadas");
+  await espera_error(S.trab1.cli.rpc("resumen_trabajador", { p_campana: S.c }), "resumen con la sesión abierta");
+  ok((await entrar(S.trab1.usuario, S.trab1.clave)).error, "una cuenta bloqueada inicia sesión");
+  ok((await S.trab1.cli.auth.refreshSession()).error || !(await S.trab1.cli.from("partes_filas").select("*")).data?.length, "renovar la sesión devuelve el acceso");
+  ok((await funcion(S.trab1.cli, { accion: "cambiar_clave", actual: S.trab1.clave, nueva: claveNueva() })).estado >= 400, "una cuenta bloqueada cambia su contraseña");
+  const rr = await funcion(S.gestor.cli, { accion: "restablecer", usuario: S.trab1.usuario });
+  ok(rr.estado === 200, "su creador no pudo restablecerla");
+  ok((await entrar(S.trab1.usuario, rr.datos.clave_temporal)).error, "una cuenta bloqueada entra con una temporal nueva");
+  const d = await funcion(S.super.cli, { accion: "bloquear", usuario: S.trab1.usuario, bloquear: false }); ok(d.estado === 200, "desbloquear");
+  const e = await entrar(S.trab1.usuario, rr.datos.clave_temporal); ok(!e.error, "entrar tras desbloquear: " + e.error?.message);
+  await espera_error(e.cli.rpc("resumen_trabajador", { p_campana: S.c }), "datos antes de poner su contraseña");
+  const clave = claveNueva(); ok((await funcion(e.cli, { accion: "cambiar_clave", actual: rr.datos.clave_temporal, nueva: clave })).estado === 200, "cambiar la temporal");
+  const e2 = await entrar(S.trab1.usuario, clave);
+  ok(+(await nq(e2.cli.rpc("resumen_trabajador", { p_campana: S.c }))).horas === 8, "no recuperó el acceso");
+  S.trab1 = { ...S.trab1, cli: e2.cli, clave };
+  return "sin datos ni inicio de sesión mientras está bloqueada · restablecer no la desbloquea · desbloqueo + contraseña propia";
 });
 
-await prueba("Un usuario sin campaña asignada no ve ningún dato privado", async () => {
-  for (const t of TABLAS) {
-    const { data } = await C.sinCampana.from(t).select("*").limit(5);
-    const propias = t === "perfiles" ? (data || []).filter(p => p.id !== C.sinCampana.id) : (data || []);
-    ok(!propias.length, "ve datos en " + t);
-  }
-  ok((await rpc(C.sinCampana, "mis_campanas")).length === 0, "le aparecen campañas");
-  await espera_error(C.sinCampana.rpc("resumen_trabajador", { p_campana: A.c }), "resumen ajeno");
-  await espera_error(C.sinCampana.rpc("cuenta_dueno", { p_campana: A.c, p_dueno: A.d1 }), "cuenta de dueño ajena");
+await prueba("Gestión de usuarios: cada uno ve solo las cuentas que gestiona", async () => {
+  const lista = async k => (await nq(S[k].cli.rpc("usuarios_gestionados"))).filter(x => x.gestionable).map(x => x.usuario);
+  const g = await lista("gestor"), g2 = await lista("gestor2"), sa = await lista("super");
+  ok(["lector", "editor", "jefe", "trab1", "trab2", "dueno"].every(k => g.includes(S[k].usuario)) && !g.includes(S.trabB.usuario) && !g.includes(S.gestor2.usuario), "gestor: " + JSON.stringify(g));
+  ok(g2.includes(S.trabB.usuario) && !g2.some(u => u.endsWith(run) && !u.startsWith("trabb")), "gestor 2: " + JSON.stringify(g2));
+  ok(sa.includes(S.gestor.usuario) && sa.includes(S.trab1.usuario), "superadministrador");
+  for (const k of ["lector", "editor", "trab1"]) ok(!(await lista(k)).length, k + " gestiona cuentas");
+  return `gestor ${g.length} · gestor 2 ${g2.length} · superadministrador ${sa.length}`;
 });
 
-await prueba("Jefes, trabajadores y dueños: solo lectura (no crean, cambian ni borran nada)", async () => {
-  for (const n of ["jefe1", "trab1", "dueno1", "admin"]) {
-    const c = C[n];
-    await cero_filas(c.from("partes_filas").update({ horas: 12, tipo: "mas" }).eq("campana_id", A.c).select(), n + " cambia horas");
-    await cero_filas(c.from("partes").update({ kilos: 1, fecha: "2026-11-20" }).eq("campana_id", A.c).select(), n + " cambia partes");
-    await cero_filas(c.from("pagos").delete().eq("campana_id", A.c).select(), n + " borra pagos");
-    await cero_filas(c.from("trabajadores").delete().eq("campana_id", A.c).select(), n + " borra trabajadores");
-    await espera_error(c.from("pagos").insert({ campana_id: A.c, tipo: "trabajador", trabajador_id: A.t1, importe_cent: 100, fecha: "2026-11-15" }), n + " anota un pago");
-    await espera_error(c.from("partes_filas").insert({ parte_id: A.p.id, campana_id: A.c, fecha: "2026-11-15", trabajador_id: A.t2, horas: 9 }), n + " añade jornada");
-    await espera_error(c.rpc("guardar_parte", { p_campana: A.c, p_dueno: A.d1, p_fecha: "2026-11-15", p_version: A.p.version, p_kilos: 0, p_notas: "x", p_filas: [], p_maquinas: [] }), n + " guarda un parte");
-  }
-  const { data } = await C.admin.from("partes_filas").select("horas, tipo").eq("campana_id", A.c);
-  ok(data.length === 1 && data[0].tipo === "normal", "la jornada cambió");
-  return "4 roles × 7 intentos de escritura rechazados";
+/* ---------- 15. Sincronización entre sesiones ---------- */
+await prueba("15 · Sincronización: el creador cambia una jornada y el administrador (otra sesión) recibe el aviso en tiempo real", async () => {
+  const recibido = new Promise((res, rej) => {
+    const t0 = Date.now(), canal = S.lector.cli.channel("prueba-" + run)
+      .on("postgres_changes", { event: "*", schema: "public", table: "partes_filas", filter: "campana_id=eq." + S.c }, () => res(Date.now() - t0))
+      .subscribe(async estado => {
+        if (estado === "SUBSCRIBED") {
+          const p = (await nq(S.gestor.cli.from("partes").select("version").eq("campana_id", S.c).single()));
+          await nq(S.gestor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p.version, p_kilos: 2200, p_notas: "sincronización",
+            p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "mas" , horas: 9 }], p_maquinas: [] }));
+        }
+      });
+    setTimeout(() => { S.lector.cli.removeChannel(canal); rej(new Error("no llegó el aviso en 20 s")); }, 20000);
+  });
+  const ms = await recibido;
+  const v = await nq(S.lector.cli.from("partes_filas").select("horas").eq("trabajador_id", S.t2).single());
+  ok(+v.horas === 9, "el administrador no ve el cambio: " + v.horas);
+  const ajeno = S.trabB.cli.channel("ajeno-" + run); let fuga = false;
+  ajeno.on("postgres_changes", { event: "*", schema: "public", table: "partes_filas", filter: "campana_id=eq." + S.c }, () => { fuga = true; }).subscribe();
+  await new Promise(r => setTimeout(r, 3000));
+  const p = await nq(S.gestor.cli.from("partes").select("version").eq("campana_id", S.c).single());
+  await nq(S.gestor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p.version, p_kilos: 2300, p_notas: null,
+    p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "normal" }], p_maquinas: [] }));
+  await new Promise(r => setTimeout(r, 4000));
+  ok(!fuga, "una cuenta de otra campaña recibió el aviso");
+  for (const k of Object.keys(S)) S[k]?.cli?.removeAllChannels?.();
+  return `aviso en ${ms} ms · el administrador ve 9 h · otra campaña no recibe nada`;
 });
 
-await prueba("Dueño: solo su cuenta; otro dueño no la ve", async () => {
-  const k = await rpc(C.dueno1, "cuenta_dueno", { p_campana: A.c });
-  ok(+k.horas === 8 && +k.total_cent === 9600, "cuenta: " + JSON.stringify(k));
-  await espera_error(C.dueno2.rpc("cuenta_dueno", { p_campana: A.c, p_dueno: A.d1 }), "dueño 2 ve la cuenta del dueño 1");
-  const { data } = await C.dueno2.from("partes").select("*");
-  ok(data.length === 0, "el dueño 2 ve partes del dueño 1");
-  return "8 h × 12 € = 96,00 €";
-});
-
-await prueba("Un creador no entra en campañas ajenas ni enlaza datos de otra campaña", async () => {
-  const B = await rpc(C.creadorB, "crear_campana", { p_nombre: "Campaña B " + run });
-  ok((await C.creadorB.from("partes").select("*").eq("campana_id", A.c)).data.length === 0, "B ve partes de A");
-  await espera_error(C.creadorB.from("partes").insert({ campana_id: B, dueno_id: A.d1, fecha: "2026-11-20" }), "B enlaza un dueño de A");
-  await espera_error(C.creadorB.rpc("cuenta_dueno", { p_campana: A.c, p_dueno: A.d1 }), "B ve cuentas de A");
-  ok((await C.admin.from("campanas").select("id").eq("id", B)).data.length === 0, "el administrador de A ve la campaña B");
-});
-
-await prueba("Cambios simultáneos desde dos sesiones: la edición antigua no pisa la reciente", async () => {
-  const v = A.p.version;
-  await rpc(C.creadorA, "guardar_parte", { p_campana: A.c, p_dueno: A.d1, p_fecha: "2026-11-15", p_version: v, p_kilos: 2400, p_notas: "móvil", p_filas: [{ trabajador_id: A.t1, tipo: "normal" }], p_maquinas: [] });
-  const e = await espera_error(C.superadmin.rpc("guardar_parte", { p_campana: A.c, p_dueno: A.d1, p_fecha: "2026-11-15", p_version: v, p_kilos: 9999, p_notas: "ordenador", p_filas: [], p_maquinas: [] }), "edición con versión vieja");
-  ok(/CONFLICTO/.test(e), "error inesperado: " + e);
-  const { data } = await C.admin.from("partes").select("kilos, notas, version").eq("id", A.p.id).single();
-  ok(+data.kilos === 2400 && data.notas === "móvil", "se perdió el primer cambio");
-  return "versión " + data.version + " · el segundo recibe CONFLICTO";
-});
-
-await prueba("Auditoría: consta quién registró la jornada; un trabajador no la lee", async () => {
-  const { data } = await C.admin.from("auditoria").select("user_id, tabla, accion").eq("campana_id", A.c).eq("tabla", "partes_filas");
-  ok(data.some(r => r.user_id === C.creadorA.id), "no consta el autor");
-  ok((await C.trab1.from("auditoria").select("*")).data.length === 0, "el trabajador lee la auditoría");
-  return data.length + " registros de jornadas";
-});
-
-for (const c of Object.values(C)) await c.auth.signOut().catch(() => {});
-const f = resultados.filter(r => !r.ok).length;
-console.log(`\n${resultados.length - f} correctas, ${f} con fallos · proyecto ${URL_.replace(/^https:\/\/([a-z0-9]{4})[a-z0-9-]*/, "https://$1…")} · ejecución ${run}`);
-process.exit(f ? 1 : 0);
+const fallos = resultados.filter(r => !r.ok).length;
+console.log(`\n${resultados.length - fallos} correctas, ${fallos} con fallos · proyecto ${URL_.replace(/^https:\/\/(.{4}).*/, "https://$1…supabase.co")} · ejecución ${run}`);
+process.exit(fallos ? 1 : 0);
