@@ -38,14 +38,18 @@ Revisión del 18-11-2026, al retomar el desarrollo tras la pausa del 7-11-2026. 
 | App con cuenta: crear cuenta, entrar, crear campaña, fichas de trabajadores y dueños, invitaciones por código, unirse con código, equipos, parte diario, vistas de administrador, trabajador y jefe | ✔ Verificada contra el proyecto real | Prueba `nube-sesiones` (5 sesiones), 18-11 |
 | Sincronización en tiempo real entre dispositivos (sin recargar) | ✔ Verificada | ~1,2 s desde guardar hasta verlo en otra sesión |
 | Conflictos en la app: aviso, recarga y sin pisar datos | ✔ Verificado | Mismo creador en dos dispositivos |
+| **Alta controlada:** solo se crea una cuenta con un código válido; el servidor lo comprueba, lo gasta y da el acceso (campaña, rol y ficha) en la misma transacción | ✔ Verificada | 5 pruebas locales nuevas; 17/17 reales **con y sin** el hook; app: altas sin código, con código inventado, anulado y reutilizado rechazadas |
+| Solo el superadministrador autoriza creadores (código de un solo uso desde el panel global) | ✔ Verificado | Local, real y en la app: la persona crea su cuenta y su campaña |
+| Creadores: invitan solo a sus campañas, con los roles que pueden dar; ven y anulan invitaciones sin usar | ✔ Verificado | Local (10 intentos indebidos rechazados) y en la app (anular) |
 
 ## 4. Funcionalidades pendientes
 
 | Funcionalidad | Estado |
 | --- | --- |
 | Partes de la interfaz con cuenta aún sin prueba en la app: pagos y entregas, vista del dueño («Mi cuenta»), pantalla «Cuentas», maquinaria en el parte, quitar acceso, terminar asignación, panel global del superadministrador, cerrar sesión, sin conexión | Programadas; la base de datos sí está probada para todas ellas (`real.test.mjs`). Falta ampliar `nube-sesiones` |
-| **Alta controlada** antes de usar personas reales | Pendiente (obligatorio). Ahora cualquiera puede crear una cuenta, aunque sin código no ve nada |
-| Restablecer contraseña olvidada | Pendiente |
+| **Comprobación del correo** («Confirm email» con SMTP gratuito de Gmail y código de 6 cifras en la app) | Pendiente. Necesita que el dueño configure el SMTP (ver sección 10) |
+| Restablecer contraseña olvidada | Pendiente (con el SMTP, el correo de Supabase lo resuelve) |
+| Primer superadministrador del proyecto de producción | Procedimiento listo (código emitido por el propietario en el editor SQL); el proyecto no existe todavía |
 | Fotos de documentos en Storage privado | Migración SQL escrita (`…000002_almacenamiento.sql`); falta la interfaz y probarla |
 | Documentos, plantillas y gráficas por quincena en modo cuenta | Pendiente: en modo cuenta aún no hay pantalla de documentos ni gráficas |
 | PDF y Excel desde los datos compartidos | Pendiente. Se generarán en el dispositivo, sin guardarlos en Supabase |
@@ -65,7 +69,9 @@ Comprobado el 18-11-2026 sobre el proyecto real (no simulado):
 | Proyecto | `campana-control-pruebas` (región Frankfurt, Nano, plan Free). Pausado por inactividad → reactivado con autorización; disponible en unos 3 minutos |
 | Organización | «Campana Control» (Free). No existe proyecto de producción |
 | URL y clave pública en este ordenador | `supabase/config-app.local.json` y `supabase/pruebas/.env.pruebas` (ignorados por git). Ninguna clave secreta en el ordenador ni en el repositorio |
-| Migraciones aplicadas | 000001 (22 tablas con RLS activada y **forzada**; 73 políticas, 35 claves foráneas, 26 comprobaciones), 000002 (bucket privado `fotos` existe), 000003 (`guardar_parte` con `PT409`) |
+| Migraciones aplicadas | 000001 (tablas con RLS activada y **forzada**), 000002 (bucket privado `fotos`), 000003 (`guardar_parte` con `PT409`), **000004 alta controlada** (aplicada el 18-11; huella del SQL comprobada antes de ejecutarlo). Ahora 23 tablas, 75 políticas, 37 claves foráneas |
+| Hook «Before User Created» | **Activado** → `public.hook_alta_con_codigo` (plan Free) |
+| Ajustes de acceso | Registro permitido (filtrado por código); inicio anónimo, enlace manual, teléfono y proveedores sociales **desactivados**; solo correo y contraseña |
 | Disparadores en `auth.users` | Solo `al_registrarse` (crea el perfil). El disparador por correo **eliminado** (SQL ejecutado y verificado: 0) |
 | Superadministrador | Una cuenta ficticia fija designada por uuid. Las cuentas recién creadas se comprobaron **sin** permisos antes de designarlas |
 | Permiso de crear campañas | Solo las 2 cuentas ficticias creadoras fijas (se retiró a 9 cuentas de pruebas anteriores) |
@@ -89,19 +95,22 @@ SQL ejecutado el 18-11 en el editor del panel: `supabase/pruebas/solo_proyecto_p
   - Las crea `node real.test.mjs --preparar`, con contraseñas aleatorias guardadas solo en `supabase/pruebas/.cuentas-pruebas.json`, ignorado por git.
   - Sus permisos los da el propietario por uuid (`supabase-sql/03-designar-cuentas-prueba.sql`, fuera del repositorio).
   - Una prueba nueva comprueba que registrarse con un correo «superadmin…» ya no da nada.
+- **Alta controlada (18-11, migración 000004).** Solo se crea una cuenta con un código válido.
+  - El hook da un rechazo claro.
+  - El disparador de alta comprueba, gasta y da el acceso en la misma transacción. Funciona aunque el hook se desactive.
+  - Los nuevos creadores solo los autoriza el superadministrador. Detalle en `docs/PERMISOS_Y_SEGURIDAD.md`, «Alta controlada».
 - **Confirmación de correo:** desactivada **solo en el proyecto de pruebas** y solo para cuentas ficticias `@pruebas.example.com`.
-  - Antes de usar personas reales hace falta un alta controlada (ver la sección 10).
+  - Para usuarios reales: activarla con el SMTP gratuito de Gmail (ver la sección 10).
 - **Permisos por rol:** se aplican en PostgreSQL (RLS y funciones `security definer` en el esquema `cc_priv`). La interfaz solo oculta lo que el rol no puede hacer; si se fuerza una petición, la base de datos la rechaza.
 
 ## 7. Pruebas ejecutadas y resultados
 
 | Fecha | Prueba | Dónde | Resultado |
 | --- | --- | --- | --- |
-| 18-11 | Permisos (`supabase/pruebas`, `npm test`) | PostgreSQL 18.6 local (PGlite) | **16/16** |
-| 18-11 | Regresión de la app (`ejecutar.js`): 20 pruebas de la 2.3.0 + `migracion-v3` | Electron, perfiles aislados | **21/21** |
-
-| 18-11 | Seguridad contra Supabase real (`node real.test.mjs`): anónimo, intruso con correo «superadmin…», diagnóstico RLS, invitaciones, 8 h vistas por el administrador, trabajador 8 h · 80 €, jefe de otro equipo, nadie se eleva, solo lectura por rol, cuentas de dueños, campañas ajenas, conflicto, auditoría | Proyecto de pruebas real | **15/15** |
-| 18-11 | **Prueba real en la app con 5 sesiones independientes** (`ejecutar.js nube`): ver abajo | Electron + proyecto de pruebas real + Realtime | **OK 4 de 4** tras corregir una condición de carrera (antes: 1 fallo y 1 correcta) |
+| 18-11 | Permisos (`supabase/pruebas`, `npm test`) | PostgreSQL 18.6 local (PGlite) | **16/16**; con el alta controlada, **21/21** |
+| 18-11 | Regresión de la app (`ejecutar.js`): 20 pruebas de la 2.3.0 + `migracion-v3` | Electron, perfiles aislados | **21/21** (también tras el alta controlada) |
+| 18-11 | Seguridad contra Supabase real (`node real.test.mjs`): anónimo, intruso con correo «superadmin…», diagnóstico RLS, invitaciones, 8 h vistas por el administrador, trabajador 8 h · 80 €, jefe de otro equipo, nadie se eleva, solo lectura por rol, cuentas de dueños, campañas ajenas, conflicto, auditoría | Proyecto de pruebas real | **15/15**; con el alta controlada, **17/17 sin el hook y 17/17 con el hook** |
+| 18-11 | **Prueba real en la app con 5 sesiones independientes** (`ejecutar.js nube`): ver abajo | Electron + proyecto de pruebas real + Realtime | **OK 4 de 4** tras corregir una condición de carrera (antes: 1 fallo y 1 correcta). Ampliada con el alta controlada: **OK 3 de 3** |
 
 **Detalle de `nube-sesiones`.** Cada ventana es un dispositivo con su propio almacenamiento y su propia sesión; todo se hace pulsando la interfaz de la app, contra la base de datos real.
 1. **Creador, móvil de 390 px («Android»):** entra con su cuenta, crea la campaña (8 h/día, 10 €/h trabajador, 12 €/h dueño), da de alta 2 trabajadores y 1 dueño, y genera 3 códigos de invitación.
@@ -112,6 +121,13 @@ SQL ejecutado el 18-11 en el editor del panel: `supabase/pruebas/solo_proyecto_p
    - el **trabajador Uno** ve **8 h y 80,00 €** y nada de los demás;
    - el **jefe del otro equipo** ve solo al trabajador Dos, no el registro del trabajador Uno.
 5. **Conflicto:** el mismo creador tiene el parte abierto en el móvil y en el ordenador. Guarda primero el móvil (2.400 kg). El ordenador intenta guardar 9.999 kg con la versión antigua: recibe «Otra persona ha cambiado esto…», se recarga con 2.400 kg y no pisa nada.
+
+6. **Alta controlada en la app.**
+   - Una persona intenta crear cuenta sin código, con un código inventado, con uno anulado por el creador desde «Personas» y con uno ya usado: las cuatro veces se rechaza sin crear sesión.
+   - Administrador, trabajador y jefe crean su cuenta escribiendo su código y entran directamente en su campaña con su rol.
+7. **Nuevo creador.**
+   - El superadministrador genera en el panel global un código de creador. Un creador normal no puede hacerlo: la API lo rechaza.
+   - Una persona nueva crea su cuenta con él, ve «Nueva campaña» y crea la suya, sin ver ninguna ajena.
 
 Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpeta>` y no se guardan en el repositorio.
 
@@ -138,6 +154,20 @@ Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpet
    - Corregido: en `nubeCargar()` solo se aplica la carga más reciente.
    - Después, 4 de 4 ejecuciones correctas.
 9. Documentación: este archivo, `PLAN_VERSION_3.md` (etapas y nota sobre la confirmación de correo) y `CLAUDE.md`.
+10. **Alta controlada** (encargo del dueño del 18-11).
+    - Migración `20261118000004_alta_controlada.sql`:
+      - hook;
+      - disparador que gasta el código;
+      - tabla y funciones de autorizaciones de creador;
+      - `canjear_invitacion` común;
+      - códigos que admiten minúsculas, espacios y sin guiones.
+    - App:
+      - código obligatorio en «Crear cuenta»;
+      - invitaciones sin usar con «Anular» en «Personas»;
+      - «Autorizar un creador» en el panel global;
+      - «Unirme con un código» acepta códigos de creador.
+    - Pruebas locales, reales y de la app ampliadas.
+    - Aplicada en el proyecto de pruebas y hook activado.
 
 ## 9. Problemas encontrados
 
@@ -155,12 +185,17 @@ Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpet
 
 ## 10. Próximas tareas recomendadas
 
-1. **Alta controlada (obligatoria antes de usar personas reales).**
-   - Propuesta: que solo se pueda crear una cuenta con un código de invitación válido, comprobado en el servidor con el *hook* de Supabase Auth «antes de crear usuario». No necesita correo; hay que confirmar antes que ese *hook* está incluido en el plan Free.
-   - Alternativa: activar la confirmación por correo con un SMTP gratuito.
-   - Las cuentas del creador las autoriza el superadministrador (`puede_crear_campanas`).
+1. **Comprobación del correo para usuarios reales (necesita al dueño).**
+   - El alta controlada ya está hecha.
+   - Falta demostrar que el correo es de quien crea la cuenta:
+     - El dueño crea una «contraseña de aplicación» de Gmail. Necesita la verificación en dos pasos activada.
+     - La escribe él mismo en Supabase → Authentication → SMTP. Nunca en el chat ni en el repositorio.
+     - Se activa «Confirm email», con una plantilla que envía un código de 6 cifras.
+   - En la app: pantalla «Escribe el código que te hemos enviado» (`verifyOtp`).
+   - Con eso también funciona «He olvidado mi contraseña».
+   - Detalle en `docs/PERMISOS_Y_SEGURIDAD.md`.
 2. **Ampliar la prueba real de la app**: pagos y entregas, vista del dueño, «Cuentas», maquinaria, quitar acceso, panel global y comportamiento sin conexión.
-3. **Restablecer contraseña** sin correo: el creador o el superadministrador genera un código de un solo uso de restablecimiento (función en el servidor). Nunca se envían contraseñas.
+3. **Restablecer contraseña:** con el SMTP del punto 1, por correo de Supabase. Nunca se envían contraseñas.
 4. Documentos y fotos en Storage privado (interfaz y pruebas reales con la política ya escrita).
 5. Informes PDF y Excel y gráficas por quincena en modo cuenta, reutilizando las funciones de la 2.3.0 (mismas fórmulas).
 6. Asistente de migración de la copia `.json` de la 2.3.0 a una campaña con cuenta. Primero con datos ficticios; con datos reales, solo con autorización.

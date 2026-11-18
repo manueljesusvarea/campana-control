@@ -1695,7 +1695,9 @@ function nubeMsg(e) {
   const m = String(e?.message || e || ""), code = String(e?.code || "");
   if (!navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(m)) return "Sin conexión. Inténtalo cuando vuelva la cobertura.";
   if (/^CONFLICTO/.test(m) || code === "PT409") return "Otra persona ha cambiado esto mientras lo tenías abierto. Se ha recargado: revísalo y vuelve a guardar.";
-  if (/^INVITACION/.test(m)) return "El código no es válido, ya se usó o ha caducado.";
+  if (/^INVITACION|ALTA: el código|Database error saving new user/.test(m)) return "El código no es válido, ya se usó o ha caducado.";
+  if (/ALTA: para crear/.test(m)) return "Para crear una cuenta necesitas un código de invitación.";
+  if (/rate limit|too many/i.test(m)) return "Demasiados intentos seguidos. Espera unos minutos.";
   if (/Invalid login credentials/i.test(m)) return "Correo o contraseña incorrectos.";
   if (/already registered|already been registered/i.test(m)) return "Ya existe una cuenta con ese correo. Entra con tu contraseña.";
   if (/Password should be|password.*at least/i.test(m)) return "La contraseña es demasiado corta.";
@@ -1756,6 +1758,8 @@ async function nubeCargar() {
       sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
+    // Invitaciones pendientes (sin el código: solo se guarda su huella). Solo las ve quien gestiona.
+    d.inv = nGestiona() ? await nq(sb.from("invitaciones").select("id, rol, trabajador_id, dueno_id, caduca_en").eq("campana_id", c).is("usada_por", null).eq("revocada", false).gt("caduca_en", new Date().toISOString()).order("creada_en", { ascending: false })) : [];
     const ids = [...new Set(d.miembros.map(m => m.user_id))];
     if (ids.length) d.nombres = Object.fromEntries((await nq(sb.from("perfiles").select("id, nombre").in("id", ids))).map(p => [p.id, p.nombre]));
   }
@@ -1815,9 +1819,10 @@ const nAfter = {};
 function vEntrar() {
   const alta = NUBE.alta;
   return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${alta ? "Crear cuenta" : "Entrar"}</h1>
-  <div class="hint">${alta ? "Crea tu cuenta. Para unirte a una campaña necesitarás el código que te dé quien la gestiona." : "Entra con tu cuenta de CAMPAÑA CONTROL. La misma cuenta sirve en el móvil y en el ordenador."}</div>
+  <div class="hint">${alta ? "Solo se puede crear una cuenta con el código de invitación que te dé quien gestiona la campaña (o el administrador de la app, si vas a crear campañas). El código es de un solo uso." : "Entra con tu cuenta de CAMPAÑA CONTROL. La misma cuenta sirve en el móvil y en el ordenador."}</div>
   <div class="card stack" id="fentrar">
-   ${alta ? `<label class="f"><span>Tu nombre</span><input name="nombre" autocomplete="name"></label>` : ""}
+   ${alta ? `<label class="f"><span>Código de invitación</span><input name="codigo" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="text-transform:uppercase"></label>
+   <label class="f"><span>Tu nombre</span><input name="nombre" autocomplete="name"></label>` : ""}
    <label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
    <label class="f"><span>Contraseña${alta ? " (mínimo 8 caracteres)" : ""}</span><input name="password" type="password" autocomplete="${alta ? "new-password" : "current-password"}"></label>
    <button class="btn pri" data-act="nEntrar">${alta ? "Crear cuenta" : "Entrar"}</button>
@@ -1949,7 +1954,8 @@ function vNPersonas() {
    ${g ? `<div class="card stack" id="fninv"><b>Invitar a alguien</b><div class="hint">Se genera un código de un solo uso que caduca en 7 días. Pásalo por WhatsApp o en persona; la otra persona crea su cuenta y lo escribe en «Unirme con un código».</div>
      <div class="grid2"><label class="f"><span>Rol</span><select name="rol"><option value="trabajador">Trabajador (solo ve lo suyo)</option><option value="dueno">Dueño (solo ve su cuenta)</option><option value="jefe">Jefe de equipo (ve a su equipo)</option><option value="admin">Administrador (lee toda la campaña)</option>${NUBE.superadmin ? `<option value="creador">Creador</option>` : ""}</select></label>
      <label class="f"><span>Ficha (trabajador o dueño)</span><select name="ficha"><option value="">—</option>${d.trab.map(t => `<option value="t:${t.id}">${esc(t.nombre)}</option>`).join("")}${d.duenos.map(x => `<option value="d:${x.id}">${esc(x.nombre)} (dueño)</option>`).join("")}</select></label></div>
-     <button class="btn pri" data-act="nInvitar" style="align-self:flex-start">Generar código</button></div>` : ""}</section>
+     <button class="btn pri" data-act="nInvitar" style="align-self:flex-start">Generar código</button></div>` : ""}
+   ${g && d.inv?.length ? `<div class="stack" style="gap:6px"><b>Invitaciones sin usar</b><div class="list">${d.inv.map(i => `<div class="mrow"><div class="grow"><b>${ROL_TXT[i.rol]}${i.trabajador_id ? " · " + esc(nTrab(i.trabajador_id)?.nombre || "") : ""}${i.dueno_id ? " · " + esc(nDueno(i.dueno_id)?.nombre || "") : ""}</b><div class="muted small">caduca el ${fFechaL(String(i.caduca_en).slice(0, 10))}</div></div><button class="btn ghost sm danger" data-act="nAnularInv" data-id="${i.id}">Anular</button></div>`).join("")}</div></div>` : ""}</section>
   <section class="stack"><h2>Equipos (jefe → trabajadores)</h2>
    <div class="list">${d.asig.map(a => `<div class="mrow"><div class="grow"><b>${esc(nom(a.jefe_user_id))} → ${esc(nTrab(a.trabajador_id)?.nombre || "")}</b><div class="muted small">desde ${fFechaL(a.desde)}${a.hasta ? " hasta " + fFechaL(a.hasta) : " · vigente"}</div></div>${g && !a.hasta ? `<button class="btn ghost sm" data-act="nCerrarAsig" data-id="${a.id}">Terminar hoy</button>` : ""}</div>`).join("") || `<div class="mrow muted">Sin equipos.</div>`}</div>
    ${g && jefes.length ? `<div class="row" id="fnasig"><select name="jefe" style="flex:1 1 140px">${jefes.map(m => `<option value="${m.user_id}">${esc(nom(m.user_id))}</option>`).join("")}</select><select name="trab" style="flex:1 1 140px">${d.trab.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}</select><input type="date" name="desde" value="${hoy()}" style="flex:0 1 150px"><button class="btn" data-act="nAsignar">Asignar</button></div>` : g ? `<div class="hint">Invita primero a un jefe de equipo para poder asignarle trabajadores.</div>` : ""}</section></div>`;
@@ -2005,6 +2011,7 @@ function vNGlobal() {
   return `<div class="stack"><h1>Panel global</h1>
   <div class="kpis"><div class="kpi"><span class="lbl">Usuarios</span><b>${g.est.usuarios}</b></div><div class="kpi"><span class="lbl">Activos</span><b>${g.est.usuarios_activos}</b></div><div class="kpi"><span class="lbl">Campañas</span><b>${g.est.campanas}</b></div><div class="kpi"><span class="lbl">Partes</span><b>${g.est.partes}</b></div><div class="kpi"><span class="lbl">Base de datos</span><b>${fN(g.est.tamano_bd_bytes / 1048576, 1)} MB</b></div></div>
   <div class="hint">Plan gratuito de Supabase: 500 MB de base de datos y 1 GB de fotos.</div>
+  <section class="card stack"><h2>Nuevos creadores de campaña</h2><div class="hint">Solo tú puedes autorizar a alguien a crear campañas. Genera un código de un solo uso y entrégaselo en persona o por mensaje.</div><button class="btn pri" data-act="nAutorizarCreador" style="align-self:flex-start">${ic("mas")}Autorizar un creador</button></section>
   <section class="stack"><h2>Usuarios</h2><div class="list">${g.usuarios.map(u => `<div class="mrow"><div class="grow"><b>${esc(u.nombre || u.email)}</b><div class="muted small">${esc(u.email)} · ${u.campanas} campañas${u.ultimo_acceso ? " · último acceso " + fFechaL(String(u.ultimo_acceso).slice(0, 10)) : ""}</div></div>
    <label class="row small" style="gap:4px"><input type="checkbox" data-act2="crear" data-id="${u.id}" ${u.puede_crear_campanas ? "checked" : ""}> crea campañas</label>
    <label class="row small" style="gap:4px"><input type="checkbox" data-act2="activo" data-id="${u.id}" ${u.activo ? "checked" : ""} ${u.id === NUBE.sesion.user.id ? "disabled" : ""}> activo</label></div>`).join("")}</div></section></div>`;
@@ -2026,8 +2033,11 @@ Object.assign(A, {
     if (!email || !password) return toast("Escribe el correo y la contraseña");
     if (nSinRed()) return;
     if (NUBE.alta) {
+      const codigo = $('[name="codigo"]', f).value.trim().toUpperCase();
+      if (!codigo) return toast("Escribe el código de invitación");
       if (!nombre) return toast("Escribe tu nombre"); if (password.length < 8) return toast("La contraseña debe tener al menos 8 caracteres");
-      const r = await NUBE.sb.auth.signUp({ email, password, options: { data: { nombre } } });
+      // El servidor comprueba el código, lo gasta y da el acceso al crear la cuenta (la app no decide nada)
+      const r = await NUBE.sb.auth.signUp({ email, password, options: { data: { nombre, codigo_invitacion: codigo } } });
       if (r.error) return toast(nubeMsg(r.error));
       if (!r.data.session) return toast("Revisa tu correo para confirmar la cuenta y después entra.");
     } else { const r = await NUBE.sb.auth.signInWithPassword({ email, password }); if (r.error) return toast(nubeMsg(r.error)); }
@@ -2039,7 +2049,11 @@ Object.assign(A, {
   async nElegir(el) { await nubeElegir(el.dataset.id); },
   async nCanjear() {
     const c = $('#fcodigo [name="codigo"]').value.trim(); if (!c) return toast("Escribe el código"); if (nSinRed()) return;
-    try { const id = await nq(NUBE.sb.rpc("canjear_invitacion", { p_codigo: c })); NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas")); toast("Te has unido a la campaña"); await nubeElegir(id); }
+    try {
+      const id = await nq(NUBE.sb.rpc("canjear_invitacion", { p_codigo: c }));
+      if (!id) { NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, activo, puede_crear_campanas").eq("id", NUBE.sesion.user.id).maybeSingle()); toast("Ya puedes crear campañas"); return render(); }   // código de creador
+      NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas")); toast("Te has unido a la campaña"); await nubeElegir(id);
+    }
     catch (e) { toast(nubeMsg(e)); }
   },
   async nCrearCampana() {
@@ -2088,9 +2102,21 @@ Object.assign(A, {
     if (nSinRed()) return;
     try {
       const codigo = await nq(NUBE.sb.rpc("crear_invitacion", { p_campana: NUBE.c.campana_id, p_rol: f.rol, p_trabajador: f.rol === "trabajador" ? id : null, p_dueno: f.rol === "dueno" ? id : null, p_dias: 7 }));
+      await nubeCargar(); render();
       openModal(`<div class="stack"><h2>Código de invitación</h2><div class="hint">${ROL_TXT[f.rol]}${id ? " · " + esc((nTrab(id) || nDueno(id))?.nombre || "") : ""} · un solo uso · caduca en 7 días</div>
         <div style="font-family:var(--f-display);font-size:32px;letter-spacing:.08em;text-align:center;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;user-select:all" id="codigoInv">${esc(codigo)}</div>
         <div class="hint">Cópialo ahora: por seguridad no se guarda y no se puede volver a ver. Si se pierde, genera otro.</div>
+        <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  nAnularInv(el) { confirmar("¿Anular esta invitación? El código dejará de servir para crear cuenta o unirse.", async () => { if (nSinRed()) return; try { const r = await nq(NUBE.sb.from("invitaciones").update({ revocada: true }).eq("id", el.dataset.id).select("id")); if (!r.length) throw new Error("PERMISO"); await nubeCargar(); toast("Invitación anulada"); render(); } catch (e) { toast(nubeMsg(e)); } }, "Anular"); },
+  async nAutorizarCreador() {
+    if (nSinRed()) return;
+    try {
+      const codigo = await nq(NUBE.sb.rpc("crear_autorizacion_creador", { p_dias: 7 }));
+      openModal(`<div class="stack"><h2>Autorización de creador</h2><div class="hint">Permite crear campañas · un solo uso · caduca en 7 días. Sirve para crear una cuenta nueva o, con una cuenta existente, en «Unirme con un código».</div>
+        <div style="font-family:var(--f-display);font-size:32px;letter-spacing:.08em;text-align:center;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;user-select:all" id="codigoInv">${esc(codigo)}</div>
+        <div class="hint">Cópialo ahora: por seguridad no se guarda y no se puede volver a ver. Entrégalo solo a la persona autorizada.</div>
         <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
     } catch (e) { toast(nubeMsg(e)); }
   },

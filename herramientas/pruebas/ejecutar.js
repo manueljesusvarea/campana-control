@@ -587,11 +587,17 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
     };
     const entrar = (w, email, password) => ev(w, `t.rellenar('#fentrar [name="email"]', ${JSON.stringify(email)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(password)});
       await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "iniciar sesión"); return NUBE.sesion.user.id;`);
-    const alta = (w, nombre) => ev(w, `await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="nombre"]', ${JSON.stringify(nombre)});
-      t.rellenar('#fentrar [name="email"]', ${JSON.stringify(nombre.toLowerCase().replace(/\W+/g, "-") + "-" + run + "@pruebas.example.com")}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(clave())});
-      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.sesion && NUBE.perfil && t.q("#fcodigo"), 20000, "crear cuenta"); return NUBE.sesion.user.id;`);
-    const canjear = (w, codigo) => ev(w, `t.rellenar('#fcodigo [name="codigo"]', ${JSON.stringify(codigo)}); await t.pulsar('[data-act="nCanjear"]');
-      await t.esperar(() => NUBE.c && NUBE.d, 20000, "unirse con el código"); return NUBE.roles;`);
+    // Crear cuenta en la app CON el código: el servidor la crea ya unida a su campaña y rol (o con permiso de creador)
+    const rellenarAlta = (nombre, codigo) => `if (!NUBE.alta) await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="codigo"]', ${JSON.stringify(codigo || "")});
+      t.rellenar('#fentrar [name="nombre"]', ${JSON.stringify(nombre)}); t.rellenar('#fentrar [name="email"]', ${JSON.stringify(nombre.toLowerCase().replace(/\W+/g, "-") + "-" + run + "@pruebas.example.com")});
+      t.rellenar('#fentrar [name="password"]', ${JSON.stringify(clave())}); await t.pulsar('[data-act="nEntrar"]');`;
+    const alta = (w, nombre, codigo, conCampana = true) => ev(w, rellenarAlta(nombre, codigo) + `
+      await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "crear cuenta");
+      ${conCampana ? `await t.esperar(() => NUBE.c && NUBE.d, 20000, "campaña de la invitación");` : ""} return { id: NUBE.sesion.user.id, roles: NUBE.roles, campanas: NUBE.campanas.length };`);
+    // Alta que el servidor debe rechazar: sin sesión, con el aviso en pantalla
+    const altaRechazada = (w, nombre, codigo) => ev(w, `t.q("#toast").textContent = ""; ` + rellenarAlta(nombre, codigo) + `
+      const aviso = await t.esperar(() => t.q("#toast")?.textContent, 15000, "aviso de alta rechazada"); await t.dormir(800);
+      return { sesion: !!NUBE.sesion, aviso };`);
     const invitar = (w, rol, ficha) => ev(w, `await t.ir("#n-personas"); t.rellenar('#fninv [name="rol"]', ${JSON.stringify(rol)}); t.rellenar('#fninv [name="ficha"]', ${JSON.stringify(ficha)});
       await t.pulsar('[data-act="nInvitar"]'); const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 15000, "código de invitación"); await t.pulsar('[data-act="cerrar"]'); return c;`);
 
@@ -611,12 +617,23 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
     const codAdmin = await invitar(movil, "admin", ""), codTrab = await invitar(movil, "trabajador", "t:" + fichas.t1), codJefe = await invitar(movil, "jefe", "");
 
     // 2) Administrador en «Windows» (1280 px), trabajador en «iPhone» y jefe de OTRO equipo: cuentas nuevas + código
-    const pc = await dispositivo("e2e-admin-windows", 1280, 860); await alta(pc, "Admin E2E");
-    const rolesAdmin = await canjear(pc, codAdmin);
-    const iphone = await dispositivo("e2e-trab-iphone", 390, 844); await alta(iphone, "Trabajador Uno E2E");
-    const rolesTrab = await canjear(iphone, codTrab);
-    const jefe = await dispositivo("e2e-jefe-otro", 390, 844); const idJefe = await alta(jefe, "Jefe E2E");
-    const rolesJefe = await canjear(jefe, codJefe);
+    // Alta controlada en la app: sin código, con un código inventado o anulado → no se crea la cuenta
+    const intento = await dispositivo("e2e-sin-codigo", 390, 844);
+    const sinCodigo = await altaRechazada(intento, "Sin Codigo E2E", "");
+    const inventado = await altaRechazada(intento, "Inventado E2E", "ABCD-EF01-2345-6789");
+    const codAnulado = await invitar(movil, "admin", "");
+    await ev(movil, `await t.ir("#n-personas"); render(); await t.esperar(() => t.q('[data-act="nAnularInv"]'), 8000, "lista de invitaciones sin usar");
+      const n = NUBE.d.inv.length; t.q('[data-act="nAnularInv"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmación"); t.q("#cfOk").click();
+      await t.esperar(() => NUBE.d.inv.length === n - 1, 15000, "anular invitación"); return true;`);
+    const anulado = await altaRechazada(intento, "Anulado E2E", codAnulado);
+    ok(!sinCodigo.sesion && /código de invitación/i.test(sinCodigo.aviso) && !inventado.sesion && /no es válido/.test(inventado.aviso) && !anulado.sesion && /no es válido/.test(anulado.aviso),
+      "altas indebidas: " + JSON.stringify({ sinCodigo, inventado, anulado }));
+
+    const pc = await dispositivo("e2e-admin-windows", 1280, 860); const rolesAdmin = (await alta(pc, "Admin E2E", codAdmin)).roles;
+    const iphone = await dispositivo("e2e-trab-iphone", 390, 844); const rolesTrab = (await alta(iphone, "Trabajador Uno E2E", codTrab)).roles;
+    const jefe = await dispositivo("e2e-jefe-otro", 390, 844); const aj = await alta(jefe, "Jefe E2E", codJefe); const idJefe = aj.id, rolesJefe = aj.roles;
+    const reusado = await altaRechazada(intento, "Reusado E2E", codTrab);
+    ok(!reusado.sesion && /no es válido/.test(reusado.aviso), "código reutilizado: " + JSON.stringify(reusado));
     ok(rolesAdmin.join() === "admin" && rolesTrab.join() === "trabajador" && rolesJefe.join() === "jefe", "roles: " + JSON.stringify({ rolesAdmin, rolesTrab, rolesJefe }));
     // El jefe lleva al trabajador Dos (otro equipo distinto del trabajador Uno)
     await ev(movil, `await t.esperar(() => NUBE.d.miembros.some(m => m.user_id === ${JSON.stringify(idJefe)}), 20000, "el creador ve al jefe (tiempo real)"); await t.ir("#n-personas"); render();
@@ -644,8 +661,8 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
     ok(trab.horas === 8 && trab.importe === 8000 && /80,00\s*€/.test(trab.texto) && !trab.veOtros && !/Trabajador E2E Dos/.test(trab.texto), "trabajador: " + JSON.stringify({ ...trab, texto: trab.texto.slice(0, 200) }));
     ok(jefeAntes === 0 && jef.equipo.join() === "Trabajador E2E Dos" && !/Trabajador E2E Uno/.test(jef.texto) && jef.veTodo === 0, "jefe de otro equipo: " + JSON.stringify(jef));
     // Lo que la interfaz no enseña tampoco se puede hacer: el administrador intenta cambiar el parte por la API
-    const intento = await ev(pc, `const r = await NUBE.sb.from("partes").update({ kilos: 1 }).eq("id", NUBE.d.partes[0].id).select(); return { error: !!r.error, filas: (r.data || []).length };`);
-    ok(intento.error || intento.filas === 0, "el administrador ha modificado un parte: " + JSON.stringify(intento));
+    const intentoApi = await ev(pc, `const r = await NUBE.sb.from("partes").update({ kilos: 1 }).eq("id", NUBE.d.partes[0].id).select(); return { error: !!r.error, filas: (r.data || []).length };`);
+    ok(intentoApi.error || intentoApi.filas === 0, "el administrador ha modificado un parte: " + JSON.stringify(intentoApi));
 
     // 5) Conflicto: el mismo creador con el parte abierto en el móvil y en el ordenador
     const pc2 = await dispositivo("e2e-creador-pc", 1280, 860); await entrar(pc2, fijas.creadorA.email, fijas.creadorA.password);
@@ -658,6 +675,19 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
       await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.borrador?.version === ${parte.version + 1}, 15000, "recarga tras el conflicto");
       return { antes, despues: { version: NUBE.borrador.version, kilos: +NUBE.d.partes[0].kilos }, aviso: document.body.innerText.includes("Otra persona ha cambiado esto") };`);
     ok(conflicto.antes.version === parte.version && conflicto.despues.kilos === 2400 && conflicto.aviso, "conflicto: " + JSON.stringify(conflicto));
+    // 6) Solo el superadministrador autoriza creadores: genera el código en su panel y la persona crea su campaña
+    const sa = await dispositivo("e2e-superadmin", 1280, 860); await entrar(sa, fijas.superadmin.email, fijas.superadmin.password);
+    const codCreador = await ev(sa, `await t.ir("#global"); render(); await t.esperar(() => t.q('[data-act="nAutorizarCreador"]'), 15000, "panel global");
+      await t.pulsar('[data-act="nAutorizarCreador"]'); const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 15000, "código de creador"); await t.pulsar('[data-act="cerrar"]'); return c;`);
+    const creadorNoAutoriza = await ev(movil, `return (await NUBE.sb.rpc("crear_autorizacion_creador", { p_dias: 7 })).error != null;`);
+    ok(creadorNoAutoriza, "un creador puede autorizar creadores");
+    const nuevo = await dispositivo("e2e-creador-nuevo", 390, 844); const an = await alta(nuevo, "Creador Nuevo E2E", codCreador, false);
+    const campNueva = "Campaña del creador nuevo " + run;
+    const creadorNuevo = await ev(nuevo, `await t.esperar(() => t.q("#fnueva"), 15000, "puede crear campañas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(campNueva)});
+      await t.pulsar('[data-act="nCrearCampana"]'); await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(campNueva)}, 20000, "crear su campaña");
+      return { campanas: NUBE.campanas.map(c => c.nombre), roles: NUBE.roles };`);
+    ok(an.campanas === 0 && creadorNuevo.campanas.length === 1 && creadorNuevo.roles.join() === "creador", "creador nuevo: " + JSON.stringify({ an, creadorNuevo }));
+
     // Capturas de lo que ve cada uno (solo si se pide con CAPTURAS=<carpeta>; datos ficticios)
     if (process.env.CAPTURAS) {
       fs.mkdirSync(process.env.CAPTURAS, { recursive: true });
@@ -667,7 +697,8 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
       }
     }
     return { campana: nombreCamp, roles: { admin: rolesAdmin, trabajador: rolesTrab, jefe: rolesJefe }, parte,
-      tiempoReal_ms: { administrador: admin.ms - t0, trabajador: trab.ms - t0 }, trabajador: { horas: trab.horas, euros: trab.importe / 100 }, jefeVe: jef.equipo, conflicto };
+      tiempoReal_ms: { administrador: admin.ms - t0, trabajador: trab.ms - t0 }, trabajador: { horas: trab.horas, euros: trab.importe / 100 }, jefeVe: jef.equipo, conflicto,
+      altasRechazadas: { sinCodigo: sinCodigo.aviso, inventado: inventado.aviso, anulado: anulado.aviso, reutilizado: reusado.aviso }, creadorNuevo };
   } finally { SRV.nube = false; }
 });
 

@@ -81,9 +81,11 @@ Si el jefe también trabaja, recibe además el rol de trabajador con su ficha, y
 - RLS automática activada;
 - «Confirm email» desactivado **solo en este proyecto y temporalmente**.
 
-**Migraciones aplicadas:** `…000001`, `…000002`, `…000003` y `supabase/pruebas/solo_proyecto_pruebas.sql`.
+**Migraciones aplicadas:** `…000001`, `…000002`, `…000003`, `…000004` (18-11) y `supabase/pruebas/solo_proyecto_pruebas.sql`.
 
-La URL y la clave pública de ese proyecto **no están en el repositorio**: van en `supabase/pruebas/.env.pruebas`, ignorado por git. Motivo: el proyecto de pruebas tiene una regla que hace superadministrador a quien se registre como `superadmin…@pruebas.example.com`.
+La URL y la clave pública de ese proyecto **no están en el repositorio**: van en `supabase/pruebas/.env.pruebas`, ignorado por git.
+- Hasta el 18-11-2026 el proyecto tenía una regla que hacía superadministrador a quien se registrase como `superadmin…@pruebas.example.com`.
+- Se **eliminó** ese día: ahora los permisos de las cuentas fijas de prueba se dan por uuid, con SQL del propietario (ver `docs/ESTADO_ACTUAL_V3.md`).
 
 `supabase/pruebas/real.test.mjs`: **14 de 14 correctas**. Son peticiones directas a la API de Supabase, con 11 cuentas ficticias y una sesión independiente para cada una:
 
@@ -107,3 +109,42 @@ La URL y la clave pública de ese proyecto **no están en el repositorio**: van 
 **Pendiente:**
 - probar Storage (fotos) con la app;
 - pruebas de la interfaz con sesiones en varios dispositivos (etapas B a D).
+
+## Alta controlada (18-11-2026, migración 000004)
+
+**Regla:** solo se crea una cuenta con un código de invitación válido. Lo comprueba y lo gasta el servidor; la app no decide nada.
+
+| Pieza | Dónde | Qué hace |
+| --- | --- | --- |
+| Hook «Before User Created» (plan Free) | `public.hook_alta_con_codigo`, activado en Authentication → Hooks | Antes de crear la cuenta: sin código, o con uno inventado, caducado, anulado o usado → rechazo 403 con mensaje claro. No gasta el código. Solo lo puede ejecutar `supabase_auth_admin` |
+| Disparador de alta | `cc_priv.nuevo_perfil` (`al_registrarse` en `auth.users`) | En la misma transacción que crea la cuenta: vuelve a comprobar el código, lo gasta (con bloqueo de fila) y da el acceso. Si falla, la cuenta no se crea. Funciona aunque el hook esté desactivado (comprobado: 17/17 con y sin hook) |
+| Invitaciones a una campaña | `crear_invitacion` | Solo quien gestiona esa campaña (creador o superadministrador). Rol y ficha fijados en el código. Un solo uso, caducidad de 1 a 30 días, solo se guarda la huella SHA-256. Se pueden anular |
+| Autorizaciones de creador | `autorizaciones_creador`, `crear_autorizacion_creador` | Solo el superadministrador. Un solo uso, caducan. Dan permiso de crear campañas y nada más |
+| Primer superadministrador (producción) | Editor SQL del propietario | `select cc_priv.emitir_autorizacion_creador(7, null);` → crear la cuenta en la app con ese código → designar superadministrador por uuid |
+| Cuenta existente | `canjear_invitacion` | Unirse a otra campaña o recibir permiso de creador con un código nuevo |
+
+Además:
+- El código gastado se quita de los datos de la cuenta.
+- Las funciones internas (`cc_priv.*`) no se pueden llamar desde la app.
+- En el proyecto están **desactivados** el inicio de sesión anónimo, el teléfono y los proveedores sociales.
+
+### Comprobación de identidad (evaluación)
+
+1. **El código ya identifica a la persona.**
+   - El creador lo entrega en persona o por WhatsApp a alguien que conoce, y va ligado a una ficha concreta (por ejemplo, el trabajador X).
+   - Quien lo usa demuestra que lo recibió de él. Es de un solo uso y caduca.
+2. **Lo que falta es comprobar que el correo es suyo.** Sirve para que nadie use un correo ajeno o mal escrito, y para poder recuperar la contraseña. Requiere activar «Confirm email», y para eso hace falta enviar correos:
+
+   | Opción | Coste | Valoración |
+   | --- | --- | --- |
+   | Correo integrado de Supabase | 0 € | Solo envía al equipo del proyecto y 2 correos por hora: **no sirve** para usuarios reales |
+   | **SMTP de Gmail del dueño con «contraseña de aplicación»** | 0 € | **Recomendada.** Sin dominio propio; con el límite diario de envío de Gmail (unos cientos de correos, de sobra para una cuadrilla). La contraseña de aplicación la escribe el dueño directamente en Supabase (Authentication → SMTP), nunca en el chat ni en el repositorio |
+   | Brevo (plan gratuito) | 0 € | Unos 300 correos al día según su web (comprobar antes); sin dominio propio, los correos desde una dirección de Gmail suelen acabar en spam |
+   | SMS (teléfono) | De pago | Descartada |
+
+   **Propuesta para producción:**
+   - activar «Confirm email» con el SMTP de Gmail;
+   - usar la plantilla de confirmación con el código de 6 cifras (`{{ .Token }}`), para que funcione igual en el APK, Windows y iPhone sin depender de enlaces;
+   - añadir en la app la pantalla «Escribe el código que te hemos enviado».
+
+   En el proyecto de pruebas sigue desactivada, solo para cuentas ficticias `@pruebas.example.com`.

@@ -14,8 +14,11 @@ const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
 
 /* ---------- Preparación ---------- */
 await db.exec(readFileSync(path.join(dir, "stub_supabase.sql"), "utf8"));
-for (const f of readdirSync(path.join(dir, "..", "migrations")).filter(f => f.endsWith(".sql") && !f.includes("almacenamiento")).sort())
-  await db.exec(readFileSync(path.join(dir, "..", "migrations", f), "utf8"));
+const MIGRACIONES = readdirSync(path.join(dir, "..", "migrations")).filter(f => f.endsWith(".sql") && !f.includes("almacenamiento")).sort();
+const aplicar = async filtro => { for (const f of MIGRACIONES.filter(filtro)) await db.exec(readFileSync(path.join(dir, "..", "migrations", f), "utf8")); };
+// Las cuentas de partida existen ANTES del alta controlada (000004), como en el proyecto real; después,
+// toda cuenta nueva necesita un código.
+await aplicar(f => f < "20261118000004");
 
 const U = {};
 for (const n of ["super", "creadorA", "creadorB", "adminA", "jefe1", "jefe2", "trab1", "trab2", "dueno1", "dueno2", "intruso"]) {
@@ -25,6 +28,7 @@ for (const n of ["super", "creadorA", "creadorB", "adminA", "jefe1", "jefe2", "t
 // Backend (propietario): superadministrador y permiso para crear campañas. No hay forma de hacerlo desde la app.
 await db.query("insert into public.superadmin (user_id) values ($1)", [U.super]);
 await db.query("update public.perfiles set puede_crear_campanas = true where id = any($1)", [[U.creadorA, U.creadorB]]);
+await aplicar(f => f >= "20261118000004");
 
 // Ejecuta fn como el usuario indicado (o anónimo si u es null), en su propia transacción
 async function como(u, fn) {
@@ -243,6 +247,102 @@ await prueba("Auditoría: quién cambió horas y pagos queda registrado; nadie p
 await prueba("Una ficha solo se vincula a una cuenta (sin duplicados)", async () => {
   const c = (await como(U.creadorA, ({ uno }) => uno("select public.crear_invitacion($1, 'trabajador', $2, null, 7) as c", [A.c, A.t1]))).c;
   await falla(U.intruso, ({ uno }) => uno("select public.canjear_invitacion($1)", [c]));
+});
+
+/* ---------- Alta controlada (migración 000004) ---------- */
+// Alta de cuenta como la hace Supabase Auth: un INSERT en auth.users (dispara al_registrarse). Si falla, no queda nada.
+async function alta(email, meta) {
+  const id = crypto.randomUUID();
+  try { await db.transaction(tx => tx.query("insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)", [id, email, JSON.stringify(meta || {})])); }
+  catch (e) { return { error: e.message, existe: (await db.query("select count(*)::int n from auth.users where id = $1", [id])).rows[0].n + (await db.query("select count(*)::int n from public.perfiles where id = $1", [id])).rows[0].n }; }
+  return { id };
+}
+const invitar = (u, c, rol, t = null, d = null, dias = 7) => como(u, ({ uno }) => uno("select public.crear_invitacion($1, $2::rol_campana, $3, $4, $5) as c", [c, rol, t, d, dias])).then(r => r.c);
+const hook = codigo => db.transaction(async tx => { await tx.exec("set local role supabase_auth_admin");
+  return (await tx.query("select public.hook_alta_con_codigo($1) as r", [JSON.stringify({ metadata: { name: "before-user-created" }, user: { email: "x@ficticio.test", user_metadata: codigo === undefined ? {} : { codigo_invitacion: codigo } } })])).rows[0].r; });
+
+await prueba("Alta: sin código, con código inventado, caducado, anulado o ya usado → no se crea la cuenta", async () => {
+  const sin = await alta("sin-codigo@ficticio.test", { nombre: "Sin código" });
+  ok(sin.error && /ALTA/.test(sin.error) && sin.existe === 0, "alta sin código: " + JSON.stringify(sin));
+  const inventado = await alta("inventado@ficticio.test", { codigo_invitacion: "ABCD-EF01-2345-6789" });
+  ok(inventado.error && /INVITACION/.test(inventado.error) && inventado.existe === 0, "código inventado: " + JSON.stringify(inventado));
+  const cad = await invitar(U.creadorA, A.c, "admin");
+  await db.query("update public.invitaciones set caduca_en = now() - interval '1 minute' where codigo_hash = cc_priv.huella_codigo($1)", [cad]);
+  ok((await alta("caducado@ficticio.test", { codigo_invitacion: cad })).existe === 0, "código caducado creó la cuenta");
+  const anul = await invitar(U.creadorA, A.c, "admin");
+  const idAnul = (await db.query("select id from public.invitaciones where codigo_hash = cc_priv.huella_codigo($1)", [anul])).rows[0].id;
+  ok((await como(U.creadorA, ({ q }) => q("update public.invitaciones set revocada = true where id = $1 returning id", [idAnul]))).length === 1, "el creador no pudo anular su invitación");
+  ok((await alta("anulado@ficticio.test", { codigo_invitacion: anul })).existe === 0, "código anulado creó la cuenta");
+  ok((await alta("usado@ficticio.test", { codigo_invitacion: A.inv_trab1 })).existe === 0, "código ya canjeado creó la cuenta");
+  return "5 intentos rechazados · 0 cuentas creadas";
+});
+
+await prueba("Alta con código válido: la cuenta nace con su campaña, rol y ficha; el código se gasta y no se guarda", async () => {
+  const t3 = (await como(U.creadorA, ({ uno }) => uno("insert into trabajadores (campana_id, nombre) values ($1, 'Trabajador Tres') returning id", [A.c]))).id;
+  const cod = (await invitar(U.creadorA, A.c, "trabajador", t3)).toLowerCase().replace(/-/g, " ");   // escrito en minúsculas y sin guiones
+  const r = await alta("superadmin-nuevo@ficticio.test", { nombre: "Trabajador Tres", codigo_invitacion: cod });
+  ok(r.id, "no se creó: " + r.error);
+  const m = (await db.query("select rol::text, trabajador_id, campana_id from public.miembros where user_id = $1", [r.id])).rows;
+  ok(m.length === 1 && m[0].rol === "trabajador" && m[0].trabajador_id === t3 && m[0].campana_id === A.c, "acceso: " + JSON.stringify(m));
+  const p = (await db.query("select puede_crear_campanas from public.perfiles where id = $1", [r.id])).rows[0];
+  const sa = (await db.query("select count(*)::int n from public.superadmin where user_id = $1", [r.id])).rows[0].n;
+  ok(!p.puede_crear_campanas && sa === 0, "un correo «superadmin…» recibió permisos");
+  const meta = (await db.query("select raw_user_meta_data m from auth.users where id = $1", [r.id])).rows[0].m;
+  ok(!("codigo_invitacion" in meta) && meta.nombre === "Trabajador Tres", "metadatos: " + JSON.stringify(meta));
+  ok((await alta("segundo@ficticio.test", { codigo_invitacion: cod })).existe === 0, "el mismo código creó una segunda cuenta");
+  const ve = await como(r.id, ({ q }) => q("select id from trabajadores"));
+  ok(ve.length === 1 && ve[0].id === t3, "el trabajador nuevo ve fichas ajenas: " + ve.length);
+  U.trab3 = r.id; return "trabajador con su ficha · código gastado · 2.º intento rechazado";
+});
+
+await prueba("Hook «antes de crear usuario»: rechaza sin código o con uno no válido, acepta uno válido sin gastarlo; nadie más lo puede llamar", async () => {
+  ok((await hook(undefined)).error?.http_code === 403, "sin código no rechaza");
+  ok((await hook("0000-0000-0000-0000")).error?.http_code === 403, "código inventado no rechaza");
+  ok((await hook(A.inv_trab1)).error?.http_code === 403, "código usado no rechaza");
+  const cod = await invitar(U.creadorA, A.c, "admin");
+  ok(JSON.stringify(await hook(cod)) === "{}", "código válido rechazado");
+  ok(JSON.stringify(await hook(cod)) === "{}", "el hook gastó el código");
+  for (const u of [null, U.trab1, U.super]) await falla(u, ({ q }) => q("select public.hook_alta_con_codigo('{}')"));
+  return "3 rechazos · 1 aceptación sin gastar · anónimo, trabajador y superadmin sin acceso";
+});
+
+await prueba("Creadores: solo el superadministrador emite autorizaciones; el código da permiso de crear campañas y nada más", async () => {
+  for (const u of [U.creadorA, U.adminA, U.trab1, null]) await falla(u, ({ q }) => q("select public.crear_autorizacion_creador(7)"));
+  for (const u of [U.creadorA, U.trab1]) {
+    await falla(u, ({ q }) => q("select cc_priv.emitir_autorizacion_creador(7, null)"));
+    await falla(u, ({ q }) => q("select cc_priv.aplicar_codigo($1, 'X')", [u]));
+  }
+  ok((await como(U.creadorA, ({ q }) => q("select * from public.autorizaciones_creador"))).length === 0, "un creador ve autorizaciones");
+  const cod = (await como(U.super, ({ uno }) => uno("select public.crear_autorizacion_creador(7) as c"))).c;
+  const r = await alta("creador-nuevo@ficticio.test", { nombre: "Creador nuevo", codigo_invitacion: cod });
+  ok(r.id, "alta de creador: " + r.error);
+  ok((await db.query("select puede_crear_campanas from public.perfiles where id = $1", [r.id])).rows[0].puede_crear_campanas, "sin permiso de crear campañas");
+  ok((await como(r.id, ({ q }) => q("select id from campanas"))).length === 0, "el creador nuevo ve campañas ajenas");
+  const c = (await como(r.id, ({ uno }) => uno("select public.crear_campana('Campaña del creador nuevo', 2026) as id"))).id;
+  ok(c, "no pudo crear su campaña");
+  // Una cuenta existente (trabajador) recibe permiso de creador con otro código; el anulado ya no vale
+  const c2 = (await como(U.super, ({ uno }) => uno("select public.crear_autorizacion_creador(3) as c"))).c;
+  await como(U.trab2, ({ uno }) => uno("select public.canjear_invitacion($1)", [c2]));
+  ok((await db.query("select puede_crear_campanas from public.perfiles where id = $1", [U.trab2])).rows[0].puede_crear_campanas, "canje de autorización por cuenta existente");
+  const c3 = (await como(U.super, ({ uno }) => uno("select public.crear_autorizacion_creador(3) as c"))).c;
+  const idC3 = (await db.query("select id from public.autorizaciones_creador where codigo_hash = cc_priv.huella_codigo($1)", [c3])).rows[0].id;
+  ok((await como(U.creadorA, ({ q }) => q("update public.autorizaciones_creador set revocada = true where id = $1 returning id", [idC3]))).length === 0, "un creador anuló una autorización");
+  ok((await como(U.super, ({ q }) => q("update public.autorizaciones_creador set revocada = true where id = $1 returning id", [idC3]))).length === 1, "el superadministrador no pudo anularla");
+  ok((await alta("anulada@ficticio.test", { codigo_invitacion: c3 })).existe === 0, "autorización anulada creó cuenta");
+  await falla(U.trab1, ({ q }) => q("update public.perfiles set puede_crear_campanas = true where id = $1", [U.trab1]));
+  return "4 roles sin permiso · alta de creador · canje por cuenta existente · anulada rechazada";
+});
+
+await prueba("Invitaciones: cada creador solo a sus campañas; administrador, jefe y trabajador no invitan; nadie invita «creador» salvo el superadministrador", async () => {
+  await falla(U.creadorA, ({ q }) => q("select public.crear_invitacion($1, 'admin')", [B.c]));
+  await falla(U.creadorB, ({ q }) => q("select public.crear_invitacion($1, 'jefe')", [A.c]));
+  for (const u of [U.adminA, U.jefe1, U.trab1, U.dueno1]) await falla(u, ({ q }) => q("select public.crear_invitacion($1, 'admin')", [A.c]));
+  await falla(U.creadorA, ({ q }) => q("select public.crear_invitacion($1, 'creador')", [A.c]));
+  await falla(U.creadorA, ({ q }) => q("select public.crear_invitacion($1, 'trabajador', $2)", [A.c, crypto.randomUUID()]));
+  await falla(U.creadorA, ({ q }) => q("insert into public.invitaciones (campana_id, rol, codigo_hash, caduca_en, creada_por) values ($1, 'admin', '\\x00', now() + interval '1 day', $2)", [A.c, U.creadorA]));
+  ok((await como(U.creadorB, ({ q }) => q("select id from public.invitaciones where campana_id = $1", [A.c]))).length === 0, "B ve invitaciones de A");
+  ok(await como(U.super, ({ uno }) => uno("select public.crear_invitacion($1, 'creador') as c", [A.c])), "el superadministrador no puede invitar a un creador");
+  return "10 intentos indebidos rechazados";
 });
 
 /* ---------- Resumen ---------- */

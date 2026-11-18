@@ -19,3 +19,4 @@ $$;
 grant usage on schema auth to anon, authenticated;
 grant execute on function auth.uid() to anon, authenticated;
 grant usage on schema public to anon, authenticated;
+create role supabase_auth_admin nologin;   -- quien ejecuta los hooks de Supabase Auth

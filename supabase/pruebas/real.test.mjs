@@ -29,7 +29,7 @@ if (/sb_secret|service_role/i.test(KEY)) { console.error("Esa es una clave SECRE
 if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(URL_)) { console.error("La URL no parece de Supabase: " + URL_); process.exit(2); }
 
 const TABLAS = ["perfiles", "superadmin", "campanas", "campanas_economia", "trabajadores", "trabajadores_privado", "duenos", "duenos_privado", "duenos_trabajadores",
-  "miembros", "asignaciones_equipo", "maquinas", "partes", "partes_filas", "partes_maquinas", "pagos", "plantillas", "documentos", "fotos", "invitaciones", "auditoria", "importaciones"];
+  "miembros", "asignaciones_equipo", "maquinas", "partes", "partes_filas", "partes_maquinas", "pagos", "plantillas", "documentos", "fotos", "invitaciones", "auditoria", "importaciones", "autorizaciones_creador"];
 const nuevo = () => createClient(URL_, KEY, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
 const resultados = [];
 const ok = (c, m) => { if (!c) throw new Error(m); };
@@ -44,12 +44,18 @@ const cero_filas = async (p, txt) => { const { data, error } = await p; ok(error
 
 const run = Date.now().toString(36) + crypto.randomBytes(2).toString("hex");
 const C = {};   // clientes (sesiones independientes) por usuario
-async function cuenta(nombre) {
+// Alta como en la app: desde la 000004 solo con un código de invitación válido (lo comprueba y gasta el servidor)
+async function cuenta(nombre, codigo) {
   const c = nuevo(); const email = `${nombre}-${run}@pruebas.example.com`; const password = crypto.randomBytes(18).toString("base64url");
-  const { data, error } = await c.auth.signUp({ email, password, options: { data: { nombre: nombre + " (ficticio)" } } });
+  const { data, error } = await c.auth.signUp({ email, password, options: { data: { nombre: nombre + " (ficticio)", ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
   if (error) throw new Error(`alta de ${nombre}: ${error.message}`);
   if (!data.session) throw new Error(`alta de ${nombre}: sin sesión (¿«Confirm email» sigue activo en el proyecto de pruebas?)`);
   c.id = data.user.id; C[nombre] = c; return c;
+}
+async function altaRechazada(nombre, codigo) {
+  const c = nuevo(); const { data, error } = await c.auth.signUp({ email: `${nombre}-${run}@pruebas.example.com`, password: crypto.randomBytes(18).toString("base64url"),
+    options: { data: { nombre, ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
+  ok(error && !data?.session && !data?.user?.id, `alta «${nombre}» permitida`); return error.message;
 }
 // Cuentas fijas con permisos: contraseñas solo en este ordenador (.cuentas-pruebas.json, ignorado por git)
 const FIJAS = ["superadmin", "creadorA", "creadorB"];
@@ -63,12 +69,16 @@ async function cuentaFija(nombre) {
   c.id = data.user.id; C[nombre] = c; return c;
 }
 if (process.argv.includes("--preparar")) {
-  const fijas = leerFijas();
+  // Con el alta controlada (000004) cada cuenta nueva necesita un código. En un proyecto nuevo, el propietario
+  // genera tres en el editor SQL —  select cc_priv.emitir_autorizacion_creador(1, null);  — y los pasa en la
+  // variable CODIGOS_ALTA="C1,C2,C3" (no se guardan). Después se designa por uuid como siempre.
+  const fijas = leerFijas(), codigos = (env.CODIGOS_ALTA || "").split(",").map(x => x.trim()).filter(Boolean);
   for (const n of FIJAS) {
     if (fijas[n]) continue;
     const email = `${n.toLowerCase()}-fija-${crypto.randomBytes(4).toString("hex")}@pruebas.example.com`, password = crypto.randomBytes(24).toString("base64url");
-    const { data, error } = await nuevo().auth.signUp({ email, password, options: { data: { nombre: n + " (ficticio, fijo)" } } });
-    if (error || !data.user) { console.error(`Alta de ${n}: ${error?.message || "sin usuario"}`); process.exit(1); }
+    const codigo = codigos.shift();
+    const { data, error } = await nuevo().auth.signUp({ email, password, options: { data: { nombre: n + " (ficticio, fijo)", ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
+    if (error || !data.user) { console.error(`Alta de ${n}: ${error?.message || "sin usuario"}${codigo ? "" : " (falta un código: ver CODIGOS_ALTA)"}`); process.exit(1); }
     fijas[n] = { email, password, id: data.user.id };
     writeFileSync(fcuentas, JSON.stringify(fijas, null, 2), { mode: 0o600 });   // tras cada alta, para no perder ninguna
   }
@@ -93,7 +103,7 @@ const ins = (c, t, fila) => c.from(t).insert(fila).select().single().then(r => {
 
 /* ---------- 1. Esquema visto desde fuera (anónimo) ---------- */
 const anon = nuevo();
-await prueba("Las 22 tablas existen y un anónimo no puede leer ninguna", async () => {
+await prueba(`Las ${TABLAS.length} tablas existen y un anónimo no puede leer ninguna`, async () => {
   const faltan = [], legibles = [];
   for (const t of TABLAS) {
     const { data, error } = await anon.from(t).select("*").limit(1);
@@ -104,33 +114,26 @@ await prueba("Las 22 tablas existen y un anónimo no puede leer ninguna", async 
   ok(!faltan.length, "faltan tablas: " + faltan.join(", "));
   ok(!legibles.length, "un anónimo puede consultar: " + legibles.join(", "));
   await espera_error(anon.rpc("mis_campanas"), "anónimo llamando a mis_campanas");
-  return "22/22 tablas · 0 legibles sin sesión";
+  return `${TABLAS.length}/${TABLAS.length} tablas · 0 legibles sin sesión`;
 });
 
 /* ---------- 2. Cuentas ficticias (cada una con su sesión) ---------- */
 for (const n of FIJAS) await cuentaFija(n);
-for (const n of ["admin", "jefe1", "jefe2", "trab1", "trab2", "dueno1", "dueno2", "sinCampana"]) await cuenta(n);
 
-await prueba("Permisos de las cuentas fijas dados por uuid; registrarse con un correo «superadmin…» no da nada", async () => {
+await prueba("Permisos de las cuentas fijas dados por uuid", async () => {
   const sa = await C.superadmin.from("superadmin").select("user_id");
   ok(!sa.error && sa.data.length === 1 && sa.data[0].user_id === C.superadmin.id, "la cuenta fija no es la superadministradora (¿aplicaste 03-designar-cuentas-prueba.sql?)");
   for (const n of ["creadorA", "creadorB"]) {
     const p = await C[n].from("perfiles").select("puede_crear_campanas").eq("id", C[n].id).single();
     ok(p.data?.puede_crear_campanas === true, n + " sin permiso de crear campañas (¿aplicaste 03-designar-cuentas-prueba.sql?)");
   }
-  // El ataque que permitía la preparación antigua: registrarse con un correo que «parece» de superadministrador
-  const intruso = await cuenta("superadmin-intruso");
-  ok((await intruso.from("superadmin").select("user_id").eq("user_id", intruso.id)).data.length === 0, "un correo «superadmin…» dio superadministrador");
-  const pi = await intruso.from("perfiles").select("puede_crear_campanas").eq("id", intruso.id).single();
-  ok(pi.data?.puede_crear_campanas === false, "un correo nuevo recibió permiso de crear campañas");
-  await espera_error(intruso.rpc("diagnostico_esquema"), "diagnóstico pedido por el intruso");
-  return "superadmin y 2 creadores por uuid · el intruso no obtiene nada";
+  return "superadmin y 2 creadores por uuid";
 });
 
-await prueba("Diagnóstico interno: RLS activada y forzada en las 22 tablas, con políticas y claves foráneas", async () => {
+await prueba("Diagnóstico interno: RLS activada y forzada en todas las tablas, con políticas y claves foráneas", async () => {
   const d = await rpc(C.superadmin, "diagnostico_esquema");
   const pub = d.filter(x => TABLAS.includes(x.tabla));
-  ok(pub.length === 22, "el diagnóstico ve " + pub.length + " tablas");
+  ok(pub.length === TABLAS.length, "el diagnóstico ve " + pub.length + " tablas");
   const mal = pub.filter(x => !x.rls || !x.rls_forzado || x.anon_puede_leer);
   ok(!mal.length, "tablas sin RLS forzada o legibles por anon: " + mal.map(x => x.tabla).join(", "));
   const sinPol = pub.filter(x => x.politicas === 0);
@@ -141,20 +144,52 @@ await prueba("El diagnóstico interno solo lo puede pedir el superadministrador"
 
 /* ---------- 3. Campaña real de pruebas creada por creadorA ---------- */
 const A = {};
-await prueba("Creador autorizado crea una campaña, fichas, maquinaria e invitaciones", async () => {
+await prueba("Creador autorizado crea una campaña, fichas e invitaciones; cada persona crea su cuenta con su código", async () => {
   A.c = await rpc(C.creadorA, "crear_campana", { p_nombre: "Campaña de prueba " + run, p_anio: 2026, p_inicio: "2026-11-01", p_horas_dia: 8, p_precio_trab_cent: 1000, p_precio_dueno_cent: 1200, p_iva: 0 });
   A.t1 = (await ins(C.creadorA, "trabajadores", { campana_id: A.c, nombre: "Trabajador Uno" })).id;
   A.t2 = (await ins(C.creadorA, "trabajadores", { campana_id: A.c, nombre: "Trabajador Dos" })).id;
   await ins(C.creadorA, "trabajadores_privado", { trabajador_id: A.t1, campana_id: A.c, nif: "00000000T" });
   A.d1 = (await ins(C.creadorA, "duenos", { campana_id: A.c, nombre: "Dueño Uno" })).id;
   A.d2 = (await ins(C.creadorA, "duenos", { campana_id: A.c, nombre: "Dueño Dos" })).id;
+  for (const [n, rol, t, d] of [["admin", "admin"], ["jefe1", "jefe"], ["jefe2", "jefe"], ["trab1", "trabajador", A.t1], ["trab2", "trabajador", A.t2], ["dueno1", "dueno", null, A.d1], ["dueno2", "dueno", null, A.d2]]) {
+    A["cod_" + n] = await rpc(C.creadorA, "crear_invitacion", { p_campana: A.c, p_rol: rol, p_trabajador: t || null, p_dueno: d || null, p_dias: 1 });
+    await cuenta(n, A["cod_" + n]);                                   // la cuenta nace ya unida a su campaña y rol
+    const m = await C[n].rpc("mis_campanas");
+    ok(!m.error && m.data.length === 1 && m.data[0].campana_id === A.c && m.data[0].roles.join() === rol, n + ": " + JSON.stringify(m.error || m.data));
+  }
   await ins(C.creadorA, "asignaciones_equipo", { campana_id: A.c, jefe_user_id: C.jefe1.id, trabajador_id: A.t1, desde: "2026-11-01" });
   await ins(C.creadorA, "asignaciones_equipo", { campana_id: A.c, jefe_user_id: C.jefe2.id, trabajador_id: A.t2, desde: "2026-11-01" });
-  for (const [n, rol, t, d] of [["admin", "admin"], ["jefe1", "jefe"], ["jefe2", "jefe"], ["trab1", "trabajador", A.t1], ["trab2", "trabajador", A.t2], ["dueno1", "dueno", null, A.d1], ["dueno2", "dueno", null, A.d2]]) {
-    const codigo = await rpc(C.creadorA, "crear_invitacion", { p_campana: A.c, p_rol: rol, p_trabajador: t || null, p_dueno: d || null, p_dias: 1 });
-    await rpc(C[n], "canjear_invitacion", { p_codigo: codigo });
-  }
-  return "7 cuentas unidas con código de un solo uso";
+  // «sinCampana»: se unió a una campaña de B y B le quitó el acceso
+  A.cB = await rpc(C.creadorB, "crear_campana", { p_nombre: "Campaña B inicial " + run });
+  await cuenta("sinCampana", await rpc(C.creadorB, "crear_invitacion", { p_campana: A.cB, p_rol: "admin" }));
+  const q = await C.creadorB.from("miembros").delete().eq("campana_id", A.cB).eq("user_id", C.sinCampana.id).select();
+  ok(!q.error && q.data.length === 1, "B no pudo quitar el acceso: " + JSON.stringify(q.error));
+  return "8 cuentas creadas con código; cada una con exactamente su campaña y rol";
+});
+
+await prueba("Alta controlada: sin código, con código inventado o ya usado no se crea cuenta; un correo «superadmin…» no da nada", async () => {
+  const sin = await altaRechazada("sin-codigo");
+  await altaRechazada("inventado", "ABCD-EF01-2345-6789");
+  await altaRechazada("reutilizado", A.cod_trab1);
+  const hook = /ALTA/.test(sin) ? "hook activo (mensaje claro)" : "hook NO activo: lo frena el disparador (" + sin.slice(0, 40) + ")";
+  const intruso = await cuenta("superadmin-intruso", await rpc(C.creadorA, "crear_invitacion", { p_campana: A.c, p_rol: "admin" }));
+  ok((await intruso.from("superadmin").select("user_id").eq("user_id", intruso.id)).data.length === 0, "un correo «superadmin…» dio superadministrador");
+  const pi = await intruso.from("perfiles").select("puede_crear_campanas").eq("id", intruso.id).single();
+  ok(pi.data?.puede_crear_campanas === false, "una cuenta nueva recibió permiso de crear campañas");
+  await espera_error(intruso.rpc("diagnostico_esquema"), "diagnóstico pedido por el intruso");
+  await espera_error(intruso.rpc("crear_autorizacion_creador", { p_dias: 7 }), "el intruso autoriza creadores");
+  return "3 altas rechazadas · intruso solo con su rol · " + hook;
+});
+
+await prueba("Solo el superadministrador autoriza creadores; la cuenta creada con esa autorización crea su campaña y no ve las ajenas", async () => {
+  for (const n of ["creadorA", "admin", "trab1"]) await espera_error(C[n].rpc("crear_autorizacion_creador", { p_dias: 7 }), n + " autoriza creadores");
+  const codigo = await rpc(C.superadmin, "crear_autorizacion_creador", { p_dias: 1 });
+  const nuevoCreador = await cuenta("creador-nuevo", codigo);
+  ok((await nuevoCreador.from("perfiles").select("puede_crear_campanas").eq("id", nuevoCreador.id).single()).data?.puede_crear_campanas === true, "sin permiso de crear campañas");
+  ok((await nuevoCreador.from("partes").select("id").eq("campana_id", A.c)).data.length === 0, "el creador nuevo ve la campaña A");
+  await rpc(nuevoCreador, "crear_campana", { p_nombre: "Campaña del creador nuevo " + run });
+  await altaRechazada("autorizacion-reutilizada", codigo);
+  return "autorización de un solo uso · campaña propia creada";
 });
 
 /* ---------- 4. Requisito: creador registra 8 h en Android; administrador lo ve en Windows; trabajador en iPhone ---------- */
