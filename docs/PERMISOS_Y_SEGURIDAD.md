@@ -10,15 +10,15 @@ L = leer · E = crear, cambiar y borrar · — = sin acceso · «propio» = solo
 | --- | --- | --- | --- | --- | --- | --- |
 | Campañas (todas) | L E (y borrar) | L E las suyas | L la suya | L la suya | L la suya | L la suya |
 | Economía de la campaña (precios, IVA) | L E | L E | L | — | — (su precio le llega en su resumen) | — (su precio, en su cuenta) |
-| Usuarios: activar, bloquear, permitir crear campañas | L E | — | — | — | — | — |
-| Miembros y roles | L E (incluido «creador») | L; invitaciones; quitar y cambiar (salvo creadores) | L | — | — | — |
+| Cuentas: crear, restablecer contraseña, bloquear | L E (todas; crea creadores) | L E las personas de sus campañas | — | — | — | — |
+| Miembros y roles | L E (incluido «creador») | L; crear cuentas con su rol; quitar; dar o quitar edición a administradores (salvo creadores) | L | — | — | — |
 | Fichas de trabajadores | L E | L E | L | L propio (su equipo) | L propia | — |
 | Datos personales (DNI, NSS…) | L E | L E | L | — | L propios | L propios |
 | Fichas de dueños | L E | L E | L | — (nombre y finca en su panel) | — (nombre en su resumen) | L propia |
 | Equipos (asignaciones) | L E | L E | L | L las suyas | — | — |
 | Maquinaria | L E | L E | L | — | — | en su cuenta |
-| Partes y jornadas | L E | L E | L | L propio (fechas de asignación) | L sus filas | L sus partes |
-| Pagos y entregas | L E | L E | L | — | L sus entregas | L sus pagos |
+| Partes y jornadas | L E | L E | L (E si tiene edición) | L propio (fechas de asignación) | L sus filas | L sus partes |
+| Pagos y entregas | L E | L E | L (E si tiene edición) | — | L sus entregas | L sus pagos |
 | Documentos y fotos | L E | L E | L | — | — | L los suyos |
 | Auditoría | L | L | L | — | — | — |
 
@@ -110,43 +110,30 @@ La URL y la clave pública de ese proyecto **no están en el repositorio**: van 
 - probar Storage (fotos) con la app;
 - pruebas de la interfaz con sesiones en varios dispositivos (etapas B a D).
 
-## Alta controlada (18-11-2026, migración 000004)
+## Cuentas privadas (18-11-2026, migraciones 000006-000008)
 
-**Regla:** solo se crea una cuenta con un código de invitación válido. Lo comprueba y lo gasta el servidor; la app no decide nada.
+Sustituye al alta por invitación (000004) y a la confirmación del correo (000005), decisión del dueño del proyecto del 18-11-2026. No hay registro público, ni correo, ni códigos.
 
 | Pieza | Dónde | Qué hace |
 | --- | --- | --- |
-| Hook «Before User Created» (plan Free) | `public.hook_alta_con_codigo`, activado en Authentication → Hooks | Antes de crear la cuenta: sin código, o con uno inventado, caducado, anulado o usado → rechazo 403 con mensaje claro. No gasta el código. Solo lo puede ejecutar `supabase_auth_admin` |
-| Disparador de alta | `cc_priv.nuevo_perfil` (`al_registrarse` en `auth.users`) | En la misma transacción que crea la cuenta: vuelve a comprobar el código, lo gasta (con bloqueo de fila) y da el acceso. Si falla, la cuenta no se crea. Funciona aunque el hook esté desactivado (comprobado: 17/17 con y sin hook) |
-| Invitaciones a una campaña | `crear_invitacion` | Solo quien gestiona esa campaña (creador o superadministrador). Rol y ficha fijados en el código. Un solo uso, caducidad de 1 a 30 días, solo se guarda la huella SHA-256. Se pueden anular |
-| Autorizaciones de creador | `autorizaciones_creador`, `crear_autorizacion_creador` | Solo el superadministrador. Un solo uso, caducan. Dan permiso de crear campañas y nada más |
-| Primer superadministrador (producción) | Editor SQL del propietario | `select cc_priv.emitir_autorizacion_creador(7, null);` → crear la cuenta en la app con ese código → designar superadministrador por uuid |
-| Cuenta existente | `canjear_invitacion` | Unirse a otra campaña o recibir permiso de creador con un código nuevo |
+| Inicio de sesión | Supabase Auth (contraseñas y sesiones) | Usuario + contraseña. Internamente, `usuario@usuarios.campana-control.invalid`: dominio reservado que no recibe correo; no autoriza nada |
+| Crear cuentas | Edge Function `gestion-usuarios` → `preparar_alta()` con la sesión de quien crea | Superadministrador: creadores. Creador: administradores (lector o editor), jefes, trabajadores y dueños solo en sus campañas. Después la función crea la identidad con la clave secreta (solo en el servidor) |
+| Ninguna otra vía | Disparador `al_registrarse` + hook «Before User Created» | Sin un alta autorizada de los últimos 10 minutos no se crea ninguna cuenta: ni registro público (además desactivado), ni panel, ni inserción directa |
+| Contraseña temporal | 12 caracteres, generada en el servidor, mostrada una vez | La cuenta no está habilitada (`activo = false`) hasta que la persona pone la suya con `cambiar_clave` (comprueba la actual). Cambiarla por fuera (Auth directo) no la habilita |
+| Restablecer | `preparar_restablecer()` + Edge Function | Solo el superadministrador o el creador que gestiona a esa persona (todas sus campañas son suyas). Nueva temporal; la anterior y sus sesiones dejan de valer |
+| Bloquear | `preparar_bloqueo()` + Edge Function (también bloquea en Auth) | Sin datos al momento, sin inicio de sesión; ni restablecer ni cambiar la contraseña lo levantan |
+| Editor | `miembros.puede_editar` + `cc_priv.edita()` | Partes, filas, máquinas del parte y pagos. Nunca usuarios, fichas, maquinaria ni permisos |
+| Identificador fijo (000007) | Disparador en `auth.users` | Nadie cambia su identificador técnico por el de otro usuario |
+| Servidor sin tablas (000008) | `cuenta_bloqueada_servidor`, `descartar_alta_servidor`, `clave_cambiada_servidor` | El rol de servidor no lee tablas; solo puede llamar a estas funciones |
+| Primer superadministrador | Editor SQL del propietario | `select cc_priv.autorizar_alta_propietario('usuario', 'Nombre');` y, en 10 minutos, Authentication → Users → Add user con ese identificador y su contraseña |
 
-Además:
-- El código gastado se quita de los datos de la cuenta.
-- Las funciones internas (`cc_priv.*`) no se pueden llamar desde la app.
-- En el proyecto están **desactivados** el inicio de sesión anónimo, el teléfono y los proveedores sociales.
-
-### Comprobación de identidad (evaluación)
-
-1. **El código ya identifica a la persona.**
-   - El creador lo entrega en persona o por WhatsApp a alguien que conoce, y va ligado a una ficha concreta (por ejemplo, el trabajador X).
-   - Quien lo usa demuestra que lo recibió de él. Es de un solo uso y caduca.
-2. **Lo que falta es comprobar que el correo es suyo.** Sirve para que nadie use un correo ajeno o mal escrito, y para poder recuperar la contraseña. Requiere activar «Confirm email», y para eso hace falta enviar correos:
-
-   | Opción | Coste | Valoración |
-   | --- | --- | --- |
-   | Correo integrado de Supabase | 0 € | Solo envía al equipo del proyecto y 2 correos por hora: **no sirve** para usuarios reales |
-   | **SMTP de Gmail del dueño con «contraseña de aplicación»** | 0 € | **Recomendada.** Sin dominio propio; con el límite diario de envío de Gmail (unos cientos de correos, de sobra para una cuadrilla). La contraseña de aplicación la escribe el dueño directamente en Supabase (Authentication → SMTP), nunca en el chat ni en el repositorio |
-   | Brevo (plan gratuito) | 0 € | Unos 300 correos al día según su web (comprobar antes); sin dominio propio, los correos desde una dirección de Gmail suelen acabar en spam |
-   | SMS (teléfono) | De pago | Descartada |
-
-   **Hecho el 18-11-2026:**
-   - Migración 000005: sin correo confirmado la cuenta está inactiva (no ve ni hace nada aunque su invitación sea válida). Se activa sola cuando Supabase registra la confirmación; nadie la activa a mano; el bloqueo del superadministrador se respeta.
-   - Pantallas de la app para el código de 6 cifras, reenvío y contraseña olvidada.
-   - Plantillas en `supabase/plantillas-correo/`.
-
-   **Falta (lo hace el dueño):** el SMTP de Gmail y activar «Confirm email». Pasos en `docs/GUIA_CORREO_SMTP.md`. **El envío real no está probado** hasta entonces.
-
-   En el proyecto de pruebas sigue desactivada, solo para cuentas ficticias `@pruebas.example.com`.
+**Pruebas (18-11-2026):**
+- Locales: 25/25 (`npm test`).
+- Contra el proyecto real: 12/12 (`node real.test.mjs`), que cubren los 15 casos pedidos por el dueño. Incluyen:
+  - registro público rechazado;
+  - 11 altas indebidas y 5 accesos directos rechazados;
+  - editor y lector;
+  - aislamiento entre campañas;
+  - restablecer y bloquear;
+  - tiempo real en 0,7 s, sin fuga a otra campaña.
+- App con 6 sesiones contra el proyecto real (`ejecutar.js nube`): correcta.

@@ -1,239 +1,185 @@
 # Estado actual de CAMPAÑA CONTROL 3.0 (multiusuario)
 
-Revisión del 18-11-2026, al retomar el desarrollo tras la pausa del 7-11-2026. Todo lo que aquí figura como «verificado» se ha comprobado ejecutando pruebas ese día; lo que no se ha podido ejecutar figura como «sin probar».
+Revisión del 18-11-2026. Lo que figura como «verificado» se ha comprobado ejecutando pruebas ese día. Lo que no se ha podido ejecutar figura como «sin probar». El historial completo está en git (rama `desarrollo/multiusuario-v3`).
 
-## 1. Estado exacto del proyecto al retomarlo
+## 1. Estado exacto del proyecto
 
-- **Versión pública:** 2.3.0, sin cambios y funcionando.
-  - Web: https://manueljesusvarea.github.io/campana-control/ (`APP_VERSION = "2.3.0"`; `config-nube.js` no existe allí, así que la web no conoce Supabase).
-  - Release `v2.3.0`: APK y `.exe`, 2 descargas de cada uno.
-  - Los tres flujos de GitHub solo se ejecutaron el 7-11 con `main`; subir la rama de desarrollo no ha publicado nada.
-- **Rama `desarrollo/multiusuario-v3`:** sincronizada con GitHub en `fa97c2d` (etapa B: base de datos verificada 14/14).
-- **Trabajo sin guardar del 7-11 (12:19–12:40):** 6 archivos modificados más `www/vendor/supabase-js/`, con la interfaz del modo con cuenta (unas 430 líneas) escrita pero nunca ejecutada.
-  - `herramientas/pruebas/ejecutar.js` tenía un error de sintaxis (una cadena partida en dos líneas) que impedía pasar las pruebas.
-  - Copia de seguridad hecha antes de tocar nada: `CAMPAÑA CONTROL/respaldos/2026-11-18-antes-retomar-v3/` (archivos y `cambios-sin-guardar.patch`).
-- **Proyecto Supabase de pruebas** (`campana-control-pruebas`, organización «Campana Control», plan Free): **pausado por inactividad**. La dirección del proyecto no resolvía.
-  - Reactivado el 18-11 con autorización del dueño («Resume project»; los datos se conservan y no tiene coste).
-  - La sesión del panel había caducado: el dueño volvió a iniciar sesión con GitHub.
+- **Versión pública 2.3.0:** sin cambios.
+  - Web: https://manueljesusvarea.github.io/campana-control/
+  - Release `v2.3.0`: APK y `.exe`.
+  - `main` no se ha tocado.
+- **3.0 en desarrollo:** cuentas privadas con **usuario y contraseña, sin correo y sin registro público** (decisión del dueño del 18-11-2026).
+  - Sustituye a la invitación por código (000004) y a la confirmación del correo (000005), sin borrar datos ni cuentas.
+- **Proyecto Supabase de pruebas** (`campana-control-pruebas`, plan Free, Frankfurt):
+  - activo, con las migraciones 000001 a 000008 aplicadas;
+  - Edge Function `gestion-usuarios` desplegada;
+  - registro público desactivado.
+- No existe proyecto de producción. Coste: 0 €.
 
 ## 2. Último commit y rama de trabajo
 
-- **Rama:** `desarrollo/multiusuario-v3` (GitHub: `origin/desarrollo/multiusuario-v3`).
-- **`main`:** `f4c9c1e`, con las etiquetas `v2.3.0` y `v2.3.0-publica`. No se ha tocado.
-- **Commits de esta sesión** (ver la sección 8):
-  - `f21e5f5`: modo con cuenta, migración segura desde 2.3.0, cuentas de prueba por uuid.
-  - `ccbf086`: carrera en recargas corregida, prueba real con 5 sesiones y este documento.
+- **Rama:** `desarrollo/multiusuario-v3`.
+- **`main`:** `f4c9c1e`, con las etiquetas `v2.3.0` y `v2.3.0-publica`.
+- **Commits del 18-11:**
+
+  | Commit | Contenido |
+  | --- | --- |
+  | `f21e5f5` | Modo con cuenta |
+  | `ccbf086` | Carrera en recargas |
+  | `f3a82d8` | Alta por código |
+  | `9b280ab` | Correo con código |
+  | `b04c0a1` | Script de correo |
+  | `f145d0b` | **Cuentas privadas: base de datos, Edge Function y pruebas reales** |
+  | `8bd6a02` | **App con usuario y contraseña y «Gestión de usuarios»** |
+  | (siguiente) | Documentación al día y retirada de lo del correo |
 
 ## 3. Funcionalidades terminadas
 
-| Funcionalidad | Estado | Cómo se ha verificado |
-| --- | --- | --- |
-| App 2.3.0 completa (partes, pagos, cuentas, informes PDF/Excel, fotos, copias, sin conexión, APK, Windows, iPhone) | ✔ Verificada | 20 pruebas de regresión en Electron, 18-11 |
-| Esquema 3.0: 22 tablas, RLS activada y forzada, funciones y auditoría | ✔ Verificado | 16/16 en PostgreSQL local (PGlite) el 18-11; 14/14 contra Supabase real el 7-11 |
-| Roles en la base de datos: superadministrador, creador, administrador (solo lectura), jefe (solo su equipo y fechas), trabajador, dueño; varias campañas y varios roles por persona | ✔ Verificados en la base de datos | Mismas pruebas |
-| Control de conflictos (`version` + error `PT409`) | ✔ Verificado | Prueba local y real |
-| Invitaciones con código de un solo uso (huella SHA-256, caducidad) | ✔ Verificadas | Prueba local y real |
-| Migración segura al instalar la 3.0: un dispositivo con datos de la 2.3.0 sigue abriendo sus datos en modo local | ✔ Verificada | Prueba `migracion-v3` (nueva) |
-| `construir_www.py`: supabase-js en local y `config-nube.js` solo con clave pública (rechaza claves secretas) | ✔ Verificado | Compilación y prueba `carga` |
-| App con cuenta: crear cuenta, entrar, crear campaña, fichas de trabajadores y dueños, invitaciones por código, unirse con código, equipos, parte diario, vistas de administrador, trabajador y jefe | ✔ Verificada contra el proyecto real | Prueba `nube-sesiones` (5 sesiones), 18-11 |
-| Sincronización en tiempo real entre dispositivos (sin recargar) | ✔ Verificada | ~1,2 s desde guardar hasta verlo en otra sesión |
-| Conflictos en la app: aviso, recarga y sin pisar datos | ✔ Verificado | Mismo creador en dos dispositivos |
-| **Alta controlada:** solo se crea una cuenta con un código válido; el servidor lo comprueba, lo gasta y da el acceso (campaña, rol y ficha) en la misma transacción | ✔ Verificada | 5 pruebas locales nuevas; 17/17 reales **con y sin** el hook; app: altas sin código, con código inventado, anulado y reutilizado rechazadas |
-| Solo el superadministrador autoriza creadores (código de un solo uso desde el panel global) | ✔ Verificado | Local, real y en la app: la persona crea su cuenta y su campaña |
-| Creadores: invitan solo a sus campañas, con los roles que pueden dar; ven y anulan invitaciones sin usar | ✔ Verificado | Local (10 intentos indebidos rechazados) y en la app (anular) |
-| **Sin permisos hasta confirmar el correo** (migración 000005): una cuenta sin correo confirmado está inactiva aunque su invitación sea válida; se activa sola al confirmar; nadie la activa a mano; el bloqueo del superadministrador se respeta | ✔ Verificado en la base de datos | 2 pruebas locales nuevas (23/23); real 18/18 (perfiles confirmados, cambios indebidos rechazados) |
-| Pantallas de confirmación por código: «Confirma tu correo», «Pedir otro código» (60 s), máximo 5 intentos por código, cuenta sin confirmar, «He olvidado mi contraseña», «Cambiar contraseña» | ✔ Interfaz verificada **con respuestas simuladas** | Prueba `correo-codigo`. Contra el servidor real solo se ha comprobado que un código incorrecto se rechaza (`otp_expired`) |
+| Funcionalidad | Cómo se ha verificado |
+| --- | --- |
+| App 2.3.0 completa (partes, pagos, cuentas, informes PDF/Excel, fotos, copias, sin conexión, APK, Windows, iPhone) | 21/21 pruebas de regresión tras los cambios del 18-11 |
+| Migración segura: un dispositivo con datos de la 2.3.0 sigue abriendo sus datos | Prueba `migracion-v3` |
+| Esquema con RLS activada y forzada en 24 tablas; roles: superadministrador, creador, administrador (lector o editor), jefe, trabajador y dueño; varias campañas y roles por persona | 25/25 locales (PGlite) y 12/12 reales |
+| **Cuentas privadas:** inicio con usuario y contraseña; identificador técnico `usuario@usuarios.campana-control.invalid` (no recibe correo, no autoriza nada) | Real: API y app |
+| **Altas solo desde «Gestión de usuarios»** (Edge Function + `preparar_alta`): superadministrador → creadores; creador → administradores, jefes, trabajadores y dueños de sus campañas | Real: 11 altas indebidas y 5 accesos directos rechazados; registro público rechazado |
+| Contraseña temporal (12 caracteres, mostrada una vez, no guardada); sin acceso hasta poner una propia; cambiarla por fuera no habilita la cuenta | Real y app |
+| Administrador editor (jornadas y pagos) y administrador lector | Real y app (el lector, ni por la API) |
+| Restablecer contraseña por quien gestiona a esa persona; la antigua y sus sesiones dejan de valer | Real y app |
+| Bloqueo: sin datos al momento y sin inicio de sesión; ni restablecer ni cambiar contraseña lo levantan | Real y app |
+| Identificador técnico fijo (nadie ocupa el de otro usuario) | Local |
+| Partes, pagos, cuentas, equipos y vistas por rol; tiempo real y conflictos de versión | Real: aviso en 0,7 s (API) y unos 2,6 s (app); sin fuga a otra campaña |
 
 ## 4. Funcionalidades pendientes
 
 | Funcionalidad | Estado |
 | --- | --- |
-| Partes de la interfaz con cuenta aún sin prueba en la app: pagos y entregas, vista del dueño («Mi cuenta»), pantalla «Cuentas», maquinaria en el parte, quitar acceso, terminar asignación, panel global del superadministrador, cerrar sesión, sin conexión | Programadas; la base de datos sí está probada para todas ellas (`real.test.mjs`). Falta ampliar `nube-sesiones` |
-| **Envío real del código por correo** | **Sin probar.** La app y la base de datos están listas. Falta que el dueño configure el SMTP gratuito de Gmail y active «Confirm email» (`docs/GUIA_CORREO_SMTP.md`). Después: prueba real con varios dispositivos |
-| Restablecer contraseña olvidada | Programado (código por correo y contraseña nueva); el envío real, sin probar (mismo SMTP) |
-| Primer superadministrador del proyecto de producción | Procedimiento listo (código emitido por el propietario en el editor SQL); el proyecto no existe todavía |
-| Fotos de documentos en Storage privado | Migración SQL escrita (`…000002_almacenamiento.sql`); falta la interfaz y probarla |
-| Documentos, plantillas y gráficas por quincena en modo cuenta | Pendiente: en modo cuenta aún no hay pantalla de documentos ni gráficas |
-| PDF y Excel desde los datos compartidos | Pendiente. Se generarán en el dispositivo, sin guardarlos en Supabase |
-| Asistente de migración de una copia `.json` de la 2.3.0 a una campaña con cuenta | Pendiente (tabla `importaciones` ya creada) |
-| Maquinaria en el parte con cuenta | Programada (se guarda con el parte); sin prueba de interfaz |
-| Funcionamiento sin conexión con cuenta | Solo lectura de lo ya cargado y aviso «Sin conexión»; no hay cola de cambios pendientes (decisión: evita conflictos) |
-| Paginación y carga por fechas para campañas grandes | Pendiente (ahora se carga la campaña entera) |
-| Proyecto Supabase de producción | No existe. Se creará solo con autorización |
-| Alojamiento web 3.0 (Cloudflare Pages u otra opción) | Por decidir en la etapa F |
+| Prueba con dispositivos físicos (Android, iPhone, Windows) con cuentas distintas | Preparada en las pruebas automáticas; falta hacerla con el dueño |
+| Pantallas con cuenta sin prueba en la app: pagos y entregas, vista del dueño, «Cuentas», maquinaria, panel global | La base de datos sí está probada |
+| Fotos de documentos en Storage privado | Política escrita (000002); falta interfaz |
+| Documentos, plantillas, gráficas, PDF y Excel con datos compartidos (generados en el dispositivo, sin guardarlos en la nube) | Pendiente |
+| Asistente para pasar una copia `.json` de la 2.3.0 a una campaña con cuenta | Pendiente |
+| Paginación y carga por fechas | Pendiente |
+| Proyecto de producción y cuenta del superadministrador real | Solo con autorización (procedimiento en la sección 6) |
+| APK, `.exe` y web 3.0 por GitHub Actions | Cuando el multiusuario esté completo y con autorización |
 
-## 5. Estado real de Supabase
-
-Comprobado el 18-11-2026 sobre el proyecto real (no simulado):
+## 5. Estado real de Supabase (proyecto de pruebas)
 
 | Comprobación | Resultado |
 | --- | --- |
-| Proyecto | `campana-control-pruebas` (región Frankfurt, Nano, plan Free). Pausado por inactividad → reactivado con autorización; disponible en unos 3 minutos |
-| Organización | «Campana Control» (Free). No existe proyecto de producción |
-| URL y clave pública en este ordenador | `supabase/config-app.local.json` y `supabase/pruebas/.env.pruebas` (ignorados por git). Ninguna clave secreta en el ordenador ni en el repositorio |
-| Migraciones aplicadas | 000001 (tablas con RLS activada y **forzada**), 000002 (bucket privado `fotos`), 000003 (`guardar_parte` con `PT409`), **000004 alta controlada** (aplicada el 18-11; huella del SQL comprobada antes de ejecutarlo). Ahora 23 tablas, 75 políticas, 37 claves foráneas |
-| Hook «Before User Created» | **Activado** → `public.hook_alta_con_codigo` (plan Free) |
-| Ajustes de acceso | Registro permitido (filtrado por código); inicio anónimo, enlace manual, teléfono y proveedores sociales **desactivados**; solo correo y contraseña |
-| Migración 000005 (correo confirmado) | Aplicada el 18-11 (huella comprobada). Antes se verificó que las 104 cuentas tenían el correo confirmado: no se desactivó ninguna |
-| SMTP propio | **No configurado** (correo integrado de Supabase, que no sirve para usuarios reales) |
-| Disparadores en `auth.users` | Solo `al_registrarse` (crea el perfil). El disparador por correo **eliminado** (SQL ejecutado y verificado: 0) |
-| Superadministrador | Una cuenta ficticia fija designada por uuid. Las cuentas recién creadas se comprobaron **sin** permisos antes de designarlas |
-| Permiso de crear campañas | Solo las 2 cuentas ficticias creadoras fijas (se retiró a 9 cuentas de pruebas anteriores) |
-| Cuentas | Unas 75, todas ficticias `@pruebas.example.com`, de las pruebas automáticas |
-| «Confirm email» | Desactivado solo en este proyecto de pruebas (temporal) |
-| Coste | 0 €. Sin facturación ni servicios de pago |
+| Migraciones | 000001-000008 aplicadas (huella SHA-256 comprobada antes de ejecutar cada una) |
+| Registro público | Desactivado. Además, el hook «Before User Created» y el disparador de alta exigen un alta autorizada |
+| Inicio anónimo, teléfono y proveedores sociales | Desactivados |
+| «Confirm email» | Desactivado: ya no se usa el correo para nada |
+| SMTP | No configurado (no hace falta) |
+| Edge Function | `gestion-usuarios`, con verificación de JWT activa. La clave secreta solo está en el entorno de Supabase |
+| Rol de servidor | Sin acceso a tablas; solo tres funciones concretas |
+| Superadministrador de pruebas | `propietario.pruebas` (ficticio). Contraseña solo en `supabase/pruebas/.cuentas-pruebas.json`, ignorado por git |
+| Datos | Todos ficticios (cuentas y campañas de las pruebas automáticas) |
 
-SQL ejecutado el 18-11 en el editor del panel: `supabase/pruebas/solo_proyecto_pruebas.sql` (marcado por Supabase como «destructivo» por `drop trigger`/`drop function`; ejecutado con autorización expresa; no borra datos) y `CAMPAÑA CONTROL/supabase-sql/03-designar-cuentas-prueba.sql` (fuera del repositorio).
+## 6. Autenticación y permisos
 
-## 6. Estado de autenticación y permisos
+- **Cómo entra una persona.**
+  1. Recibe en persona su usuario y una contraseña temporal.
+  2. Al entrar, la app la obliga a poner una propia. La Edge Function comprueba la temporal.
+  3. Después vuelve a entrar con la nueva, porque Supabase cierra las sesiones anteriores.
+- **Cuenta habilitada:**
+  - creada por un alta autorizada;
+  - con identidad en Supabase Auth;
+  - no bloqueada;
+  - con contraseña propia;
+  - y con sus pertenencias a campañas.
 
-- **Contraseñas:** las gestiona Supabase Auth (bcrypt en el servidor). La app nunca las guarda.
-  - La sesión se guarda en el dispositivo con la clave `campana-control-sesion`.
-  - Solo se usan la URL y la clave pública `sb_publishable_…`; `construir_www.py` rechaza claves secretas.
-- **Superadministrador:**
-  - Una sola fila en la tabla `superadmin`, sin políticas de escritura: no se puede obtener desde la app, un formulario ni una petición.
-  - Lo fija el propietario del proyecto con SQL, por el uuid de una cuenta concreta.
-  - Lo confirma la prueba «Nadie puede hacerse superadministrador…».
-- **Corrección del 18-11:** se ha eliminado el disparador `zz_preparar_prueba`. En el proyecto de pruebas daba superadministrador o permiso de crear campañas a quien se registrase con un correo `superadmin…@pruebas.example.com` o `creador…@`. Como el repositorio es público, cualquiera podía hacerlo.
-  - Ahora hay 3 cuentas ficticias fijas: superadmin, creadorA y creadorB.
-  - Las crea `node real.test.mjs --preparar`, con contraseñas aleatorias guardadas solo en `supabase/pruebas/.cuentas-pruebas.json`, ignorado por git.
-  - Sus permisos los da el propietario por uuid (`supabase-sql/03-designar-cuentas-prueba.sql`, fuera del repositorio).
-  - Una prueba nueva comprueba que registrarse con un correo «superadmin…» ya no da nada.
-- **Alta controlada (18-11, migración 000004).** Solo se crea una cuenta con un código válido.
-  - El hook da un rechazo claro.
-  - El disparador de alta comprueba, gasta y da el acceso en la misma transacción. Funciona aunque el hook se desactive.
-  - Los nuevos creadores solo los autoriza el superadministrador. Detalle en `docs/PERMISOS_Y_SEGURIDAD.md`, «Alta controlada».
-- **Confirmación de correo:** desactivada **solo en el proyecto de pruebas** y solo para cuentas ficticias `@pruebas.example.com`.
-  - Para usuarios reales: activarla con el SMTP gratuito de Gmail (ver la sección 10).
-- **Permisos por rol:** se aplican en PostgreSQL (RLS y funciones `security definer` en el esquema `cc_priv`). La interfaz solo oculta lo que el rol no puede hacer; si se fuerza una petición, la base de datos la rechaza.
+  Todo lo comprueba la base de datos (`perfiles.activo` y RLS).
+- **Primer superadministrador en producción:**
+  1. El propietario ejecuta en el editor SQL `select cc_priv.autorizar_alta_propietario('su.usuario', 'Su nombre');`.
+  2. En los 10 minutos siguientes, crea el usuario en Authentication → Users → Add user, con el identificador que devuelve el SQL y su contraseña.
+  3. Queda como superadministrador. Nadie más puede hacerlo: la función no se puede llamar desde la app.
+- **Matriz de permisos y piezas:** `docs/PERMISOS_Y_SEGURIDAD.md`.
 
-## 7. Pruebas ejecutadas y resultados
+## 7. Pruebas ejecutadas y resultados (18-11-2026)
 
-| Fecha | Prueba | Dónde | Resultado |
-| --- | --- | --- | --- |
-| 18-11 | Permisos (`supabase/pruebas`, `npm test`) | PostgreSQL 18.6 local (PGlite) | **16/16**; con el alta controlada, **21/21** |
-| 18-11 | Regresión de la app (`ejecutar.js`): 20 pruebas de la 2.3.0 + `migracion-v3` | Electron, perfiles aislados | **21/21** (también tras el alta controlada) |
-| 18-11 | Seguridad contra Supabase real (`node real.test.mjs`): anónimo, intruso con correo «superadmin…», diagnóstico RLS, invitaciones, 8 h vistas por el administrador, trabajador 8 h · 80 €, jefe de otro equipo, nadie se eleva, solo lectura por rol, cuentas de dueños, campañas ajenas, conflicto, auditoría | Proyecto de pruebas real | **15/15**; con el alta controlada, **17/17 sin el hook y 17/17 con el hook** |
-| 18-11 | **Prueba real en la app con 5 sesiones independientes** (`ejecutar.js nube`): ver abajo | Electron + proyecto de pruebas real + Realtime | **OK 4 de 4** tras corregir una condición de carrera (antes: 1 fallo y 1 correcta). Ampliada con el alta controlada: **OK 3 de 3** |
+| Prueba | Dónde | Resultado |
+| --- | --- | --- |
+| Permisos (`supabase/pruebas`, `npm test`) | PostgreSQL local (PGlite) | **25/25** |
+| Seguridad y los 15 casos pedidos (`node real.test.mjs`) | Proyecto real, API directa y Edge Function | **12/12** |
+| App con 6 sesiones (`ejecutar.js nube`) | Electron + proyecto real | **Correcta** |
+| Regresión de la app (`ejecutar.js`) | Electron, sin red | **21/21** |
 
-**Detalle de `nube-sesiones`.** Cada ventana es un dispositivo con su propio almacenamiento y su propia sesión; todo se hace pulsando la interfaz de la app, contra la base de datos real.
-1. **Creador, móvil de 390 px («Android»):** entra con su cuenta, crea la campaña (8 h/día, 10 €/h trabajador, 12 €/h dueño), da de alta 2 trabajadores y 1 dueño, y genera 3 códigos de invitación.
-2. **Administrador («Windows», 1280 px), trabajador («iPhone») y jefe:** crean su cuenta en la app y se unen con su código. El creador asigna el trabajador Dos al jefe.
-3. **El creador guarda el parte:** 2 trabajadores, día normal, kilos «2.350».
-4. **Sin recargar, en ~1,2 s (tiempo real):**
-   - el **administrador** ve 16 h y no tiene botón para editar; si fuerza el cambio por la API, se rechaza;
-   - el **trabajador Uno** ve **8 h y 80,00 €** y nada de los demás;
-   - el **jefe del otro equipo** ve solo al trabajador Dos, no el registro del trabajador Uno.
-5. **Conflicto:** el mismo creador tiene el parte abierto en el móvil y en el ordenador. Guarda primero el móvil (2.400 kg). El ordenador intenta guardar 9.999 kg con la versión antigua: recibe «Otra persona ha cambiado esto…», se recarga con 2.400 kg y no pisa nada.
+**Qué hace la prueba de la app con 6 sesiones**, todo pulsando la interfaz contra la base de datos real:
+1. El superadministrador crea un creador en «Gestión de usuarios».
+2. El creador, en un móvil, entra con la temporal, pone la suya y crea la campaña, dos trabajadores y un dueño.
+3. Crea un administrador lector, uno editor, un jefe y un trabajador. Cada uno entra en su dispositivo y pone su contraseña.
+4. El editor cambia una jornada (día con 1 h de más). El trabajador lo ve en unos 2,6 s: 9 h y 90 €.
+5. El lector lo ve, no tiene botón para editar y la API le rechaza el cambio.
+6. El jefe solo ve a su equipo.
+7. El superadministrador bloquea al trabajador: al reabrir la app ve «Cuenta bloqueada» y no puede volver a entrar.
+8. El creador restablece la contraseña del lector: la antigua ya no sirve y, con la temporal, tiene que poner otra.
 
-6. **Alta controlada en la app.**
-   - Una persona intenta crear cuenta sin código, con un código inventado, con uno anulado por el creador desde «Personas» y con uno ya usado: las cuatro veces se rechaza sin crear sesión.
-   - Administrador, trabajador y jefe crean su cuenta escribiendo su código y entran directamente en su campaña con su rol.
-7. **Nuevo creador.**
-   - El superadministrador genera en el panel global un código de creador. Un creador normal no puede hacerlo: la API lo rechaza.
-   - Una persona nueva crea su cuenta con él, ve «Nueva campaña» y crea la suya, sin ver ninguna ajena.
+## 8. Cambios realizados el 18-11-2026
 
-Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpeta>` y no se guardan en el repositorio.
-
-## 8. Cambios realizados durante esta sesión
-
-1. Copia de seguridad del trabajo sin guardar, fuera del repositorio.
-2. `ejecutar.js`: arreglado el error de sintaxis.
-3. **Migración segura desde 2.3.0.** `prefLocal()` considera local un dispositivo con datos de la 2.3.0 (`campana-control-v1`) que aún no ha elegido modo. «Entrar con mi cuenta» guarda la elección `cuenta`. Antes, quien actualizase vería la pantalla de entrar en lugar de sus datos.
-4. **Pruebas.**
-   - En las páginas `file://` (programa de Windows) se simula un `www/` sin cuenta, como lo compila GitHub Actions.
-   - Prueba nueva `migracion-v3`.
-   - Prueba real nueva `nube-sesiones`: solo se ejecuta pidiéndola (`… ejecutar.js nube`).
-5. **Seguridad del proyecto de pruebas.**
-   - Fuera el disparador por correo.
-   - Cuentas fijas designadas por uuid.
-   - `real.test.mjs --preparar` y una prueba contra el «intruso».
-6. Commit `f21e5f5` en la rama de desarrollo, tras revisar que no lleva secretos.
-7. **Supabase:**
-   - proyecto de pruebas reactivado;
-   - SQL de seguridad aplicado y verificado;
-   - 3 cuentas fijas creadas y designadas por uuid;
-   - 15/15 pruebas reales.
-8. **Prueba real de la app con 5 sesiones:** encontró una condición de carrera. Una recarga por tiempo real que empezaba antes de guardar algo y terminaba después pisaba los datos nuevos en pantalla; lo guardado sí estaba en la base de datos.
-   - Corregido: en `nubeCargar()` solo se aplica la carga más reciente.
-   - Después, 4 de 4 ejecuciones correctas.
-9. Documentación: este archivo, `PLAN_VERSION_3.md` (etapas y nota sobre la confirmación de correo) y `CLAUDE.md`.
-10. **Alta controlada** (encargo del dueño del 18-11).
-    - Migración `20261118000004_alta_controlada.sql`:
-      - hook;
-      - disparador que gasta el código;
-      - tabla y funciones de autorizaciones de creador;
-      - `canjear_invitacion` común;
-      - códigos que admiten minúsculas, espacios y sin guiones.
-    - App:
-      - código obligatorio en «Crear cuenta»;
-      - invitaciones sin usar con «Anular» en «Personas»;
-      - «Autorizar un creador» en el panel global;
-      - «Unirme con un código» acepta códigos de creador.
-    - Pruebas locales, reales y de la app ampliadas.
-    - Aplicada en el proyecto de pruebas y hook activado.
-11. **Confirmación del correo con código de un solo uso** (encargo del dueño del 18-11).
-    - Migración `20261118000005_correo_confirmado.sql`: sin correo confirmado no hay permisos.
-    - Pantallas de la app (confirmar, reenviar, intentos, contraseña olvidada, cambiar contraseña).
-    - Plantillas de correo en `supabase/plantillas-correo/`.
-    - Guía y evaluación del correo gratuito en `docs/GUIA_CORREO_SMTP.md`.
-    - Pruebas: locales 23/23, reales 18/18, `correo-codigo` (simulada), regresión 22/22 y real con sesiones OK.
+1. Recuperación del trabajo sin guardar (con copia previa en `respaldos/`) y arreglo de las pruebas.
+2. Migración segura desde la 2.3.0 y condición de carrera en las recargas en tiempo real (corregidas).
+3. Proyecto de pruebas reactivado; eliminado un disparador que daba superadministrador por el correo.
+4. Alta por código (000004) y correo con código (000005). **Sustituidos** ese mismo día por decisión del dueño.
+5. **Cuentas privadas:**
+   - migraciones 000006 (altas autorizadas, contraseña temporal, editor, restablecer y bloquear), 000007 (identificador fijo) y 000008 (funciones del servidor);
+   - Edge Function `gestion-usuarios`;
+   - registro público desactivado.
+6. **App:**
+   - inicio con usuario y contraseña;
+   - contraseña propia obligatoria;
+   - pantalla de cuenta bloqueada;
+   - «Gestión de usuarios»;
+   - el editor puede abrir Parte y Pagos;
+   - fuera el registro, los códigos y el correo.
+7. **Pruebas reescritas:** reales por API, app con 6 sesiones y locales.
+8. **Retirados:** `docs/GUIA_CORREO_SMTP.md`, `supabase/plantillas-correo/` y `supabase/pruebas/correo.real.mjs`, que ya no aplican (siguen en el historial de git).
 
 ## 9. Problemas encontrados
 
-- **El proyecto Supabase Free se pausa tras una semana sin uso.** Esto afectará también a producción fuera de campaña.
-  - Mitigación propuesta: aviso en la app cuando no se pueda conectar, y que el superadministrador lo reactive desde el panel (gratis).
-  - Una tarea programada que «despierte» el proyecto no es recomendable: va contra el espíritu del plan gratuito.
-- **La 3.0 con cuenta configurada ocultaba los datos de la 2.3.0 al actualizar.** Corregido (sección 8.3).
-- **El disparador de preparación por correo era un acceso administrativo basado en un correo ficticio.** Eliminado (sección 6).
-- `ejecutar.js` quedó con un error de sintaxis al interrumpirse la sesión anterior. Corregido.
-- **Condición de carrera en la app con cuenta** (recarga en tiempo real antigua que pisaba datos nuevos en pantalla). La encontró la prueba real; corregida y comprobada (sección 8.8).
-- Detalles menores vistos en las capturas, sin corregir:
-  - la barra inferior del trabajador y del jefe tiene una sola pestaña;
-  - el enlace «Campañas» del menú usa el mismo icono que «Inicio».
-- La sesión del panel de Supabase en el navegador integrado caduca. Para volver a entrar hace falta que el dueño inicie sesión en GitHub.
+- **El proyecto Free se pausa tras una semana sin uso.** Se reactiva gratis desde el panel; durante la campaña el uso diario lo evita.
+- **Al cambiar la contraseña, Supabase cierra las sesiones anteriores.** La app vuelve a entrar sola con la nueva.
+- **Cambiar el identificador de una cuenta fue posible** hasta la 000007. Cerrado.
+- **El rol de servidor no tiene acceso a tablas.** Se mantiene así y se usan funciones concretas (000008).
+- **El panel de Supabase pide confirmar** al desplegar la Edge Function; sin esa confirmación no se despliega.
+- **Detalles menores de diseño:** la barra inferior con una sola pestaña para el trabajador y el jefe, y el icono repetido en «Campañas».
 
 ## 10. Próximas tareas recomendadas
 
-1. **Correo real (necesita al dueño).** Pasos 1 a 4 de `docs/GUIA_CORREO_SMTP.md`:
-   - una cuenta de Gmail nueva para la app, con contraseña de aplicación escrita por el dueño en Supabase;
-   - las plantillas;
-   - activar «Confirm email».
-   - Después, Claude hace la prueba real de extremo a extremo con varios dispositivos.
-2. **Ampliar la prueba real de la app**: pagos y entregas, vista del dueño, «Cuentas», maquinaria, quitar acceso, panel global y comportamiento sin conexión.
-3. **Restablecer contraseña:** con el SMTP del punto 1, por correo de Supabase. Nunca se envían contraseñas.
-4. Documentos y fotos en Storage privado (interfaz y pruebas reales con la política ya escrita).
-5. Informes PDF y Excel y gráficas por quincena en modo cuenta, reutilizando las funciones de la 2.3.0 (mismas fórmulas).
-6. Asistente de migración de la copia `.json` de la 2.3.0 a una campaña con cuenta. Primero con datos ficticios; con datos reales, solo con autorización.
-7. Paginación y carga por fechas, y medición del consumo frente a los límites Free.
-8. Etapa F:
-   - revisión de seguridad completa;
-   - pruebas en Android, iPhone y Windows reales;
-   - versión candidata 3.0.0-beta en la rama de desarrollo;
-   - proyecto de producción y publicación, solo con autorización.
+1. **Prueba con dos dispositivos físicos.** Con el dueño, en el proyecto de pruebas:
+   - el dueño entra como superadministrador de pruebas y crea un creador;
+   - el creador crea la campaña y las cuentas;
+   - se comprueban las consultas por rol y la sincronización.
 
-## 11. Información que ChatGPT necesita para dirigir correctamente la continuación
+   Para el móvil se puede servir la app en la red local o compilar un APK de pruebas desde esta rama, sin publicar nada.
+2. **Probar en la app** las pantallas que aún no tienen prueba: pagos, dueño, «Cuentas» y panel global.
+3. **PDF, Excel y gráficas** con los datos compartidos, generados en el dispositivo y con las mismas fórmulas.
+4. **Fotos y documentos** en Storage privado.
+5. **Asistente de migración** desde una copia de la 2.3.0.
+6. **Etapa F:**
+   - revisión de seguridad;
+   - proyecto de producción y cuenta del superadministrador real (con autorización);
+   - versión candidata;
+   - APK, `.exe` y web por GitHub Actions (con autorización).
+
+## 11. Información para dirigir la continuación
 
 - **Código fuente único:** `claude-artifact/campana-control.html`. Después de editarlo se ejecuta `python herramientas/construir_www.py`.
-  - El modo con cuenta está en el bloque «Modo cuenta (3.0 · Supabase)»: funciones `nube*`, vistas `vN*`, acciones `n*`.
-  - Solo se activa si `www/config-nube.js` tiene URL y clave pública. GitHub Actions lo genera con `null`, porque `supabase/config-app.json` (producción) no existe. Por eso, aunque se fusionase, la web pública seguiría sin cuenta.
-- **Esquema:** `supabase/migrations/` (000001 esquema, 000002 Storage, 000003 conflictos PT409). Si cambia, deben seguir todas correctas las pruebas `supabase/pruebas` (`npm test`, local) y `node real.test.mjs` (proyecto de pruebas).
-- **Pruebas de la app:**
-  - `windows\node_modules\electron\dist\electron.exe herramientas\pruebas\ejecutar.js` (21 pruebas, sin red).
-  - La prueba real con varias sesiones: `… ejecutar.js nube`.
-- **Archivos locales que nunca van a GitHub:** `supabase/config-app.local.json`, `supabase/pruebas/.env.pruebas`, `supabase/pruebas/.cuentas-pruebas.json`, `www/config-nube.js` y la carpeta `CAMPAÑA CONTROL/supabase-sql/`.
+  - El modo con cuenta solo se activa si `www/config-nube.js` tiene configuración.
+  - GitHub Actions lo genera vacío: la web pública sigue sin cuenta aunque se fusionara.
+- **Backend:**
+  - `supabase/migrations/000001-000008`.
+  - `supabase/functions/gestion-usuarios/index.ts`. Se despliega desde el panel (Edge Functions → Code → Deploy updates → confirmar).
+- **Pruebas:**
+  - `cd supabase/pruebas && npm test` (local);
+  - `node real.test.mjs` (proyecto real);
+  - `windows\node_modules\electron\dist\electron.exe herramientas\pruebas\ejecutar.js` (regresión), y con `nube` (app real con varias sesiones).
+- **Archivos locales que nunca van a GitHub:** `supabase/config-app.local.json`, `supabase/pruebas/.env.pruebas`, `supabase/pruebas/.cuentas-pruebas.json` y `www/config-nube.js`.
 - **Reglas que siguen en vigor:**
-  - nada a `main`, ninguna Release ni web nueva sin autorización expresa;
+  - nada a `main` ni a Releases sin autorización;
   - coste 0 €;
   - sin claves secretas en la app ni en el chat;
   - solo datos ficticios;
-  - ningún proyecto u organización nuevos sin autorización;
-  - nada de SQL destructivo;
-  - sin firmas;
-  - APK sin Google Play, `.exe` sin firmar, iPhone como app web.
-- **Decisiones de diseño 3.0:**
-  - Dinero en céntimos enteros.
-  - Las cuentas de dueño y trabajador las calcula el servidor con las reglas de la 2.3.0.
-  - Sin cola de cambios sin conexión: con cuenta, sin red solo se consulta.
-  - Invitaciones por código, no por correo.
-  - Un único superadministrador.
+  - sin correo;
+  - sin SQL destructivo;
+  - sin firmas.

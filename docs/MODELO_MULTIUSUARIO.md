@@ -70,3 +70,20 @@ Fuente: `supabase/migrations/20261107000001_esquema_v3.sql`. Este documento lo e
 **Comprobado con el caso de control de `docs/ENCARGO-MOVILES.md`:**
 - trabajador: 13,5 h, 135 € ganados, 115 € pendientes;
 - dueño con un tractor: 202 € de cuenta y 172 € pendientes.
+
+## Cuentas privadas (18-11-2026, migraciones 000006-000008)
+
+- `perfiles`:
+  - `usuario`: nombre de usuario único;
+  - `debe_cambiar_clave`: contraseña temporal pendiente;
+  - `bloqueado`;
+  - `creado_por`.
+  - `activo` = no bloqueado y con contraseña propia: lo calcula el servidor.
+- `miembros.puede_editar`: un administrador con edición de jornadas y cuentas.
+- `altas_pendientes`: altas autorizadas que caducan a los 10 minutos. Solo las leen y escriben funciones del servidor.
+- **Funciones públicas:**
+  - `preparar_alta`, `preparar_restablecer` y `preparar_bloqueo`: las llama la Edge Function con la sesión de quien actúa;
+  - `usuarios_gestionados`;
+  - `mis_permisos`.
+- **Funciones solo para el servidor:** `clave_cambiada_servidor`, `cuenta_bloqueada_servidor` y `descartar_alta_servidor`.
+- **Desactivados:** `invitaciones`, `autorizaciones_creador`, `crear_invitacion`, `canjear_invitacion` y `crear_autorizacion_creador`. Se conservan sus datos.
