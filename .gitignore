@@ -8,3 +8,6 @@ windows/dist/
 herramientas/pruebas/resultado*.json
 windows/dist-*/
 supabase/pruebas/.env*
+supabase/config-app.local.json
+www/config-nube.js
+supabase/pruebas/.cuentas-pruebas.json

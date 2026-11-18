@@ -12,7 +12,7 @@ fuente sigue apuntando a cdnjs porque claude.ai lo necesita así.
 
 Uso:  python herramientas/construir_www.py
 """
-import hashlib, os, re, sys
+import hashlib, json, os, re, sys
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WWW = os.path.join(RAIZ, "www")
 SRC = os.path.join(RAIZ, "claude-artifact", "campana-control.html")
@@ -72,6 +72,16 @@ def a_local(body):
             sys.exit(f"Falta www/{ruta}. Cópiala desde node_modules (ver docs/PLAN.md, paso 1).")
         return f'src="{ruta}"'
     body = re.sub(r'src="https://cdnjs\.cloudflare\.com/ajax/libs/([^"]+)"', lib, body)
+    # jsDelivr (paquetes npm): https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js
+    #                        → vendor/supabase-js/2.119.0/supabase.js
+    def npm(m):
+        ruta = f"vendor/{m.group(1)}/{m.group(2)}/{m.group(3)}"
+        if not existe(ruta):
+            sys.exit(f"Falta www/{ruta}. Cópiala desde node_modules del paquete {m.group(1)}@{m.group(2)}.")
+        return f'src="{ruta}"'
+    body = re.sub(r'src="https://cdn\.jsdelivr\.net/npm/(?:@[^/"]+/)?([^@/"]+)@([^/"]+)/(?:[^"]*/)?([^/"]+)"', npm, body)
+    # Configuración del modo con cuenta: solo en www/ (claude.ai no la usa). Se genera en escribir_config().
+    body = body.replace('<script>\n"use strict";', '<script src="config-nube.js"></script>\n<script>\n"use strict";', 1)
     body = re.sub(r'<link rel="preconnect"[^>]*fonts\.(?:googleapis|gstatic)\.com[^>]*>\s*', "", body)
     body = re.sub(r'<link[^>]*href="https://fonts\.googleapis\.com/[^"]*"[^>]*>', FUENTES, body)
     externos = re.findall(r'(?:src|href)="(https?://[^"]+)"', body)
@@ -111,7 +121,32 @@ def version_sw(version_app):
         open(ruta, "w", encoding="utf-8", newline="\n").write(sw2)
     return nueva
 
+def escribir_config():
+    """Genera www/config-nube.js (modo con cuenta, versión 3.0).
+    - supabase/config-app.local.json (ignorado por git): proyecto de PRUEBAS, solo en este ordenador.
+    - supabase/config-app.json (se sube a git): proyecto de PRODUCCIÓN, cuando se autorice publicar la 3.0.
+    - Sin ninguno: window.CC_NUBE = null y la app funciona sin cuenta, como la 2.3.0.
+    Solo admite la URL y la clave PÚBLICA (sb_publishable_…); nunca claves secretas."""
+    cfg, origen = None, "sin cuenta"
+    for nombre in ("config-app.local.json", "config-app.json"):
+        f = os.path.join(RAIZ, "supabase", nombre)
+        if os.path.isfile(f):
+            cfg, origen = json.load(open(f, encoding="utf-8")), nombre
+            break
+    if cfg:
+        url, clave = cfg.get("url", ""), cfg.get("clave", "")
+        if not re.fullmatch(r"https://[a-z0-9-]+\.supabase\.co", url):
+            sys.exit(f"{origen}: la URL no parece de Supabase.")
+        if not clave.startswith("sb_publishable_") or re.search(r"secret|service_role", clave, re.I):
+            sys.exit(f"{origen}: solo se admite la clave pública sb_publishable_ (nunca una secreta).")
+        cfg = {"url": url, "clave": clave}
+    js = ("// Generado por herramientas/construir_www.py (" + origen + "). No editar a mano.\n"
+          "window.CC_NUBE = " + (json.dumps(cfg) if cfg else "null") + ";\n")
+    open(os.path.join(WWW, "config-nube.js"), "w", encoding="utf-8", newline="\n").write(js)
+    return origen
+
 def main():
+    print("Modo con cuenta:", escribir_config())
     src = open(SRC, encoding="utf-8").read()
     m = re.match(r"\s*(<title>.*?</title>)\s*", src, re.S)
     title = m.group(1) if m else "<title>CAMPAÑA CONTROL</title>"

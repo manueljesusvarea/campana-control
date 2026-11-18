@@ -214,6 +214,7 @@ code.ph{background:var(--surface-2);border-radius:4px;padding:1px 5px;font-size:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js"></script>
 <script>
 "use strict";
 /* ===================== Utilidades ===================== */
@@ -527,10 +528,12 @@ function renderNav() {
 }
 function updSync() {
   const el = $("#sync");
+  if (MODE === "cuenta") { el.textContent = !NUBE.sesion ? "Sin sesión" : NUBE.online ? "Con cuenta · en línea" : "Sin conexión"; return; }
   el.textContent = MODE === "local" ? "Solo este dispositivo" : MODE === "cargando" ? "Cargando…" : netWarn ? "Sin conexión" : "Sincronizado";
 }
 function render() {
   renderPending = false;
+  if (MODE === "cuenta") return nubeRender();
   renderNav(); updSync();
   const r = route(); const v = $("#view");
   if (MODE === "cargando") { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b><span>Conectando con tus datos.</span></div>`; return; }
@@ -1048,6 +1051,7 @@ function vAjustes() {
    <div class="row"><button class="btn pri" data-act="exportar">${ic("pdf")}Exportar copia</button><label class="btn">Importar copia<input type="file" accept=".json,application/json" id="impCopia" hidden></label></div>
    <div class="muted small">Versión ${APP_VERSION}${STANDALONE ? " · app instalable" : ""}</div></section>
   ${vInstalar()}
+  ${nubeDisponible() && prefLocal() ? `<section class="card stack"><h2>Entrar con cuenta</h2><div class="hint">Con una cuenta, la campaña se comparte entre dispositivos y cada persona ve solo lo que le corresponde. Los datos de este dispositivo no se borran.</div><button class="btn pri" data-act="nConCuenta" style="align-self:flex-start">Entrar con mi cuenta</button></section>` : ""}
   <section class="stack"><h2>Campañas</h2><div class="list">${lista("campanas").sort((a, b) => (+b.anio || 0) - (+a.anio || 0)).map(x => `<div class="mrow"><div class="grow"><b>${esc(x.nombre)}</b><div class="muted small">${lista("duenos").filter(d => d.campanaId === x.id).length || (x.id === c?.id ? duenosCamp().length : "")} dueños</div></div>${x.id === c?.id ? `<span class="pill p-normal">Activa</span>` : `<button class="btn sm" data-act="activarCamp" data-id="${x.id}">Activar</button>`}</div>`).join("")}</div></section>
   </div>`;
 }
@@ -1332,7 +1336,7 @@ document.addEventListener("input", e => {
   if (a === "horasT" && f) { f.horas = num(el.value); markDirty(); }
   if (a === "notaT" && f) { f.nota = el.value; markDirty(); }
 });
-$("#campsel").onchange = async e => { await put("ajustes", "general", { ...aj(), campanaActiva: e.target.value }); UI.inf = null; UI.draft = null; UI.dueVer = null; ensureCampSubs(); };
+$("#campsel").onchange = async e => { if (MODE === "cuenta") return e.target.value && nubeElegir(e.target.value); await put("ajustes", "general", { ...aj(), campanaActiva: e.target.value }); UI.inf = null; UI.draft = null; UI.dueVer = null; ensureCampSubs(); };
 window.addEventListener("hashchange", () => { if (route() !== "duenos") UI.dueVer = UI.dueVer; window.scrollTo(0, 0); render(); });
 window.addEventListener("beforeunload", e => { if (UI.draft?.dirty) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -1670,9 +1674,435 @@ async function xlsGrafica(fl) {
   await libro(wb, `Grafica-${slug(c.nombre)}.xlsx`);
 }
 
+/* ===================== Modo cuenta (3.0 · Supabase) ===================== */
+// Se activa cuando existe config-nube.js (window.CC_NUBE = { url, clave pública }) y la librería supabase-js.
+// Los permisos los aplica la base de datos (RLS): esta interfaz solo enseña a cada rol lo que le corresponde.
+// Sin configuración, la app funciona como la 2.3.0 (datos solo en este dispositivo).
+const PREF_MODO = "campana-control-modo", PREF_CAMP = "campana-control-campana-nube";
+const ROL_TXT = { creador: "Creador", admin: "Administrador", jefe: "Jefe de equipo", trabajador: "Trabajador", dueno: "Dueño" };
+const NUBE = { sb: null, sesion: null, perfil: null, superadmin: false, campanas: [], c: null, roles: [], d: null, canal: null, online: navigator.onLine, recarga: null, alta: false, borrador: null, cuentas: {}, global: null };
+// Sin cuenta si se eligió así o si este dispositivo ya tiene datos de la 2.3.0 y aún no se ha elegido nada:
+// quien actualiza sigue viendo sus datos al abrir, y puede entrar con cuenta desde Ajustes («cuenta» = elegido).
+const prefLocal = () => { try { const p = localStorage.getItem(PREF_MODO); return p === "local" || (p == null && localStorage.getItem(LKEY) != null); } catch (e) { return false; } };
+const nubeDisponible = () => STANDALONE && !!(window.CC_NUBE?.url && window.CC_NUBE?.clave && window.supabase?.createClient);
+const eurosC = c => fE((+c || 0) / 100);                                   // céntimos → «12,50 €»
+const aCent = v => { const n = num(v); return n == null ? null : Math.round(n * 100); };
+const hFila = (f, hd) => f.tipo === "ausente" ? 0 : (f.tipo === "normal" || f.horas == null) ? +hd : +f.horas;   // misma regla que horasFila()
+const nGestiona = () => NUBE.superadmin || NUBE.roles.includes("creador");
+const nConsulta = () => nGestiona() || NUBE.roles.includes("admin");
+async function nq(p) { const r = await p; if (r.error) throw r.error; return r.data; }
+function nubeMsg(e) {
+  const m = String(e?.message || e || ""), code = String(e?.code || "");
+  if (!navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(m)) return "Sin conexión. Inténtalo cuando vuelva la cobertura.";
+  if (/^CONFLICTO/.test(m) || code === "PT409") return "Otra persona ha cambiado esto mientras lo tenías abierto. Se ha recargado: revísalo y vuelve a guardar.";
+  if (/^INVITACION/.test(m)) return "El código no es válido, ya se usó o ha caducado.";
+  if (/Invalid login credentials/i.test(m)) return "Correo o contraseña incorrectos.";
+  if (/already registered|already been registered/i.test(m)) return "Ya existe una cuenta con ese correo. Entra con tu contraseña.";
+  if (/Password should be|password.*at least/i.test(m)) return "La contraseña es demasiado corta.";
+  if (/^PERMISO|row-level security|permission denied/i.test(m) || code === "42501") return "No tienes permiso para hacer esto.";
+  return m.replace(/^[A-ZÁÉÍÓÚ]+: /, "") || "Algo ha fallado.";
+}
+const nSinRed = () => { if (NUBE.online) return false; toast("Sin conexión: no se pueden guardar cambios ahora."); return true; };
+
+async function nubeIniciar() {
+  MODE = "cuenta";
+  NUBE.sb = window.supabase.createClient(window.CC_NUBE.url, window.CC_NUBE.clave, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "campana-control-sesion" } });
+  addEventListener("online", () => { NUBE.online = true; updSync(); nubeRecargar(); render(); });
+  addEventListener("offline", () => { NUBE.online = false; updSync(); render(); });
+  NUBE.sb.auth.onAuthStateChange((ev, s) => { const antes = NUBE.sesion?.user?.id || null; NUBE.sesion = s; if ((s?.user?.id || null) !== antes) setTimeout(nubeTrasSesion, 0); });
+  NUBE.sesion = (await NUBE.sb.auth.getSession()).data.session;
+  await nubeTrasSesion();
+}
+async function nubeTrasSesion() {
+  nubeDesuscribir(); Object.assign(NUBE, { c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null });
+  if (NUBE.sesion) {
+    try {
+      const uid = NUBE.sesion.user.id;
+      NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, activo, puede_crear_campanas").eq("id", uid).maybeSingle());
+      NUBE.superadmin = (await nq(NUBE.sb.from("superadmin").select("user_id").eq("user_id", uid))).length > 0;
+      NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas"));
+      let pref = null; try { pref = localStorage.getItem(PREF_CAMP); } catch (e) { }
+      const elegida = NUBE.campanas.find(c => c.campana_id === pref) || (NUBE.campanas.length === 1 ? NUBE.campanas[0] : null);
+      if (elegida) await nubeElegir(elegida.campana_id, true);
+    } catch (e) { toast(nubeMsg(e)); }
+  }
+  render();
+}
+async function nubeElegir(id, sinRender) {
+  const fila = NUBE.campanas.find(c => c.campana_id === id); if (!fila) return;
+  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null;
+  try { localStorage.setItem(PREF_CAMP, id); } catch (e) { }
+  await nubeCargar(); nubeSuscribir();
+  const vs = nubeVistas(); if (!vs.some(x => "#n-" + x[0] === location.hash)) history.replaceState(null, "", "#n-" + (vs[0]?.[0] || "campanas"));
+  if (!sinRender) render();
+}
+// Carga selectiva: cada rol pide solo lo suyo (las políticas RLS filtran igualmente en el servidor)
+async function nubeCargar() {
+  const sb = NUBE.sb, c = NUBE.c.campana_id, d = { campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
+  d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia").eq("id", c).single());
+  if (nConsulta()) {
+    const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
+    [d.eco, d.trab, d.duenos, d.partes, d.filas, d.pmaq, d.maq, d.pagos, d.miembros, d.asig] = await Promise.all([
+      nq(sb.from("campanas_economia").select("precio_hora_trab_cent, precio_hora_dueno_cent, iva, version").eq("campana_id", c).maybeSingle()),
+      sel("trabajadores", "id, nombre, precio_hora_cent, activo, version", ["nombre"]),
+      sel("duenos", "id, nombre, finca, municipio, precio_hora_cent, version", ["nombre"]),
+      sel("partes", "id, dueno_id, fecha, kilos, notas, version", ["fecha", false]),
+      sel("partes_filas", "parte_id, trabajador_id, tipo, horas, nota, fecha"),
+      sel("partes_maquinas", "parte_id, maquina_id, cantidad"),
+      sel("maquinas", "id, nombre, precio_cent, unidad, activa", ["orden"]),
+      sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
+      sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
+      sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
+    const ids = [...new Set(d.miembros.map(m => m.user_id))];
+    if (ids.length) d.nombres = Object.fromEntries((await nq(sb.from("perfiles").select("id, nombre").in("id", ids))).map(p => [p.id, p.nombre]));
+  }
+  if (NUBE.roles.includes("trabajador")) d.resumen = await nq(sb.rpc("resumen_trabajador", { p_campana: c }));
+  if (NUBE.roles.includes("dueno")) d.cuenta = await nq(sb.rpc("cuenta_dueno", { p_campana: c }));
+  if (NUBE.roles.includes("jefe")) d.equipo = await nq(sb.rpc("jornadas_equipo", { p_campana: c }));
+  NUBE.d = d; NUBE.cuentas = {};
+}
+// Tiempo real: solo se avisa de cambios en esta campaña (Realtime respeta RLS) y se recarga una vez, agrupando avisos
+function nubeSuscribir() {
+  nubeDesuscribir(); const c = NUBE.c.campana_id;
+  NUBE.canal = NUBE.sb.channel("campana-" + c);
+  for (const t of ["partes", "partes_filas", "pagos", "miembros"]) NUBE.canal.on("postgres_changes", { event: "*", schema: "public", table: t, filter: "campana_id=eq." + c }, () => nubeRecargar());
+  NUBE.canal.subscribe();
+}
+function nubeDesuscribir() { if (NUBE.canal) { NUBE.sb.removeChannel(NUBE.canal); NUBE.canal = null; } }
+function nubeRecargar() { clearTimeout(NUBE.recarga); NUBE.recarga = setTimeout(async () => { if (!NUBE.c) return; try { await nubeCargar(); scheduleRender(); } catch (e) { } }, 600); }
+
+function nubeVistas() {
+  if (!NUBE.c) return [];
+  const v = [];
+  if (nConsulta()) v.push(["inicio", "Inicio", "inicio"]);
+  if (nGestiona()) v.push(["parte", "Parte", "partes"], ["pagos", "Pagos", "euro"]);
+  if (nConsulta()) v.push(["personas", "Personas", "trabajadores"], ["cuentas", "Cuentas", "informes"]);
+  if (NUBE.roles.includes("jefe")) v.push(["equipo", "Mi equipo", "trabajadores"]);
+  if (NUBE.roles.includes("trabajador")) v.push(["mis-jornadas", "Mis jornadas", "partes"]);
+  if (NUBE.roles.includes("dueno")) v.push(["mi-cuenta", "Mi cuenta", "euro"]);
+  return v;
+}
+function nubeNav(vistas, k) {
+  const enl = ([id, t, i]) => `<a href="#n-${id}" ${id === k ? 'aria-current="page"' : ""}>${ic(i)}<span>${t}</span></a>`;
+  $("#tabs").innerHTML = vistas.slice(0, 6).map(enl).join("");
+  $("#tabs").hidden = !vistas.length;
+  $("#side").innerHTML = vistas.map(enl).join("") + (NUBE.sesion ? `<a href="#campanas">${ic("inicio")}<span>Campañas</span></a>` : "") + (NUBE.superadmin ? `<a href="#global" ${location.hash === "#global" ? 'aria-current="page"' : ""}>${ic("chart")}<span>Panel global</span></a>` : "") + `<a href="#ajustes" ${location.hash === "#ajustes" ? 'aria-current="page"' : ""}>${ic("ajustes")}<span>Ajustes</span></a>`;
+  const cs = $("#campsel");
+  cs.innerHTML = NUBE.campanas.length ? NUBE.campanas.map(c => `<option value="${esc(c.campana_id)}" ${c.campana_id === NUBE.c?.campana_id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("") + (NUBE.c ? "" : `<option value="" selected>Elige campaña</option>`) : `<option>Sin campaña</option>`;
+  cs.disabled = !NUBE.campanas.length;
+}
+function nubeRender() {
+  updSync(); const v = $("#view"), r = (location.hash || "").slice(1);
+  if (!NUBE.sesion) { nubeNav([]); v.innerHTML = vEntrar(); return; }
+  const aviso = NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
+  if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
+  if (r === "global" && NUBE.superadmin) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNGlobal(); nAfter.global(); return; }
+  if (!NUBE.c || r === "campanas") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCampanas(); return; }
+  if (!NUBE.d) { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b></div>`; return; }
+  const vistas = nubeVistas(), k = r.startsWith("n-") ? r.slice(2) : vistas[0]?.[0];
+  nubeNav(vistas, k);
+  const fn = { inicio: vNInicio, parte: vNParte, pagos: vNPagos, personas: vNPersonas, cuentas: vNCuentas, equipo: vNEquipo, "mis-jornadas": vNMisJornadas, "mi-cuenta": vNMiCuenta }[k];
+  v.innerHTML = aviso + (fn && vistas.some(x => x[0] === k) ? fn() : `<div class="empty"><span>No tienes acceso a esta sección.</span></div>`);
+  nAfter[k]?.();
+}
+const nAfter = {};
+
+/* ---------- Entrar, crear cuenta, campañas ---------- */
+function vEntrar() {
+  const alta = NUBE.alta;
+  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${alta ? "Crear cuenta" : "Entrar"}</h1>
+  <div class="hint">${alta ? "Crea tu cuenta. Para unirte a una campaña necesitarás el código que te dé quien la gestiona." : "Entra con tu cuenta de CAMPAÑA CONTROL. La misma cuenta sirve en el móvil y en el ordenador."}</div>
+  <div class="card stack" id="fentrar">
+   ${alta ? `<label class="f"><span>Tu nombre</span><input name="nombre" autocomplete="name"></label>` : ""}
+   <label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
+   <label class="f"><span>Contraseña${alta ? " (mínimo 8 caracteres)" : ""}</span><input name="password" type="password" autocomplete="${alta ? "new-password" : "current-password"}"></label>
+   <button class="btn pri" data-act="nEntrar">${alta ? "Crear cuenta" : "Entrar"}</button>
+   <button class="btn ghost sm" data-act="nAlta">${alta ? "Ya tengo cuenta: entrar" : "No tengo cuenta: crearla"}</button></div>
+  <button class="btn ghost sm" data-act="nSinCuenta" style="align-self:center">Usar sin cuenta (solo en este dispositivo)</button></div>`;
+}
+function vNCampanas() {
+  const p = NUBE.perfil, puede = NUBE.superadmin || p?.puede_crear_campanas, y = new Date().getFullYear();
+  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || NUBE.sesion.user.email)}</div><h1>Tus campañas</h1></div>${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div>
+  ${NUBE.campanas.length ? `<div class="list">${NUBE.campanas.map(c => `<button class="li" data-act="nElegir" data-id="${esc(c.campana_id)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="muted small">${esc((c.roles || []).map(r => ROL_TXT[r]).join(" · ") || "Superadministrador")}</div></div></button>`).join("")}</div>`
+    : `<div class="empty"><b>Aún no estás en ninguna campaña</b><span>Pide a quien gestiona la campaña un código de invitación y escríbelo abajo.</span></div>`}
+  <section class="card stack" id="fcodigo"><h2>Unirme con un código</h2><div class="row"><input name="codigo" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1 1 220px;text-transform:uppercase"><button class="btn pri" data-act="nCanjear">Unirme</button></div></section>
+  ${puede ? `<section class="card stack" id="fnueva"><h2>Nueva campaña</h2>
+    <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="Campaña ${y}"></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${y}"></label><label class="f"><span>Inicio</span><input type="date" name="inicio" value="${hoy()}"></label></div>
+    <div class="grid2"><label class="f"><span>Horas de un día normal</span><input name="horas" inputmode="decimal" value="7,5"></label><label class="f"><span>€/hora al trabajador</span><input name="ptrab" inputmode="decimal" value="10"></label><label class="f"><span>€/hora al dueño</span><input name="pdueno" inputmode="decimal" value="10"></label><label class="f"><span>IVA (%)</span><input name="iva" inputmode="decimal" value="0"></label></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nCrearCampana">${ic("mas")}Crear campaña</button></div></section>` : ""}
+  <div class="row" style="justify-content:center"><button class="btn ghost sm" data-act="nSalir">Cerrar sesión</button></div></div>`;
+}
+function vNAjustes() {
+  const p = NUBE.perfil;
+  return `<div class="stack"><h1>Ajustes</h1>
+  <section class="card stack" id="fperfil"><h2>Tu cuenta</h2><div class="muted small">${esc(NUBE.sesion.user.email)}${NUBE.superadmin ? " · superadministrador" : ""}</div>
+   <label class="f"><span>Tu nombre (lo ven quienes gestionan tus campañas)</span><input name="nombre" value="${esc(p?.nombre || "")}"></label>
+   <div class="row between"><button class="btn danger" data-act="nSalir">Cerrar sesión</button><button class="btn pri" data-act="nGuardarPerfil">Guardar nombre</button></div></section>
+  ${NUBE.c ? `<section class="card stack"><h2>Campaña ${esc(NUBE.c.nombre)}</h2><div class="muted small">Tus roles: ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><a class="btn" href="#campanas" style="align-self:flex-start">Cambiar de campaña</a></section>` : ""}
+  ${vInstalar()}
+  <section class="card stack"><h2>Sin cuenta</h2><div class="hint">Puedes usar la app sin cuenta, con los datos solo en este dispositivo (como la versión 2.3.0).</div><button class="btn" data-act="nSinCuenta" style="align-self:flex-start">Usar sin cuenta</button></section>
+  <div class="muted small">Versión ${APP_VERSION} · con cuenta</div></div>`;
+}
+
+/* ---------- Creador y administrador ---------- */
+const nHd = () => +NUBE.d.campana.horas_dia;
+const nTrab = id => NUBE.d.trab.find(t => t.id === id), nDueno = id => NUBE.d.duenos.find(x => x.id === id);
+function nResTrab(tid) {
+  const fs = NUBE.d.filas.filter(f => f.trabajador_id === tid), tr = fs.filter(f => f.tipo !== "ausente");
+  const horas = tr.reduce((s, f) => s + hFila(f, nHd()), 0), precio = nTrab(tid)?.precio_hora_cent ?? NUBE.d.eco?.precio_hora_trab_cent ?? 0;
+  const importe = Math.round(horas * precio), entregado = NUBE.d.pagos.filter(p => p.tipo === "trabajador" && p.trabajador_id === tid).reduce((s, p) => s + +p.importe_cent, 0);
+  return { horas, dias: new Set(tr.map(f => f.fecha)).size, faltas: fs.length - tr.length, precio, importe, entregado, pendiente: importe - entregado };
+}
+function vNInicio() {
+  const d = NUBE.d, tr = d.filas.filter(f => f.tipo !== "ausente"), horas = tr.reduce((s, f) => s + hFila(f, nHd()), 0);
+  const ganado = d.trab.reduce((s, t) => s + nResTrab(t.id).importe, 0), entregado = d.pagos.filter(p => p.tipo === "trabajador").reduce((s, p) => s + +p.importe_cent, 0);
+  const kilos = d.partes.reduce((s, p) => s + (+p.kilos || 0), 0);
+  return `<div class="stack"><div class="head"><div><div class="lbl">Campaña · ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><h1>${esc(d.campana.nombre)}</h1>
+   <div class="muted small">Jornada de ${fH(nHd())}${d.eco ? ` · ${eurosC(d.eco.precio_hora_trab_cent)}/h trabajador · ${eurosC(d.eco.precio_hora_dueno_cent)}/h dueño` : ""}</div></div>
+   ${nGestiona() ? `<a class="btn pri" href="#n-parte">${ic("partes")}Parte de hoy</a>` : `<span class="pill p-gris">Solo lectura</span>`}</div>
+  <div class="kpis"><div class="kpi"><span class="lbl">Días con parte</span><b>${new Set(d.partes.map(p => p.fecha)).size}</b></div><div class="kpi"><span class="lbl">Horas totales</span><b>${fN(horas)}</b></div><div class="kpi"><span class="lbl">Ganado por trabajadores</span><b>${eurosC(ganado)}</b></div><div class="kpi"><span class="lbl">Falta pagarles</span><b>${eurosC(ganado - entregado)}</b></div><div class="kpi"><span class="lbl">Kilos anotados</span><b>${fN(kilos, 0)}</b></div></div>
+  <section class="stack"><h2>Últimos partes</h2>${d.partes.length ? `<div class="list">${d.partes.slice(0, 15).map(p => { const fs = d.filas.filter(f => f.parte_id === p.id && f.tipo !== "ausente"); return `<${nGestiona() ? `button class="li" data-act="nAbrirParte" data-d="${p.dueno_id}" data-f="${p.fecha}"` : `div class="li"`}><div class="grow"><div class="t">${esc(nDueno(p.dueno_id)?.nombre || "—")}</div><div class="muted small">${fFecha(p.fecha)} · ${fs.length} trabajadores${p.kilos ? " · " + fN(p.kilos, 0) + " kg" : ""}</div></div><span class="pill p-ok">${fH(fs.reduce((s, f) => s + hFila(f, nHd()), 0))}</span></${nGestiona() ? "button" : "div"}>`; }).join("")}</div>` : `<div class="empty"><span>Todavía no hay partes.</span></div>`}</section></div>`;
+}
+// Parte: el borrador se guarda en memoria para que una recarga en tiempo real no borre lo que se está escribiendo
+function nBorrador() {
+  const d = NUBE.d, b = NUBE.borrador;
+  if (b && d.duenos.some(x => x.id === b.dueno)) {
+    if (!b.cargado) { const p = d.partes.find(x => x.dueno_id === b.dueno && x.fecha === b.fecha); Object.assign(b, nDesdeParte(p, b.dueno, b.fecha)); }
+    return b;
+  }
+  return NUBE.borrador = d.duenos.length ? nDesdeParte(d.partes.find(x => x.dueno_id === d.duenos[0].id && x.fecha === hoy()), d.duenos[0].id, hoy()) : null;
+}
+function nDesdeParte(p, dueno, fecha) {
+  const d = NUBE.d, filas = {};
+  if (p) d.filas.filter(f => f.parte_id === p.id).forEach(f => filas[f.trabajador_id] = { si: true, tipo: f.tipo, horas: f.horas, nota: f.nota || "" });
+  d.trab.filter(t => t.activo).forEach(t => filas[t.id] ??= { si: !p, tipo: "normal", horas: null, nota: "" });
+  const maq = {}; if (p) d.pmaq.filter(m => m.parte_id === p.id).forEach(m => maq[m.maquina_id] = m.cantidad);
+  return { dueno, fecha, version: p?.version ?? null, kilos: p?.kilos ?? "", notas: p?.notas || "", filas, maq, cargado: true, sucio: false };
+}
+function vNParte() {
+  const d = NUBE.d, b = nBorrador();
+  if (!b) return `<div class="stack"><h1>Parte diario</h1><div class="empty"><b>Primero añade un dueño</b><a class="btn pri" href="#n-personas">Ir a Personas</a></div></div>`;
+  const ts = d.trab.filter(t => b.filas[t.id]);
+  return `<div class="stack" id="fnparte"><div class="head"><div><div class="lbl">Parte diario</div><h1>${esc(fFecha(b.fecha))}</h1></div>
+   <div class="row"><select data-np="dueno" style="width:auto">${d.duenos.map(x => `<option value="${x.id}" ${x.id === b.dueno ? "selected" : ""}>${esc(x.nombre)}</option>`).join("")}</select><input type="date" data-np="fecha" value="${b.fecha}" style="width:auto"></div></div>
+  ${b.version == null ? `<div class="banner info">Parte nuevo. Marca quién ha venido y pulsa «Guardar parte».</div>` : `<div class="muted small">Guardado (versión ${b.version}).</div>`}
+  <div class="list">${ts.map(t => { const f = b.filas[t.id]; return `<div class="wrow ${f.tipo === "ausente" ? "aus" : ""}"><label class="nm row" style="gap:8px"><input type="checkbox" data-np="si" data-id="${t.id}" ${f.si ? "checked" : ""}> ${esc(t.nombre)}</label><span></span>
+    <div class="ctl"><select data-np="tipo" data-id="${t.id}">${TIPOS.map(([k, n]) => `<option value="${k}" ${k === f.tipo ? "selected" : ""}>${n}</option>`).join("")}</select>
+    <input class="num" inputmode="decimal" data-np="horas" data-id="${t.id}" value="${f.tipo === "normal" ? fN(nHd()) : f.tipo === "ausente" ? "0" : fN(f.horas ?? nHd())}" ${f.tipo === "normal" || f.tipo === "ausente" ? "disabled" : ""} aria-label="Horas">
+    <input class="nota" data-np="nota" data-id="${t.id}" value="${esc(f.nota)}" placeholder="Nota"></div></div>`; }).join("") || `<div class="empty"><span>No hay trabajadores. Añádelos en Personas.</span></div>`}</div>
+  ${d.maq.length ? `<section class="stack"><h2>Maquinaria</h2><div class="list">${d.maq.filter(m => m.activa).map(m => `<div class="mrow"><div class="grow"><b>${esc(m.nombre)}</b><div class="muted small">${eurosC(m.precio_cent)} por ${esc(m.unidad)}</div></div><input class="num" inputmode="numeric" data-np="maq" data-id="${m.id}" value="${b.maq[m.id] || 0}" style="width:70px"></div>`).join("")}</div></section>` : ""}
+  <section class="grid2"><label class="f"><span>Kilos (si se saben)</span><input class="num" inputmode="decimal" data-np="kilos" value="${b.kilos ?? ""}" placeholder="Ej. 2.350"></label><label class="f"><span>Notas del día</span><input data-np="notas" value="${esc(b.notas)}"></label></section>
+  <div class="savebar">${b.sucio ? `<span class="dirty">Cambios sin guardar</span>` : `<span class="muted small">${b.version == null ? "Sin guardar" : "Guardado"}</span>`}<span style="flex:1"></span><button class="btn pri" data-act="nGuardarParte">Guardar parte</button></div></div>`;
+}
+nAfter.parte = () => {
+  const box = $("#fnparte"); if (!box) return;
+  const cambio = async e => {
+    const el = e.target, k = el.dataset.np; if (!k) return; const b = NUBE.borrador;
+    if (k === "dueno" || k === "fecha") {
+      if (b.sucio && !confirm("Hay cambios sin guardar en este parte. ¿Descartarlos?")) { el.value = b[k]; return; }
+      NUBE.borrador = { dueno: k === "dueno" ? el.value : b.dueno, fecha: k === "fecha" ? (el.value || b.fecha) : b.fecha }; render(); return;
+    }
+    const f = b.filas[el.dataset.id];
+    if (k === "si") f.si = el.checked;
+    if (k === "tipo") { f.tipo = el.value; f.horas = el.value === "mas" ? nHd() + 1 : el.value === "menos" ? Math.max(0, nHd() - 1) : el.value === "especial" ? nHd() : null; if (el.value !== "ausente") f.si = true; }
+    if (k === "horas") f.horas = num(el.value);
+    if (k === "nota") f.nota = el.value;
+    if (k === "maq") b.maq[el.dataset.id] = Math.max(0, parseInt(el.value) || 0);
+    if (k === "kilos") b.kilos = el.value;
+    if (k === "notas") b.notas = el.value;
+    b.sucio = true; const sb = $(".savebar span", box); if (sb) { sb.className = "dirty"; sb.textContent = "Cambios sin guardar"; }
+    if (k === "tipo" || k === "si") render();
+  };
+  box.addEventListener("change", cambio); box.addEventListener("input", e => { if (["horas", "nota", "kilos", "notas"].includes(e.target.dataset.np)) cambio(e); });
+};
+
+/* ---------- Pagos ---------- */
+function vNPagos() {
+  const d = NUBE.d, nom = p => p.tipo === "trabajador" ? nTrab(p.trabajador_id)?.nombre : nDueno(p.dueno_id)?.nombre;
+  return `<div class="stack"><h1>Pagos y entregas</h1>
+  <section class="card stack" id="fnpago"><h2>Anotar</h2><div class="grid2">
+   <label class="f"><span>Tipo</span><select name="tipo"><option value="trabajador">Entrega a un trabajador</option><option value="dueno">Pago de un dueño</option></select></label>
+   <label class="f"><span>Persona</span><select name="persona">${d.trab.map(t => `<option value="t:${t.id}">${esc(t.nombre)} (trabajador)</option>`).join("")}${d.duenos.map(x => `<option value="d:${x.id}">${esc(x.nombre)} (dueño)</option>`).join("")}</select></label>
+   <label class="f"><span>Importe (€)</span><input name="importe" inputmode="decimal" placeholder="Ej. 50"></label><label class="f"><span>Día</span><input type="date" name="fecha" value="${hoy()}"></label>
+   <label class="f"><span>Forma</span><select name="forma">${FORMAS.map(([k, n]) => `<option value="${k}">${n}</option>`).join("")}</select></label><label class="f"><span>Nota</span><input name="nota"></label></div>
+   <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nGuardarPago">Guardar</button></div></section>
+  <section class="stack"><h2>Últimos movimientos</h2>${d.pagos.length ? `<div class="list">${d.pagos.slice(0, 50).map(p => `<div class="pago"><div class="grow"><b>${esc(nom(p) || "—")}</b><div class="muted small">${fFecha(p.fecha)} · ${p.tipo === "trabajador" ? "entrega" : "pago del dueño"} · ${esc(formaTxt(p.forma))}${p.nota ? " · " + esc(p.nota) : ""}</div></div><span class="imp">${eurosC(p.importe_cent)}</span><button class="btn ghost sm danger" data-act="nBorrarPago" data-id="${p.id}">Borrar</button></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay pagos.</span></div>`}</section></div>`;
+}
+
+/* ---------- Personas: fichas, cuentas vinculadas, invitaciones y equipos ---------- */
+function vNPersonas() {
+  const d = NUBE.d, g = nGestiona(), nom = u => d.nombres[u] || "(sin nombre)";
+  const jefes = d.miembros.filter(m => m.rol === "jefe" && m.activo);
+  return `<div class="stack"><h1>Personas</h1>
+  <section class="stack"><div class="row between"><h2>Trabajadores</h2></div>
+   <div class="list">${d.trab.map(t => `<div class="mrow"><div class="grow"><b>${esc(t.nombre)}</b><div class="muted small">${t.precio_hora_cent != null ? eurosC(t.precio_hora_cent) + "/h propio" : "precio de la campaña"}${t.activo ? "" : " · de baja"}${d.miembros.some(m => m.trabajador_id === t.id && m.activo) ? " · con cuenta" : ""}</div></div></div>`).join("") || `<div class="mrow muted">Sin trabajadores.</div>`}</div>
+   ${g ? `<div class="row" id="fntrab"><input name="nombre" placeholder="Nombre y apellidos" style="flex:2 1 180px"><input name="precio" inputmode="decimal" placeholder="€/h propio (opcional)" style="flex:1 1 120px"><button class="btn" data-act="nAltaTrab">${ic("mas")}Añadir</button></div>` : ""}</section>
+  <section class="stack"><h2>Dueños</h2>
+   <div class="list">${d.duenos.map(x => `<div class="mrow"><div class="grow"><b>${esc(x.nombre)}</b><div class="muted small">${esc([x.finca, x.municipio].filter(Boolean).join(" · ") || "Sin finca anotada")}${d.miembros.some(m => m.dueno_id === x.id && m.activo) ? " · con cuenta" : ""}</div></div></div>`).join("") || `<div class="mrow muted">Sin dueños.</div>`}</div>
+   ${g ? `<div class="row" id="fndueno"><input name="nombre" placeholder="Nombre del dueño" style="flex:2 1 180px"><input name="finca" placeholder="Finca (opcional)" style="flex:1 1 120px"><button class="btn" data-act="nAltaDueno">${ic("mas")}Añadir</button></div>` : ""}</section>
+  <section class="stack"><h2>Cuentas con acceso</h2>
+   <div class="list">${d.miembros.filter(m => m.activo).map(m => `<div class="mrow"><div class="grow"><b>${esc(nom(m.user_id))}</b><div class="muted small">${ROL_TXT[m.rol]}${m.trabajador_id ? " · " + esc(nTrab(m.trabajador_id)?.nombre || "") : ""}${m.dueno_id ? " · " + esc(nDueno(m.dueno_id)?.nombre || "") : ""}</div></div>${g && (m.rol !== "creador" || NUBE.superadmin) ? `<button class="btn ghost sm danger" data-act="nQuitarMiembro" data-id="${m.id}">Quitar</button>` : ""}</div>`).join("")}</div>
+   ${g ? `<div class="card stack" id="fninv"><b>Invitar a alguien</b><div class="hint">Se genera un código de un solo uso que caduca en 7 días. Pásalo por WhatsApp o en persona; la otra persona crea su cuenta y lo escribe en «Unirme con un código».</div>
+     <div class="grid2"><label class="f"><span>Rol</span><select name="rol"><option value="trabajador">Trabajador (solo ve lo suyo)</option><option value="dueno">Dueño (solo ve su cuenta)</option><option value="jefe">Jefe de equipo (ve a su equipo)</option><option value="admin">Administrador (lee toda la campaña)</option>${NUBE.superadmin ? `<option value="creador">Creador</option>` : ""}</select></label>
+     <label class="f"><span>Ficha (trabajador o dueño)</span><select name="ficha"><option value="">—</option>${d.trab.map(t => `<option value="t:${t.id}">${esc(t.nombre)}</option>`).join("")}${d.duenos.map(x => `<option value="d:${x.id}">${esc(x.nombre)} (dueño)</option>`).join("")}</select></label></div>
+     <button class="btn pri" data-act="nInvitar" style="align-self:flex-start">Generar código</button></div>` : ""}</section>
+  <section class="stack"><h2>Equipos (jefe → trabajadores)</h2>
+   <div class="list">${d.asig.map(a => `<div class="mrow"><div class="grow"><b>${esc(nom(a.jefe_user_id))} → ${esc(nTrab(a.trabajador_id)?.nombre || "")}</b><div class="muted small">desde ${fFechaL(a.desde)}${a.hasta ? " hasta " + fFechaL(a.hasta) : " · vigente"}</div></div>${g && !a.hasta ? `<button class="btn ghost sm" data-act="nCerrarAsig" data-id="${a.id}">Terminar hoy</button>` : ""}</div>`).join("") || `<div class="mrow muted">Sin equipos.</div>`}</div>
+   ${g && jefes.length ? `<div class="row" id="fnasig"><select name="jefe" style="flex:1 1 140px">${jefes.map(m => `<option value="${m.user_id}">${esc(nom(m.user_id))}</option>`).join("")}</select><select name="trab" style="flex:1 1 140px">${d.trab.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}</select><input type="date" name="desde" value="${hoy()}" style="flex:0 1 150px"><button class="btn" data-act="nAsignar">Asignar</button></div>` : g ? `<div class="hint">Invita primero a un jefe de equipo para poder asignarle trabajadores.</div>` : ""}</section></div>`;
+}
+
+/* ---------- Cuentas (trabajadores y dueños) ---------- */
+function vNCuentas() {
+  const d = NUBE.d;
+  return `<div class="stack"><h1>Cuentas</h1>
+  <section class="stack"><h2>Trabajadores</h2><div class="tw"><table><thead><tr><th>Trabajador</th><th class="r">Días</th><th class="r">Horas</th><th class="r">Ganado</th><th class="r">Entregado</th><th class="r">Le queda</th></tr></thead><tbody>
+   ${d.trab.map(t => { const r = nResTrab(t.id); return `<tr><td><b>${esc(t.nombre)}</b></td><td class="r">${r.dias}</td><td class="r">${fN(r.horas)}</td><td class="r">${eurosC(r.importe)}</td><td class="r">${eurosC(r.entregado)}</td><td class="r"><b>${eurosC(r.pendiente)}</b></td></tr>`; }).join("")}</tbody></table></div></section>
+  <section class="stack"><h2>Dueños</h2><div class="tw"><table><thead><tr><th>Dueño</th><th class="r">Horas</th><th class="r">Total</th><th class="r">Pagado</th><th class="r">Pendiente</th></tr></thead><tbody>
+   ${d.duenos.map(x => { const k = NUBE.cuentas[x.id]; return `<tr><td><b>${esc(x.nombre)}</b></td>${k ? `<td class="r">${fN(k.horas)}</td><td class="r">${eurosC(k.total_cent)}</td><td class="r">${eurosC(k.pagado_cent)}</td><td class="r"><b>${eurosC(k.pendiente_cent)}</b></td>` : `<td class="r muted" colspan="4">calculando…</td>`}</tr>`; }).join("")}</tbody></table></div>
+   <div class="hint">Las cuentas de los dueños las calcula el servidor con las mismas reglas que la versión 2.3.0.</div></section></div>`;
+}
+nAfter.cuentas = async () => {
+  const falta = NUBE.d.duenos.filter(x => !NUBE.cuentas[x.id]); if (!falta.length) return;
+  for (const x of falta) { try { NUBE.cuentas[x.id] = await nq(NUBE.sb.rpc("cuenta_dueno", { p_campana: NUBE.c.campana_id, p_dueno: x.id })); } catch (e) { NUBE.cuentas[x.id] = null; } }
+  if (location.hash === "#n-cuentas") render();
+};
+
+/* ---------- Paneles de solo lectura: jefe, trabajador, dueño ---------- */
+function vNEquipo() {
+  const e = NUBE.d.equipo || [], porFecha = {}; e.forEach(x => (porFecha[x.fecha] ??= []).push(x));
+  return `<div class="stack"><div><div class="lbl">Jefe de equipo · solo lectura</div><h1>Mi equipo</h1></div>
+  <div class="kpis"><div class="kpi"><span class="lbl">Jornadas</span><b>${e.filter(x => x.tipo !== "ausente").length}</b></div><div class="kpi"><span class="lbl">Horas del equipo</span><b>${fN(e.reduce((s, x) => s + +x.horas, 0))}</b></div><div class="kpi"><span class="lbl">Trabajadores</span><b>${new Set(e.map(x => x.trabajador)).size}</b></div></div>
+  ${Object.keys(porFecha).length ? Object.entries(porFecha).sort((a, b) => b[0].localeCompare(a[0])).map(([f, xs]) => `<section class="stack" style="gap:6px"><h3>${fFecha(f)}</h3><div class="list">${xs.map(x => `<div class="mrow"><div class="grow"><b>${esc(x.trabajador)}</b><div class="muted small">${esc([x.dueno, x.finca].filter(Boolean).join(" · "))}</div></div><span class="pill p-${x.tipo}">${x.tipo === "ausente" ? "Falta" : fH(x.horas)}</span></div>`).join("")}</div></section>`).join("") : `<div class="empty"><span>Todavía no hay jornadas de tu equipo.</span></div>`}</div>`;
+}
+function vNMisJornadas() {
+  const r = NUBE.d.resumen; if (!r) return `<div class="empty"><span>No hay datos.</span></div>`;
+  return `<div class="stack"><div><div class="lbl">Trabajador · solo lectura</div><h1>${esc(r.trabajador)}</h1></div>
+  <div class="kpis"><div class="kpi"><span class="lbl">Días trabajados</span><b>${r.dias}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(r.horas)}</b></div><div class="kpi"><span class="lbl">Faltas</span><b>${r.faltas}</b></div></div>
+  <div class="saldo"><div><span class="lbl">Llevas ganado</span><b>${eurosC(r.importe_cent)}</b></div><div><span class="lbl">Te han entregado</span><b>${eurosC(r.entregado_cent)}</b></div><div class="resto ${r.pendiente_cent < 0 ? "neg" : ""}"><span class="lbl">${r.pendiente_cent < 0 ? "Te han adelantado de más" : "Te queda por cobrar"}</span><b>${eurosC(Math.abs(r.pendiente_cent))}</b></div></div>
+  <div class="muted small">Precio: ${eurosC(r.precio_hora_cent)}/h.</div>
+  <section class="stack"><h2>Tus jornadas</h2>${r.jornadas.length ? `<div class="list">${[...r.jornadas].reverse().map(j => `<div class="mrow"><div class="grow"><b>${fFecha(j.fecha)}</b><div class="muted small">${esc(j.dueno)}${j.nota ? " · " + esc(j.nota) : ""}</div></div><span class="pill p-${j.tipo}">${j.tipo === "ausente" ? "Falta" : fH(j.horas)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no tienes jornadas.</span></div>`}</section>
+  <section class="stack"><h2>Entregas recibidas</h2>${r.entregas.length ? `<div class="list">${r.entregas.map(p => `<div class="pago"><div class="grow"><b>${fFecha(p.fecha)}</b><div class="muted small">${esc(formaTxt(p.forma))}${p.nota ? " · " + esc(p.nota) : ""}</div></div><span class="imp">${eurosC(p.importe_cent)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no te han entregado dinero.</span></div>`}</section></div>`;
+}
+function vNMiCuenta() {
+  const k = NUBE.d.cuenta; if (!k) return `<div class="empty"><span>No hay datos.</span></div>`;
+  return `<div class="stack"><div><div class="lbl">Dueño · solo lectura</div><h1>${esc(k.dueno)}</h1></div>
+  <div class="kpis"><div class="kpi"><span class="lbl">Días</span><b>${k.dias.length}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(k.horas)}</b></div><div class="kpi"><span class="lbl">Mano de obra</span><b>${eurosC(k.mano_cent)}</b></div><div class="kpi"><span class="lbl">Maquinaria</span><b>${eurosC(k.maquinaria_cent)}</b></div><div class="kpi"><span class="lbl">Kilos</span><b>${+k.kilos ? fN(k.kilos, 0) : "—"}</b></div></div>
+  <div class="saldo"><div><span class="lbl">Total cuenta</span><b>${eurosC(k.total_cent)}</b></div><div><span class="lbl">Has pagado</span><b>${eurosC(k.pagado_cent)}</b></div><div class="resto ${k.pendiente_cent < 0 ? "neg" : ""}"><span class="lbl">${k.pendiente_cent < 0 ? "Has pagado de más" : "Te falta pagar"}</span><b>${eurosC(Math.abs(k.pendiente_cent))}</b></div></div>
+  ${+k.iva ? `<div class="muted small">Incluye IVA del ${fN(k.iva)} %: ${eurosC(k.iva_cent)}.</div>` : ""}
+  <section class="stack"><h2>Días trabajados en tu finca</h2>${k.dias.length ? `<div class="list">${[...k.dias].reverse().map(x => `<div class="mrow"><div class="grow"><b>${fFecha(x.fecha)}</b><div class="muted small">${x.presentes} trabajadores${+x.kilos ? " · " + fN(x.kilos, 0) + " kg" : ""}</div></div><span class="pill p-ok">${fH(x.horas)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay días.</span></div>`}</section>
+  ${k.maquinas.length ? `<section class="stack"><h2>Maquinaria</h2><div class="list">${k.maquinas.map(m => `<div class="mrow"><div class="grow"><b>${esc(m.nombre)}</b><div class="muted small">${m.unidades} × ${eurosC(m.precio_cent)}</div></div><span class="imp">${eurosC(m.importe_cent)}</span></div>`).join("")}</div></section>` : ""}
+  <section class="stack"><h2>Tus pagos</h2>${k.pagos.length ? `<div class="list">${k.pagos.map(p => `<div class="pago"><div class="grow"><b>${fFecha(p.fecha)}</b><div class="muted small">${esc(formaTxt(p.forma))}</div></div><span class="imp">${eurosC(p.importe_cent)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay pagos.</span></div>`}</section></div>`;
+}
+
+/* ---------- Panel global (superadministrador) ---------- */
+function vNGlobal() {
+  const g = NUBE.global;
+  if (!g) return `<div class="stack"><h1>Panel global</h1><div class="empty"><b>Cargando…</b></div></div>`;
+  return `<div class="stack"><h1>Panel global</h1>
+  <div class="kpis"><div class="kpi"><span class="lbl">Usuarios</span><b>${g.est.usuarios}</b></div><div class="kpi"><span class="lbl">Activos</span><b>${g.est.usuarios_activos}</b></div><div class="kpi"><span class="lbl">Campañas</span><b>${g.est.campanas}</b></div><div class="kpi"><span class="lbl">Partes</span><b>${g.est.partes}</b></div><div class="kpi"><span class="lbl">Base de datos</span><b>${fN(g.est.tamano_bd_bytes / 1048576, 1)} MB</b></div></div>
+  <div class="hint">Plan gratuito de Supabase: 500 MB de base de datos y 1 GB de fotos.</div>
+  <section class="stack"><h2>Usuarios</h2><div class="list">${g.usuarios.map(u => `<div class="mrow"><div class="grow"><b>${esc(u.nombre || u.email)}</b><div class="muted small">${esc(u.email)} · ${u.campanas} campañas${u.ultimo_acceso ? " · último acceso " + fFechaL(String(u.ultimo_acceso).slice(0, 10)) : ""}</div></div>
+   <label class="row small" style="gap:4px"><input type="checkbox" data-act2="crear" data-id="${u.id}" ${u.puede_crear_campanas ? "checked" : ""}> crea campañas</label>
+   <label class="row small" style="gap:4px"><input type="checkbox" data-act2="activo" data-id="${u.id}" ${u.activo ? "checked" : ""} ${u.id === NUBE.sesion.user.id ? "disabled" : ""}> activo</label></div>`).join("")}</div></section></div>`;
+}
+nAfter.global = async () => {
+  if (!NUBE.global) { try { NUBE.global = { est: await nq(NUBE.sb.rpc("admin_estadisticas")), usuarios: await nq(NUBE.sb.rpc("admin_usuarios")) }; render(); } catch (e) { toast(nubeMsg(e)); } return; }
+  $("#view").onchange = async e => {
+    const el = e.target, k = el.dataset.act2; if (!k || nSinRed()) return;
+    try { await nq(NUBE.sb.from("perfiles").update(k === "crear" ? { puede_crear_campanas: el.checked } : { activo: el.checked }).eq("id", el.dataset.id)); toast("Usuario actualizado"); NUBE.global = null; render(); }
+    catch (err) { toast(nubeMsg(err)); el.checked = !el.checked; }
+  };
+};
+
+/* ---------- Acciones del modo cuenta ---------- */
+Object.assign(A, {
+  nAlta() { NUBE.alta = !NUBE.alta; render(); },
+  async nEntrar() {
+    const f = $("#fentrar"), email = $('[name="email"]', f).value.trim(), password = $('[name="password"]', f).value, nombre = $('[name="nombre"]', f)?.value.trim();
+    if (!email || !password) return toast("Escribe el correo y la contraseña");
+    if (nSinRed()) return;
+    if (NUBE.alta) {
+      if (!nombre) return toast("Escribe tu nombre"); if (password.length < 8) return toast("La contraseña debe tener al menos 8 caracteres");
+      const r = await NUBE.sb.auth.signUp({ email, password, options: { data: { nombre } } });
+      if (r.error) return toast(nubeMsg(r.error));
+      if (!r.data.session) return toast("Revisa tu correo para confirmar la cuenta y después entra.");
+    } else { const r = await NUBE.sb.auth.signInWithPassword({ email, password }); if (r.error) return toast(nubeMsg(r.error)); }
+    NUBE.alta = false; toast("Sesión iniciada");
+  },
+  nSalir() { confirmar("¿Cerrar la sesión en este dispositivo?", async () => { nubeDesuscribir(); await NUBE.sb.auth.signOut(); history.replaceState(null, "", "#"); }, "Cerrar sesión"); },
+  nSinCuenta() { confirmar("La app se usará sin cuenta y los datos quedarán solo en este dispositivo. Puedes volver a entrar con tu cuenta desde Ajustes.", async () => { try { localStorage.setItem(PREF_MODO, "local"); } catch (e) { } location.hash = ""; location.reload(); }, "Usar sin cuenta"); },
+  nConCuenta() { try { localStorage.setItem(PREF_MODO, "cuenta"); } catch (e) { } location.hash = ""; location.reload(); },
+  async nElegir(el) { await nubeElegir(el.dataset.id); },
+  async nCanjear() {
+    const c = $('#fcodigo [name="codigo"]').value.trim(); if (!c) return toast("Escribe el código"); if (nSinRed()) return;
+    try { const id = await nq(NUBE.sb.rpc("canjear_invitacion", { p_codigo: c })); NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas")); toast("Te has unido a la campaña"); await nubeElegir(id); }
+    catch (e) { toast(nubeMsg(e)); }
+  },
+  async nCrearCampana() {
+    const f = leer("#fnueva"); if (!f.nombre) return toast("Pon un nombre a la campaña"); if (nSinRed()) return;
+    try {
+      const id = await nq(NUBE.sb.rpc("crear_campana", { p_nombre: f.nombre, p_anio: +f.anio || null, p_inicio: f.inicio || null, p_horas_dia: num(f.horas) ?? 7.5, p_precio_trab_cent: aCent(f.ptrab) ?? 1000, p_precio_dueno_cent: aCent(f.pdueno) ?? 1000, p_iva: num(f.iva) ?? 0 }));
+      await nq(NUBE.sb.from("maquinas").insert(MAQ_DEF.map((m, i) => ({ campana_id: id, nombre: m.nombre, precio_cent: Math.round(m.precio * 100), unidad: m.unidad, orden: i }))));
+      NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas")); toast("Campaña creada"); await nubeElegir(id);
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nGuardarPerfil() { if (nSinRed()) return; try { await nq(NUBE.sb.from("perfiles").update({ nombre: $('#fperfil [name="nombre"]').value.trim() }).eq("id", NUBE.sesion.user.id)); NUBE.perfil.nombre = $('#fperfil [name="nombre"]').value.trim(); toast("Nombre guardado"); } catch (e) { toast(nubeMsg(e)); } },
+  nAbrirParte(el) { NUBE.borrador = { dueno: el.dataset.d, fecha: el.dataset.f }; location.hash = "#n-parte"; },
+  async nGuardarParte() {
+    const b = NUBE.borrador; if (!b || nSinRed()) return;
+    const filas = Object.entries(b.filas).filter(([, f]) => f.si).map(([trabajador_id, f]) => ({ trabajador_id, tipo: f.tipo, horas: f.tipo === "normal" || f.tipo === "ausente" ? null : f.horas, nota: f.nota || null }));
+    const maquinas = Object.entries(b.maq).filter(([, q]) => q > 0).map(([maquina_id, cantidad]) => ({ maquina_id, cantidad }));
+    try {
+      const p = await nq(NUBE.sb.rpc("guardar_parte", { p_campana: NUBE.c.campana_id, p_dueno: b.dueno, p_fecha: b.fecha, p_version: b.version, p_kilos: num(b.kilos), p_notas: b.notas || null, p_filas: filas, p_maquinas: maquinas }));
+      await nubeCargar(); NUBE.borrador = { dueno: b.dueno, fecha: b.fecha }; toast("Parte guardado (versión " + p.version + ")"); render();
+    } catch (e) {
+      toast(nubeMsg(e));
+      if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") { await nubeCargar(); NUBE.borrador = { dueno: b.dueno, fecha: b.fecha }; render(); }
+    }
+  },
+  async nGuardarPago() {
+    const f = leer("#fnpago"), imp = aCent(f.importe), [k, id] = (f.persona || "").split(":");
+    if (!imp || imp <= 0) return toast("Escribe el importe"); if (!id) return toast("Elige la persona");
+    if ((f.tipo === "trabajador") !== (k === "t")) return toast(f.tipo === "trabajador" ? "Elige un trabajador" : "Elige un dueño");
+    if (nSinRed()) return;
+    try { await nq(NUBE.sb.from("pagos").insert({ campana_id: NUBE.c.campana_id, tipo: f.tipo, trabajador_id: k === "t" ? id : null, dueno_id: k === "d" ? id : null, importe_cent: imp, fecha: f.fecha, hora: ahoraHM(), forma: f.forma, nota: f.nota || null, creado_por: NUBE.sesion.user.id })); await nubeCargar(); toast("Guardado"); render(); }
+    catch (e) { toast(nubeMsg(e)); }
+  },
+  nBorrarPago(el) { confirmar("¿Borrar este pago? Se volverá a sumar a lo pendiente.", async () => { if (nSinRed()) return; try { await nq(NUBE.sb.from("pagos").delete().eq("id", el.dataset.id)); await nubeCargar(); toast("Pago borrado"); } catch (e) { toast(nubeMsg(e)); } }); },
+  async nAltaTrab() {
+    const f = leer("#fntrab"); if (!f.nombre) return toast("Escribe el nombre"); if (nSinRed()) return;
+    try { await nq(NUBE.sb.from("trabajadores").insert({ campana_id: NUBE.c.campana_id, nombre: f.nombre, precio_hora_cent: aCent(f.precio) })); await nubeCargar(); toast("Trabajador añadido"); render(); } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nAltaDueno() {
+    const f = leer("#fndueno"); if (!f.nombre) return toast("Escribe el nombre"); if (nSinRed()) return;
+    try { await nq(NUBE.sb.from("duenos").insert({ campana_id: NUBE.c.campana_id, nombre: f.nombre, finca: f.finca || null, num: NUBE.d.duenos.length + 1 })); await nubeCargar(); toast("Dueño añadido"); render(); } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nInvitar() {
+    const f = leer("#fninv"), [k, id] = (f.ficha || "").split(":");
+    if (f.rol === "trabajador" && k !== "t") return toast("Elige la ficha del trabajador");
+    if (f.rol === "dueno" && k !== "d") return toast("Elige la ficha del dueño");
+    if (nSinRed()) return;
+    try {
+      const codigo = await nq(NUBE.sb.rpc("crear_invitacion", { p_campana: NUBE.c.campana_id, p_rol: f.rol, p_trabajador: f.rol === "trabajador" ? id : null, p_dueno: f.rol === "dueno" ? id : null, p_dias: 7 }));
+      openModal(`<div class="stack"><h2>Código de invitación</h2><div class="hint">${ROL_TXT[f.rol]}${id ? " · " + esc((nTrab(id) || nDueno(id))?.nombre || "") : ""} · un solo uso · caduca en 7 días</div>
+        <div style="font-family:var(--f-display);font-size:32px;letter-spacing:.08em;text-align:center;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;user-select:all" id="codigoInv">${esc(codigo)}</div>
+        <div class="hint">Cópialo ahora: por seguridad no se guarda y no se puede volver a ver. Si se pierde, genera otro.</div>
+        <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nCopiarCodigo() { try { await navigator.clipboard.writeText($("#codigoInv").innerText.trim()); toast("Código copiado"); } catch (e) { toast("Selecciónalo y cópialo a mano"); } },
+  nQuitarMiembro(el) { confirmar("¿Quitar el acceso de esta cuenta a la campaña? Sus datos (horas, pagos) se conservan.", async () => { if (nSinRed()) return; try { await nq(NUBE.sb.from("miembros").delete().eq("id", el.dataset.id)); await nubeCargar(); toast("Acceso retirado"); } catch (e) { toast(nubeMsg(e)); } }, "Quitar acceso"); },
+  async nAsignar() {
+    const f = leer("#fnasig"); if (nSinRed()) return;
+    try { await nq(NUBE.sb.from("asignaciones_equipo").insert({ campana_id: NUBE.c.campana_id, jefe_user_id: f.jefe, trabajador_id: f.trab, desde: f.desde || hoy() })); await nubeCargar(); toast("Trabajador asignado al equipo"); render(); } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nCerrarAsig(el) { if (nSinRed()) return; try { await nq(NUBE.sb.from("asignaciones_equipo").update({ hasta: hoy() }).eq("id", el.dataset.id)); await nubeCargar(); toast("Asignación terminada hoy (se conserva el historial)"); render(); } catch (e) { toast(nubeMsg(e)); } }
+});
+
 /* ===================== Arranque ===================== */
 async function boot() {
   render();
+  if (nubeDisponible() && !prefLocal()) { try { await nubeIniciar(); return; } catch (e) { console.error(e); MODE = "cargando"; } }
   const cl = window.claude;
   if (!cl?.use) {
     MODE = "local"; loadLocal(); render(); migrarFotos();

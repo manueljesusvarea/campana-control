@@ -3,9 +3,18 @@
 // Configuración (no se sube a git): supabase/pruebas/.env.pruebas con
 //   SUPABASE_URL=https://xxxx.supabase.co
 //   SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
-// Requiere haber aplicado las migraciones y solo_proyecto_pruebas.sql en ese proyecto. Uso: node real.test.mjs
+// Requiere haber aplicado las migraciones y solo_proyecto_pruebas.sql en ese proyecto.
+//
+// Cuentas con permisos (superadministrador y dos creadores): son FIJAS y sus permisos los da el propietario del
+// proyecto con SQL, por uuid (nunca por el correo). Primera vez:
+//   node real.test.mjs --preparar   → crea las 3 cuentas ficticias con contraseñas aleatorias guardadas solo en
+//                                     .cuentas-pruebas.json (ignorado por git; nunca se muestran) y escribe el SQL
+//                                     de designación fuera del repositorio. Ejecútalo en el editor SQL del panel.
+// El resto de cuentas (administrador, jefes, trabajadores, dueños) se crean nuevas en cada ejecución y solo
+// obtienen acceso canjeando un código de invitación, como en la realidad.
+// Uso: node real.test.mjs
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -42,6 +51,43 @@ async function cuenta(nombre) {
   if (!data.session) throw new Error(`alta de ${nombre}: sin sesión (¿«Confirm email» sigue activo en el proyecto de pruebas?)`);
   c.id = data.user.id; C[nombre] = c; return c;
 }
+// Cuentas fijas con permisos: contraseñas solo en este ordenador (.cuentas-pruebas.json, ignorado por git)
+const FIJAS = ["superadmin", "creadorA", "creadorB"];
+const fcuentas = path.join(dir, ".cuentas-pruebas.json");
+const leerFijas = () => existsSync(fcuentas) ? JSON.parse(readFileSync(fcuentas, "utf8")) : {};
+async function cuentaFija(nombre) {
+  const f = leerFijas()[nombre];
+  if (!f) throw new Error(`falta la cuenta fija «${nombre}»: ejecuta  node real.test.mjs --preparar`);
+  const c = nuevo(); const { data, error } = await c.auth.signInWithPassword({ email: f.email, password: f.password });
+  if (error) throw new Error(`entrada de ${nombre}: ${error.message}`);
+  c.id = data.user.id; C[nombre] = c; return c;
+}
+if (process.argv.includes("--preparar")) {
+  const fijas = leerFijas();
+  for (const n of FIJAS) {
+    if (fijas[n]) continue;
+    const email = `${n.toLowerCase()}-fija-${crypto.randomBytes(4).toString("hex")}@pruebas.example.com`, password = crypto.randomBytes(24).toString("base64url");
+    const { data, error } = await nuevo().auth.signUp({ email, password, options: { data: { nombre: n + " (ficticio, fijo)" } } });
+    if (error || !data.user) { console.error(`Alta de ${n}: ${error?.message || "sin usuario"}`); process.exit(1); }
+    fijas[n] = { email, password, id: data.user.id };
+    writeFileSync(fcuentas, JSON.stringify(fijas, null, 2), { mode: 0o600 });   // tras cada alta, para no perder ninguna
+  }
+  const sqlDir = path.resolve(dir, "../../../../supabase-sql"); mkdirSync(sqlDir, { recursive: true });
+  const fsql = path.join(sqlDir, "03-designar-cuentas-prueba.sql");
+  writeFileSync(fsql, `-- ⚠️ SOLO PROYECTO DE PRUEBAS. Generado por real.test.mjs --preparar el ${new Date().toISOString().slice(0, 10)}.
+-- Da permisos a las cuentas ficticias fijas POR SU UUID (no por el correo). Ejecutar después de solo_proyecto_pruebas.sql.
+update public.perfiles set puede_crear_campanas = (id in ('${fijas.creadorA.id}', '${fijas.creadorB.id}'));
+insert into public.superadmin (user_id) values ('${fijas.superadmin.id}')
+  on conflict (unico) do update set user_id = excluded.user_id;
+select 'superadmin' as que, user_id::text as id from public.superadmin
+union all select 'puede_crear_campanas', id::text from public.perfiles where puede_crear_campanas
+union all select 'disparador por correo (debe salir 0)', count(*)::text from pg_trigger where tgname in ('zz_preparar_prueba', 'preparar_prueba');
+`);
+  console.log("Cuentas fijas listas (contraseñas solo en .cuentas-pruebas.json):");
+  for (const n of FIJAS) console.log(`  ${n.padEnd(10)} ${fijas[n].id}`);
+  console.log("Ejecuta en el editor SQL del proyecto de PRUEBAS: solo_proyecto_pruebas.sql y después\n  " + fsql);
+  process.exit(0);
+}
 const rpc = (c, f, args) => c.rpc(f, args).then(r => { if (r.error) throw new Error(f + ": " + r.error.message); return r.data; });
 const ins = (c, t, fila) => c.from(t).insert(fila).select().single().then(r => { if (r.error) throw new Error(t + ": " + r.error.message); return r.data; });
 
@@ -62,7 +108,24 @@ await prueba("Las 22 tablas existen y un anónimo no puede leer ninguna", async 
 });
 
 /* ---------- 2. Cuentas ficticias (cada una con su sesión) ---------- */
-for (const n of ["superadmin", "creadorA", "creadorB", "admin", "jefe1", "jefe2", "trab1", "trab2", "dueno1", "dueno2", "sinCampana"]) await cuenta(n);
+for (const n of FIJAS) await cuentaFija(n);
+for (const n of ["admin", "jefe1", "jefe2", "trab1", "trab2", "dueno1", "dueno2", "sinCampana"]) await cuenta(n);
+
+await prueba("Permisos de las cuentas fijas dados por uuid; registrarse con un correo «superadmin…» no da nada", async () => {
+  const sa = await C.superadmin.from("superadmin").select("user_id");
+  ok(!sa.error && sa.data.length === 1 && sa.data[0].user_id === C.superadmin.id, "la cuenta fija no es la superadministradora (¿aplicaste 03-designar-cuentas-prueba.sql?)");
+  for (const n of ["creadorA", "creadorB"]) {
+    const p = await C[n].from("perfiles").select("puede_crear_campanas").eq("id", C[n].id).single();
+    ok(p.data?.puede_crear_campanas === true, n + " sin permiso de crear campañas (¿aplicaste 03-designar-cuentas-prueba.sql?)");
+  }
+  // El ataque que permitía la preparación antigua: registrarse con un correo que «parece» de superadministrador
+  const intruso = await cuenta("superadmin-intruso");
+  ok((await intruso.from("superadmin").select("user_id").eq("user_id", intruso.id)).data.length === 0, "un correo «superadmin…» dio superadministrador");
+  const pi = await intruso.from("perfiles").select("puede_crear_campanas").eq("id", intruso.id).single();
+  ok(pi.data?.puede_crear_campanas === false, "un correo nuevo recibió permiso de crear campañas");
+  await espera_error(intruso.rpc("diagnostico_esquema"), "diagnóstico pedido por el intruso");
+  return "superadmin y 2 creadores por uuid · el intruso no obtiene nada";
+});
 
 await prueba("Diagnóstico interno: RLS activada y forzada en las 22 tablas, con políticas y claves foráneas", async () => {
   const d = await rpc(C.superadmin, "diagnostico_esquema");

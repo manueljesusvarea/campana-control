@@ -1,29 +1,20 @@
 -- ⚠️ SOLO PARA EL PROYECTO «campana-control-pruebas». NUNCA EN PRODUCCIÓN (campana-control).
+-- Se ejecuta en el editor SQL del panel de Supabase (como propietario del proyecto).
 --
--- Prepara el proyecto de pruebas para que las pruebas automáticas (real.test.mjs) funcionen sin claves secretas:
---  1. Las cuentas ficticias del dominio reservado «@pruebas.example.com» reciben al registrarse:
---       creador…@  → permiso para crear campañas
---       superadmin…@ → superadministrador DEL PROYECTO DE PRUEBAS (sustituye al anterior)
---     En producción esto no existe: allí el superadministrador y los permisos solo se fijan con SQL del propietario.
---  2. diagnostico_esquema(): informe interno de tablas, RLS, políticas y claves foráneas (solo superadministrador).
--- Solo afecta a cuentas ficticias. Los datos del proyecto de pruebas son siempre ficticios.
+-- 1. Quita la preparación antigua (hasta el 18-11-2026): un disparador daba superadministrador o permiso de crear
+--    campañas según el correo («superadmin…@pruebas.example.com»). Cualquiera que leyera este repositorio
+--    público podía registrarse con ese correo, así que se elimina. Ningún permiso depende ya del correo.
+-- 2. diagnostico_esquema(): informe interno de tablas, RLS, políticas y claves foráneas (solo superadministrador).
+-- 3. Designación de las cuentas fijas de prueba POR SU IDENTIFICADOR (uuid), igual que en producción:
+--    `node real.test.mjs --preparar` crea las cuentas y escribe, FUERA del repositorio, el SQL con sus uuid
+--    (CAMPAÑA CONTROL/supabase-sql/03-designar-cuentas-prueba.sql). Este archivo solo trae la plantilla.
 
-create or replace function cc_priv.preparar_cuenta_prueba() returns trigger
-language plpgsql security definer set search_path = '' as $$
-begin
-  if new.email like '%@pruebas.example.com' then
-    if new.email like 'creador%' then
-      update public.perfiles set puede_crear_campanas = true where id = new.id;
-    elsif new.email like 'superadmin%' then
-      insert into public.superadmin (user_id) values (new.id) on conflict (unico) do update set user_id = excluded.user_id;
-    end if;
-  end if;
-  return new;
-end $$;
+-- 1 · Preparación antigua por correo: fuera
+drop trigger if exists zz_preparar_prueba on auth.users;
 drop trigger if exists preparar_prueba on auth.users;
--- Se llama «zz_…» para ejecutarse después de «al_registrarse» (que crea el perfil): los disparadores van por orden alfabético
-create trigger zz_preparar_prueba after insert on auth.users for each row execute function cc_priv.preparar_cuenta_prueba();
+drop function if exists cc_priv.preparar_cuenta_prueba();
 
+-- 2 · Diagnóstico interno
 create or replace function public.diagnostico_esquema() returns jsonb
 language plpgsql stable security definer set search_path = '' as $$
 begin
@@ -42,3 +33,8 @@ begin
 end $$;
 revoke all on function public.diagnostico_esquema() from public, anon;
 grant execute on function public.diagnostico_esquema() to authenticated;
+
+-- 3 · Plantilla (la versión con los uuid reales la genera `node real.test.mjs --preparar`):
+--   update public.perfiles set puede_crear_campanas = (id in ('<uuid creadorA>', '<uuid creadorB>'));
+--   insert into public.superadmin (user_id) values ('<uuid superadmin>')
+--     on conflict (unico) do update set user_id = excluded.user_id;

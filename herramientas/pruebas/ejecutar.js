@@ -21,7 +21,7 @@ const FILTRO = process.argv.slice(2).find(a => !a.startsWith("-")) || "";
 /* ---------- Servidor estático en /campana-control/ ---------- */
 const TIPOS = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 // reemplazos: { "index.html": [[texto, nuevo]…] } simula publicar una versión nueva sin tocar www/
-const SRV = { caido: false, swExtra: "", reemplazos: {}, peticiones: [] };
+const SRV = { caido: false, swExtra: "", reemplazos: {}, peticiones: [], nube: false };
 const servidor = http.createServer((req, res) => {
   if (SRV.caido) { req.socket.destroy(); return; }            // simula «sin conexión»
   const u = new URL(req.url, "http://x"); SRV.peticiones.push(u.pathname);
@@ -31,6 +31,7 @@ const servidor = http.createServer((req, res) => {
   const f = path.join(WWW, rel);
   if (!f.startsWith(WWW) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end("no existe"); }
   let cuerpo = fs.readFileSync(f);
+  if (rel === "config-nube.js" && !SRV.nube) cuerpo = Buffer.from("window.CC_NUBE = null;\n");   // pruebas de la 2.3.0: sin cuenta
   if (rel === "sw.js" && SRV.swExtra) cuerpo = Buffer.concat([cuerpo, Buffer.from("\n// " + SRV.swExtra + "\n")]);
   for (const [a, b] of SRV.reemplazos[rel] || []) cuerpo = Buffer.from(cuerpo.toString("utf8").split(a).join(b));
   res.writeHead(200, { "Content-Type": TIPOS[path.extname(f)] || "application/octet-stream", "Cache-Control": "no-cache" });
@@ -55,6 +56,10 @@ function prepararSesion(perfil) {
   const ses = session.fromPartition("persist:" + perfil);
   if (!ses.__preparada) {
     ses.__preparada = true;
+    // Como programa (file://) la página no pasa por el servidor de pruebas: sin SRV.nube se simula un
+    // www/ compilado sin cuenta (lo que hace GitHub Actions), aunque en este ordenador haya config de pruebas.
+    ses.webRequest.onBeforeRequest({ urls: ["file:///*"] }, (d, cb) =>
+      cb(!SRV.nube && /\/config-nube\.js$/.test(d.url) ? { redirectURL: "data:text/javascript,window.CC_NUBE%20%3D%20null%3B" } : {}));
     ses.on("will-download", (e, item) => {
       const dir = path.join(TMP, "descargas", perfil); fs.mkdirSync(dir, { recursive: true });
       const ruta = path.join(dir, Date.now() + "-" + item.getFilename()); item.setSavePath(ruta);
@@ -532,12 +537,136 @@ prueba("transferencia", "Cambio de instalación con copia (con fotos): web → p
   return { origen, enPrograma, enWebNueva: enWeb2, avisoImportar: aviso1.replace(/\s+/g, " ").slice(0, 160), bytesCopia: [copia1.length, copia2.length] };
 });
 
+prueba("migracion-v3", "Versión 3.0 con cuenta configurada: un dispositivo con datos de la 2.3.0 sigue abriendo sus datos", async () => {
+  SRV.nube = true;   // config-nube.js real (proyecto de pruebas): ningún paso de esta prueba inicia sesión ni llama al servidor
+  try {
+    const modo = async (w, esperado) => { await w.webContents.executeJavaScript(AYUDAS + "; true"); await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === ${JSON.stringify(esperado)}, 8000, "modo ${esperado}");`); };
+    const recargarSin = async w => { await w.webContents.reload(); await new Promise(r => w.webContents.once("did-finish-load", r)); };
+    // 1) Dispositivo nuevo: pantalla de entrar
+    const nuevo = await abrir("m3-nuevo", { esperarApp: false }); await modo(nuevo, "cuenta");
+    const pantalla = await ev(nuevo, `return { entrar: !!document.querySelector("#fentrar [name=email]"), sinCuenta: !!document.querySelector('[data-act="nSinCuenta"]') };`);
+    ok(pantalla.entrar && pantalla.sinCuenta, "dispositivo nuevo sin pantalla de entrar: " + JSON.stringify(pantalla));
+    // 2) Dispositivo que ya usaba la 2.3.0 (datos guardados y sin preferencia de modo)
+    const v23 = await abrir("m3-v23", { esperarApp: false }); await modo(v23, "cuenta");
+    await ev(v23, `localStorage.setItem("campana-control-modo", "local"); return true;`); await recargarSin(v23); await listo(v23);
+    await crearCasoControlPorPantalla(v23);
+    const cuenta = w => ev(w, `return Object.keys(S.trabajadores).length + Object.keys(S.partes).length + Object.keys(S.pagos).length;`);
+    const antes = await cuenta(v23);
+    await ev(v23, `localStorage.removeItem("campana-control-modo"); return true;`);
+    await recargarSin(v23); await listo(v23);
+    const despues = await cuenta(v23);
+    ok(antes > 0 && despues === antes, `datos de la 2.3.0 no visibles al abrir: antes ${antes}, después ${despues}`);
+    await ev(v23, `await t.ir("#ajustes"); render(); return true;`);
+    const boton = await ev(v23, `return !!document.querySelector('[data-act="nConCuenta"]');`);
+    ok(boton, "Ajustes no ofrece entrar con cuenta");
+    // 3) Elegir «Entrar con mi cuenta»: la elección se recuerda y los datos locales no se borran
+    await ev(v23, `document.querySelector('[data-act="nConCuenta"]').click(); return true;`);
+    await new Promise(r => v23.webContents.once("did-finish-load", r)); await modo(v23, "cuenta");
+    const tras = await ev(v23, `return { pref: localStorage.getItem("campana-control-modo"), datos: localStorage.getItem("campana-control-v1") != null, entrar: !!document.querySelector("#fentrar") };`);
+    ok(tras.pref === "cuenta" && tras.datos && tras.entrar, "al elegir cuenta: " + JSON.stringify(tras));
+    return { nuevo: pantalla, registros: { antes, despues }, trasElegirCuenta: tras };
+  } finally { SRV.nube = false; }
+});
+
+/* ---------- Versión 3.0: prueba real contra el proyecto Supabase de PRUEBAS (solo con filtro «nube») ----------
+   Necesita conexión, supabase/config-app.local.json y las cuentas fijas de supabase/pruebas/.cuentas-pruebas.json
+   (node real.test.mjs --preparar). Cada ventana es un dispositivo con su propio almacenamiento y su propia sesión.
+   Nada se simula: la app habla con la base de datos real y el tiempo real de Supabase. Solo datos ficticios. */
+const pruebaRed = (id, nombre, fn) => PRUEBAS.push({ id, nombre, fn, red: true });
+pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Windows) y trabajador (iPhone) lo ven; jefe de otro equipo no; conflicto", async () => {
+  const fijas = JSON.parse(fs.readFileSync(path.join(RAIZ, "supabase", "pruebas", ".cuentas-pruebas.json"), "utf8"));
+  ok(fijas.creadorA, "faltan las cuentas fijas (node real.test.mjs --preparar)");
+  const run = Date.now().toString(36), clave = () => require("crypto").randomBytes(18).toString("base64url");
+  SRV.nube = true;
+  try {
+    const dispositivo = async (perfil, ancho, alto) => {
+      const w = await abrir(perfil + "-" + run, { esperarApp: false, ancho, alto });
+      await w.webContents.executeJavaScript(AYUDAS + "; true");
+      await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 15000, "pantalla de entrar"); return true;`);
+      return w;
+    };
+    const entrar = (w, email, password) => ev(w, `t.rellenar('#fentrar [name="email"]', ${JSON.stringify(email)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(password)});
+      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "iniciar sesión"); return NUBE.sesion.user.id;`);
+    const alta = (w, nombre) => ev(w, `await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="nombre"]', ${JSON.stringify(nombre)});
+      t.rellenar('#fentrar [name="email"]', ${JSON.stringify(nombre.toLowerCase().replace(/\W+/g, "-") + "-" + run + "@pruebas.example.com")}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(clave())});
+      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.sesion && NUBE.perfil && t.q("#fcodigo"), 20000, "crear cuenta"); return NUBE.sesion.user.id;`);
+    const canjear = (w, codigo) => ev(w, `t.rellenar('#fcodigo [name="codigo"]', ${JSON.stringify(codigo)}); await t.pulsar('[data-act="nCanjear"]');
+      await t.esperar(() => NUBE.c && NUBE.d, 20000, "unirse con el código"); return NUBE.roles;`);
+    const invitar = (w, rol, ficha) => ev(w, `await t.ir("#n-personas"); t.rellenar('#fninv [name="rol"]', ${JSON.stringify(rol)}); t.rellenar('#fninv [name="ficha"]', ${JSON.stringify(ficha)});
+      await t.pulsar('[data-act="nInvitar"]'); const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 15000, "código de invitación"); await t.pulsar('[data-act="cerrar"]'); return c;`);
+
+    // 1) Creador en el «Android» (390 px): entra con su cuenta fija y crea la campaña desde la app
+    const movil = await dispositivo("e2e-creador-android", 390, 844);
+    const idCreador = await entrar(movil, fijas.creadorA.email, fijas.creadorA.password);
+    const nombreCamp = "Campaña E2E " + run;
+    await ev(movil, `await t.ir("#campanas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombreCamp)}); t.rellenar('#fnueva [name="horas"]', "8");
+      t.rellenar('#fnueva [name="ptrab"]', "10"); t.rellenar('#fnueva [name="pdueno"]', "12"); await t.pulsar('[data-act="nCrearCampana"]');
+      await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombreCamp)} && NUBE.d, 20000, "crear campaña"); return true;`);
+    const fichas = await ev(movil, `await t.ir("#n-personas");
+      for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]'); await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); }
+      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño");
+      const id = n => NUBE.d.trab.find(x => x.nombre === n).id; return { t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: NUBE.d.duenos[0].id };`);
+    const codAdmin = await invitar(movil, "admin", ""), codTrab = await invitar(movil, "trabajador", "t:" + fichas.t1), codJefe = await invitar(movil, "jefe", "");
+
+    // 2) Administrador en «Windows» (1280 px), trabajador en «iPhone» y jefe de OTRO equipo: cuentas nuevas + código
+    const pc = await dispositivo("e2e-admin-windows", 1280, 860); await alta(pc, "Admin E2E");
+    const rolesAdmin = await canjear(pc, codAdmin);
+    const iphone = await dispositivo("e2e-trab-iphone", 390, 844); await alta(iphone, "Trabajador Uno E2E");
+    const rolesTrab = await canjear(iphone, codTrab);
+    const jefe = await dispositivo("e2e-jefe-otro", 390, 844); const idJefe = await alta(jefe, "Jefe E2E");
+    const rolesJefe = await canjear(jefe, codJefe);
+    ok(rolesAdmin.join() === "admin" && rolesTrab.join() === "trabajador" && rolesJefe.join() === "jefe", "roles: " + JSON.stringify({ rolesAdmin, rolesTrab, rolesJefe }));
+    // El jefe lleva al trabajador Dos (otro equipo distinto del trabajador Uno)
+    await ev(movil, `await t.esperar(() => NUBE.d.miembros.some(m => m.user_id === ${JSON.stringify(idJefe)}), 20000, "el creador ve al jefe (tiempo real)"); await t.ir("#n-personas"); render();
+      t.rellenar('#fnasig [name="jefe"]', ${JSON.stringify(idJefe)}); t.rellenar('#fnasig [name="trab"]', ${JSON.stringify(fichas.t2)}); await t.pulsar('[data-act="nAsignar"]');
+      await t.esperar(() => NUBE.d.asig.length === 1, 15000, "asignar equipo"); return true;`);
+    // Cada uno deja abierta su pantalla, sin recargar
+    await ev(pc, `await t.ir("#n-inicio"); return true;`); await ev(iphone, `await t.ir("#n-mis-jornadas"); return true;`); await ev(jefe, `await t.ir("#n-equipo"); return true;`);
+    const jefeAntes = await ev(jefe, `return (NUBE.d.equipo || []).length;`);
+
+    // 3) El creador anota el parte de hoy en el móvil: trabajador Uno 8 h (día normal de 8 h) y trabajador Dos 8 h
+    const t0 = Date.now();
+    const parte = await ev(movil, `await t.ir("#n-parte"); render(); await t.esperar(() => t.q('[data-act="nGuardarParte"]'), 8000, "pantalla del parte");
+      t.rellenar('[data-np="kilos"]', "2.350"); await t.pulsar('[data-act="nGuardarParte"]');
+      await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return { version: NUBE.d.partes[0].version, filas: NUBE.d.filas.length, kilos: +NUBE.d.partes[0].kilos };`);
+    ok(parte.filas === 2 && parte.kilos === 2350, "parte guardado: " + JSON.stringify(parte));
+
+    // 4) Lo ven al momento, sin recargar (tiempo real), cada uno solo lo suyo
+    const admin = await ev(pc, `await t.esperar(() => NUBE.d.filas.length === 2, 20000, "el administrador recibe el parte"); render();
+      return { ms: Date.now(), horas: NUBE.d.filas.reduce((s, f) => s + hFila(f, nHd()), 0), texto: t.texto(), puedeEditar: !!t.q('[data-act="nAbrirParte"]') };`);
+    const trab = await ev(iphone, `await t.esperar(() => NUBE.d.resumen && +NUBE.d.resumen.horas === 8, 20000, "el trabajador recibe su jornada"); render();
+      return { ms: Date.now(), horas: +NUBE.d.resumen.horas, importe: NUBE.d.resumen.importe_cent, texto: t.texto(), veOtros: !!NUBE.d.filas.length || !!NUBE.d.trab.length };`);
+    const jef = await ev(jefe, `await t.esperar(() => (NUBE.d.equipo || []).length === 1, 20000, "el jefe recibe la jornada de su equipo"); render();
+      return { equipo: NUBE.d.equipo.map(x => x.trabajador), texto: t.texto(), veTodo: NUBE.d.filas.length };`);
+    ok(admin.horas === 16 && /16/.test(admin.texto) && !admin.puedeEditar, "administrador: " + JSON.stringify({ ...admin, texto: undefined }));
+    ok(trab.horas === 8 && trab.importe === 8000 && /80,00\s*€/.test(trab.texto) && !trab.veOtros && !/Trabajador E2E Dos/.test(trab.texto), "trabajador: " + JSON.stringify({ ...trab, texto: trab.texto.slice(0, 200) }));
+    ok(jefeAntes === 0 && jef.equipo.join() === "Trabajador E2E Dos" && !/Trabajador E2E Uno/.test(jef.texto) && jef.veTodo === 0, "jefe de otro equipo: " + JSON.stringify(jef));
+    // Lo que la interfaz no enseña tampoco se puede hacer: el administrador intenta cambiar el parte por la API
+    const intento = await ev(pc, `const r = await NUBE.sb.from("partes").update({ kilos: 1 }).eq("id", NUBE.d.partes[0].id).select(); return { error: !!r.error, filas: (r.data || []).length };`);
+    ok(intento.error || intento.filas === 0, "el administrador ha modificado un parte: " + JSON.stringify(intento));
+
+    // 5) Conflicto: el mismo creador con el parte abierto en el móvil y en el ordenador
+    const pc2 = await dispositivo("e2e-creador-pc", 1280, 860); await entrar(pc2, fijas.creadorA.email, fijas.creadorA.password);
+    await ev(pc2, `const c = NUBE.campanas.find(x => x.nombre === ${JSON.stringify(nombreCamp)}); await nubeElegir(c.campana_id); await t.ir("#n-parte"); render();
+      await t.esperar(() => NUBE.borrador?.version === ${parte.version}, 15000, "parte abierto en el ordenador"); t.rellenar('[data-np="kilos"]', "9.999"); return true;`);
+    await ev(movil, `await t.ir("#n-parte"); render(); t.rellenar('[data-np="kilos"]', "2.400"); await t.pulsar('[data-act="nGuardarParte"]');
+      await t.esperar(() => NUBE.d.partes[0].version === ${parte.version + 1}, 15000, "guardar en el móvil"); return true;`);
+    const conflicto = await ev(pc2, `await t.dormir(1500);   // le llega el aviso en tiempo real, pero su borrador sin guardar se conserva
+      const antes = { version: NUBE.borrador.version, kilos: NUBE.borrador.kilos };
+      await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.borrador?.version === ${parte.version + 1}, 15000, "recarga tras el conflicto");
+      return { antes, despues: { version: NUBE.borrador.version, kilos: +NUBE.d.partes[0].kilos }, aviso: document.body.innerText.includes("Otra persona ha cambiado esto") };`);
+    ok(conflicto.antes.version === parte.version && conflicto.despues.kilos === 2400 && conflicto.aviso, "conflicto: " + JSON.stringify(conflicto));
+    return { campana: nombreCamp, roles: { admin: rolesAdmin, trabajador: rolesTrab, jefe: rolesJefe }, parte,
+      tiempoReal_ms: { administrador: admin.ms - t0, trabajador: trab.ms - t0 }, trabajador: { horas: trab.horas, euros: trab.importe / 100 }, jefeVe: jef.equipo, conflicto };
+  } finally { SRV.nube = false; }
+});
+
 /* ---------- Ejecución ---------- */
 async function main() {
   await new Promise(r => servidor.listen(0, "127.0.0.1", r));
   BASE = "http://127.0.0.1:" + servidor.address().port;
   const resultados = [];
-  for (const p of PRUEBAS.filter(p => p.id.includes(FILTRO))) {
+  for (const p of PRUEBAS.filter(p => p.id.includes(FILTRO) && (!p.red || FILTRO.startsWith("nube")))) {   // las de red, solo pidiéndolas
     const t0 = Date.now(); const e0 = erroresConsola.length;
     let estado = "OK", detalle;
     try { detalle = await p.fn(); }

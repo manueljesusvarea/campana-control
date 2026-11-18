@@ -3,10 +3,12 @@
 // publicado, cambia este archivo y los dispositivos descargan la versión nueva. No la edites a mano.
 // Si un archivo de APP no existe, el service worker no se instala: construir_www.py lo comprueba.
 const PREFIJO = "campana-control:" + self.registration.scope + ":";
-const VERSION = PREFIJO + "2.3.0-f2bcc8fabf";
+const VERSION = PREFIJO + "2.3.0-a14234fc07";
 const APP = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon.png",
   // Librerías de PDF y Excel (antes desde cdnjs)
   "./vendor/jspdf/2.5.1/jspdf.umd.min.js", "./vendor/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js", "./vendor/xlsx/0.18.5/xlsx.full.min.js",
+  // Versión 3.0: cuentas (supabase-js) y configuración generada por construir_www.py
+  "./vendor/supabase-js/2.119.0/supabase.js", "./config-nube.js",
   // Fuentes (antes desde Google Fonts)
   "./fonts/fonts.css",
   "./fonts/barlow-condensed-latin-600-normal.woff2", "./fonts/barlow-condensed-latin-700-normal.woff2",
