@@ -1704,6 +1704,7 @@ const aCent = v => { const n = num(v); return n == null ? null : Math.round(n * 
 const hFila = (f, hd) => f.tipo === "ausente" ? 0 : (f.tipo === "normal" || f.horas == null) ? +hd : +f.horas;   // misma regla que horasFila()
 const nGestiona = () => NUBE.superadmin || NUBE.roles.includes("creador");
 const nConsulta = () => nGestiona() || NUBE.roles.includes("admin");
+const nEdita = () => nGestiona() || !!NUBE.permisos?.edita;          // administrador con edición: jornadas y cuentas
 async function nq(p) { const r = await p; if (r.error) throw r.error; return r.data; }
 function nubeMsg(e) {
   const m = String(e?.message || e || ""), code = String(e?.code || "");
@@ -1717,7 +1718,8 @@ function nubeMsg(e) {
   if (/^INVITACION|ALTA: el código|Database error saving new user/.test(m)) return "El código no es válido, ya se usó o ha caducado.";
   if (/ALTA: para crear/.test(m)) return "Para crear una cuenta necesitas un código de invitación.";
   if (/rate limit|too many/i.test(m)) return "Demasiados intentos seguidos. Espera unos minutos.";
-  if (/Invalid login credentials/i.test(m)) return "Correo o contraseña incorrectos.";
+  if (/Invalid login credentials/i.test(m)) return "Usuario o contraseña incorrectos.";
+  if (/banned/i.test(m) || code === "user_banned") return "Esta cuenta está bloqueada. Habla con quien gestiona tu campaña.";
   if (/already registered|already been registered/i.test(m)) return "Ya existe una cuenta con ese correo. Entra con tu contraseña.";
   if (/Password should be|password.*at least/i.test(m)) return "La contraseña es demasiado corta.";
   if (/^PERMISO|row-level security|permission denied/i.test(m) || code === "42501") return "No tienes permiso para hacer esto.";
@@ -1735,11 +1737,12 @@ async function nubeIniciar() {
   await nubeTrasSesion();
 }
 async function nubeTrasSesion() {
-  nubeDesuscribir(); Object.assign(NUBE, { c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null });
+  nubeDesuscribir(); Object.assign(NUBE, { c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null, permisos: null, usuarios: null, fichas: null, altaForm: null });
   if (NUBE.sesion) {
     try {
       const uid = NUBE.sesion.user.id;
-      NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, activo, puede_crear_campanas").eq("id", uid).maybeSingle());
+      NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, usuario, activo, bloqueado, debe_cambiar_clave, puede_crear_campanas").eq("id", uid).maybeSingle());
+      if (NUBE.perfil && (NUBE.perfil.bloqueado || NUBE.perfil.debe_cambiar_clave)) return render();   // sin acceso hasta resolverlo
       NUBE.superadmin = (await nq(NUBE.sb.from("superadmin").select("user_id").eq("user_id", uid))).length > 0;
       NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas"));
       let pref = null; try { pref = localStorage.getItem(PREF_CAMP); } catch (e) { }
@@ -1751,7 +1754,8 @@ async function nubeTrasSesion() {
 }
 async function nubeElegir(id, sinRender) {
   const fila = NUBE.campanas.find(c => c.campana_id === id); if (!fila) return;
-  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null;
+  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null; NUBE.permisos = null;
+  try { NUBE.permisos = await nq(NUBE.sb.rpc("mis_permisos", { p_campana: id })); } catch (e) { }
   try { localStorage.setItem(PREF_CAMP, id); } catch (e) { }
   await nubeCargar(); nubeSuscribir();
   const vs = nubeVistas(); if (!vs.some(x => "#n-" + x[0] === location.hash)) history.replaceState(null, "", "#n-" + (vs[0]?.[0] || "campanas"));
@@ -1777,8 +1781,6 @@ async function nubeCargar() {
       sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
-    // Invitaciones pendientes (sin el código: solo se guarda su huella). Solo las ve quien gestiona.
-    d.inv = nGestiona() ? await nq(sb.from("invitaciones").select("id, rol, trabajador_id, dueno_id, caduca_en").eq("campana_id", c).is("usada_por", null).eq("revocada", false).gt("caduca_en", new Date().toISOString()).order("creada_en", { ascending: false })) : [];
     const ids = [...new Set(d.miembros.map(m => m.user_id))];
     if (ids.length) d.nombres = Object.fromEntries((await nq(sb.from("perfiles").select("id, nombre").in("id", ids))).map(p => [p.id, p.nombre]));
   }
@@ -1802,7 +1804,7 @@ function nubeVistas() {
   if (!NUBE.c) return [];
   const v = [];
   if (nConsulta()) v.push(["inicio", "Inicio", "inicio"]);
-  if (nGestiona()) v.push(["parte", "Parte", "partes"], ["pagos", "Pagos", "euro"]);
+  if (nEdita()) v.push(["parte", "Parte", "partes"], ["pagos", "Pagos", "euro"]);
   if (nConsulta()) v.push(["personas", "Personas", "trabajadores"], ["cuentas", "Cuentas", "informes"]);
   if (NUBE.roles.includes("jefe")) v.push(["equipo", "Mi equipo", "trabajadores"]);
   if (NUBE.roles.includes("trabajador")) v.push(["mis-jornadas", "Mis jornadas", "partes"]);
@@ -1813,7 +1815,7 @@ function nubeNav(vistas, k) {
   const enl = ([id, t, i]) => `<a href="#n-${id}" ${id === k ? 'aria-current="page"' : ""}>${ic(i)}<span>${t}</span></a>`;
   $("#tabs").innerHTML = vistas.slice(0, 6).map(enl).join("");
   $("#tabs").hidden = !vistas.length;
-  $("#side").innerHTML = vistas.map(enl).join("") + (NUBE.sesion ? `<a href="#campanas">${ic("inicio")}<span>Campañas</span></a>` : "") + (NUBE.superadmin ? `<a href="#global" ${location.hash === "#global" ? 'aria-current="page"' : ""}>${ic("chart")}<span>Panel global</span></a>` : "") + `<a href="#ajustes" ${location.hash === "#ajustes" ? 'aria-current="page"' : ""}>${ic("ajustes")}<span>Ajustes</span></a>`;
+  $("#side").innerHTML = vistas.map(enl).join("") + (NUBE.sesion ? `<a href="#campanas">${ic("inicio")}<span>Campañas</span></a>` : "") + (NUBE.sesion && nPuedeUsuarios() ? `<a href="#usuarios" ${location.hash === "#usuarios" ? 'aria-current="page"' : ""}>${ic("trabajadores")}<span>Usuarios</span></a>` : "") + (NUBE.superadmin ? `<a href="#global" ${location.hash === "#global" ? 'aria-current="page"' : ""}>${ic("chart")}<span>Panel global</span></a>` : "") + `<a href="#ajustes" ${location.hash === "#ajustes" ? 'aria-current="page"' : ""}>${ic("ajustes")}<span>Ajustes</span></a>`;
   const cs = $("#campsel");
   cs.innerHTML = NUBE.campanas.length ? NUBE.campanas.map(c => `<option value="${esc(c.campana_id)}" ${c.campana_id === NUBE.c?.campana_id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("") + (NUBE.c ? "" : `<option value="" selected>Elige campaña</option>`) : `<option>Sin campaña</option>`;
   cs.disabled = !NUBE.campanas.length;
@@ -1821,8 +1823,10 @@ function nubeNav(vistas, k) {
 function nubeRender() {
   updSync(); const v = $("#view"), r = (location.hash || "").slice(1);
   if (!NUBE.sesion) { nubeNav([]); v.innerHTML = vEntrar(); return; }
-  if (NUBE.nuevaClave) { nubeNav([]); v.innerHTML = vNuevaClave(); return; }
+  if (NUBE.perfil?.bloqueado) { nubeNav([]); v.innerHTML = vBloqueada(); return; }
+  if (NUBE.nuevaClave || NUBE.perfil?.debe_cambiar_clave) { nubeNav([]); v.innerHTML = vNuevaClave(); return; }
   const aviso = NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
+  if (r === "usuarios" && nPuedeUsuarios()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vUsuarios(); nAfter.usuarios(); return; }
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
   if (r === "global" && NUBE.superadmin) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNGlobal(); nAfter.global(); return; }
   if (!NUBE.c || r === "campanas") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCampanas(); return; }
@@ -1835,55 +1839,96 @@ function nubeRender() {
 }
 const nAfter = {};
 
-/* ---------- Entrar, crear cuenta, campañas ---------- */
-// Comprobación del correo con un código de un solo uso que envía Supabase Auth (alta y contraseña olvidada).
-// Supabase comprueba el código, su caducidad y el límite de intentos; la app solo lo pide y lo envía.
-const REENVIO_S = 60, MAX_FALLOS = 5;
-function vVerificar() {
-  const v = NUBE.verificar, espera = Math.max(0, REENVIO_S - Math.floor((Date.now() - (v.enviado || 0)) / 1000)), clave = v.tipo === "recovery";
-  clearTimeout(NUBE.tReenvio); if (espera) NUBE.tReenvio = setTimeout(() => NUBE.verificar && render(), espera * 1000);
-  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${clave ? "Recuperar la contraseña" : "Confirma tu correo"}</h1>
-  <div class="hint">${v.enviado ? `Te hemos enviado un código de un solo uso a <b>${esc(v.email)}</b>.` : `Para entrar con <b>${esc(v.email)}</b> tienes que confirmar el correo con el código que te enviamos.`} Escríbelo aquí; caduca en 1 hora. Si no lo ves, mira en «Spam» o «Promociones».</div>
-  <div class="card stack" id="fverificar">
-   <label class="f"><span>Código del correo</span><input name="token" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="123456" style="font-size:22px;letter-spacing:.2em;text-align:center"></label>
-   <button class="btn pri" data-act="nVerificar">${clave ? "Comprobar código" : "Confirmar correo"}</button>
-   <button class="btn ghost sm" data-act="nReenviar" ${espera ? "disabled" : ""}>${espera ? `Pedir otro código (en ${espera} s)` : "Pedir otro código"}</button>
-   <button class="btn ghost sm" data-act="nVolverEntrar">Volver</button></div></div>`;
-}
-function vOlvido() {
-  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>He olvidado mi contraseña</h1>
-  <div class="hint">Escribe el correo de tu cuenta. Si existe, te enviaremos un código para elegir una contraseña nueva. Nadie te pedirá la contraseña por mensaje.</div>
-  <div class="card stack" id="folvido"><label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
-   <button class="btn pri" data-act="nPedirRecuperacion">Enviar código</button><button class="btn ghost sm" data-act="nVolverEntrar">Volver</button></div></div>`;
-}
-function vNuevaClave() {
-  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>Contraseña nueva</h1>
-  <div class="card stack" id="fclave"><label class="f"><span>Contraseña nueva (mínimo 8 caracteres)</span><input name="p1" type="password" autocomplete="new-password"></label>
-   <label class="f"><span>Repítela</span><input name="p2" type="password" autocomplete="new-password"></label>
-   <button class="btn pri" data-act="nGuardarClave">Guardar contraseña</button><button class="btn ghost sm" data-act="nCancelarClave">Ahora no</button></div></div>`;
+/* ---------- Entrar (usuario y contraseña), contraseña propia y cuenta bloqueada ---------- */
+// Cuentas privadas: no hay registro ni correo. Las crea «Gestión de usuarios» (Edge Function «gestion-usuarios»).
+// Supabase Auth usa un identificador técnico que no recibe correo; la persona solo ve su nombre de usuario.
+const DOMINIO_CUENTAS = "@usuarios.campana-control.invalid";
+const emailDe = u => String(u || "").trim().toLowerCase() + DOMINIO_CUENTAS;
+const usuarioDe = email => String(email || "").replace(DOMINIO_CUENTAS, "");
+async function nFuncion(cuerpo) {   // los permisos los decide el servidor con la sesión de quien llama
+  const r = await NUBE.sb.functions.invoke("gestion-usuarios", { body: cuerpo });
+  if (!r.error) return r.data;
+  let m = ""; try { m = (await r.error.context.json()).error; } catch (e) { }
+  throw new Error(m || (navigator.onLine ? "No se ha podido completar la operación." : "Sin conexión."));
 }
 function vEntrar() {
-  if (NUBE.verificar) return vVerificar();
-  if (NUBE.olvido) return vOlvido();
-  const alta = NUBE.alta;
-  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${alta ? "Crear cuenta" : "Entrar"}</h1>
-  <div class="hint">${alta ? "Solo se puede crear una cuenta con el código de invitación que te dé quien gestiona la campaña (o el administrador de la app, si vas a crear campañas). El código es de un solo uso." : "Entra con tu cuenta de CAMPAÑA CONTROL. La misma cuenta sirve en el móvil y en el ordenador."}</div>
+  return `<div class="stack" style="max-width:420px;margin:0 auto"><h1>Entrar</h1>
+  <div class="hint">Entra con el usuario y la contraseña que te ha dado quien gestiona tu campaña. La misma cuenta sirve en el móvil y en el ordenador.</div>
   <div class="card stack" id="fentrar">
-   ${alta ? `<label class="f"><span>Código de invitación</span><input name="codigo" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="text-transform:uppercase"></label>
-   <label class="f"><span>Tu nombre</span><input name="nombre" autocomplete="name"></label>` : ""}
-   <label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
-   <label class="f"><span>Contraseña${alta ? " (mínimo 8 caracteres)" : ""}</span><input name="password" type="password" autocomplete="${alta ? "new-password" : "current-password"}"></label>
-   <button class="btn pri" data-act="nEntrar">${alta ? "Crear cuenta" : "Entrar"}</button>
-   <button class="btn ghost sm" data-act="nAlta">${alta ? "Ya tengo cuenta: entrar" : "No tengo cuenta: crearla"}</button>
-   ${alta ? "" : `<button class="btn ghost sm" data-act="nOlvide">He olvidado mi contraseña</button>`}</div>
+   <label class="f"><span>Usuario</span><input name="usuario" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
+   <label class="f"><span>Contraseña</span><input name="password" type="password" autocomplete="current-password"></label>
+   <button class="btn pri" data-act="nEntrar">Entrar</button></div>
+  <div class="hint" style="text-align:center">¿Has olvidado la contraseña? Pide a quien gestiona tu cuenta una contraseña temporal nueva.</div>
   <button class="btn ghost sm" data-act="nSinCuenta" style="align-self:center">Usar sin cuenta (solo en este dispositivo)</button></div>`;
+}
+function vNuevaClave() {
+  const obligatoria = !!NUBE.perfil?.debe_cambiar_clave;
+  return `<div class="stack" style="max-width:420px;margin:0 auto"><h1>${obligatoria ? "Pon tu contraseña" : "Cambiar contraseña"}</h1>
+  ${obligatoria ? `<div class="hint">Has entrado con una contraseña temporal. Elige una propia para empezar; nadie más la verá.</div>` : ""}
+  <div class="card stack" id="fclave"><label class="f"><span>${obligatoria ? "Contraseña temporal" : "Contraseña actual"}</span><input name="actual" type="password" autocomplete="current-password"></label>
+   <label class="f"><span>Contraseña nueva (mínimo 8 caracteres)</span><input name="p1" type="password" autocomplete="new-password"></label>
+   <label class="f"><span>Repítela</span><input name="p2" type="password" autocomplete="new-password"></label>
+   <button class="btn pri" data-act="nGuardarClave">Guardar contraseña</button>${obligatoria ? `<button class="btn ghost sm" data-act="nSalir">Salir</button>` : `<button class="btn ghost sm" data-act="nCancelarClave">Cancelar</button>`}</div></div>`;
+}
+function vBloqueada() {
+  return `<div class="stack" style="max-width:420px;margin:0 auto"><h1>Cuenta bloqueada</h1><div class="empty"><span>Esta cuenta está bloqueada. Habla con quien gestiona tu campaña.</span></div><button class="btn" data-act="nSalir" style="align-self:center">Salir</button></div>`;
+}
+
+/* ---------- Gestión de usuarios (superadministrador y creadores) ---------- */
+const nPuedeUsuarios = () => NUBE.superadmin || !!NUBE.perfil?.puede_crear_campanas || NUBE.campanas.some(c => (c.roles || []).includes("creador"));
+const ROL_ALTA = [["admin", "Administrador · solo consulta"], ["admin+", "Administrador · consulta y edita jornadas y cuentas"], ["jefe", "Jefe de equipo · ve a su equipo"], ["trabajador", "Trabajador · ve lo suyo"], ["dueno", "Dueño de finca · ve su cuenta"]];
+function vUsuarios() {
+  const U = NUBE.usuarios, camps = NUBE.campanas.filter(c => NUBE.superadmin || (c.roles || []).includes("creador"));
+  const f = NUBE.altaForm ||= { tipo: "miembro", campana: camps[0]?.campana_id || "", rol: "trabajador" };
+  if (f.tipo === "miembro" && !camps.some(c => c.campana_id === f.campana)) f.campana = camps[0]?.campana_id || "";
+  const fichas = NUBE.fichas?.[f.campana], conFicha = f.rol === "trabajador" || f.rol === "dueno";
+  return `<div class="stack"><div class="head"><div><div class="lbl">${NUBE.superadmin ? "Superadministrador" : "Creador"}</div><h1>Gestión de usuarios</h1></div><a class="btn ghost" href="#campanas">Volver</a></div>
+  <section class="card stack" id="fusuario"><h2>Crear usuario</h2>
+   <div class="hint">Se genera una contraseña temporal que solo se muestra una vez. Entrégasela en persona: al entrar por primera vez tendrá que poner una propia. No se envía ningún correo.</div>
+   <div class="grid2">
+    <label class="f"><span>Nombre y apellidos</span><input name="nombre" autocomplete="off" value="${esc(f.nombre || "")}"></label>
+    <label class="f"><span>Nombre de usuario</span><input name="usuario" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ej. juan.perez" value="${esc(f.usuario || "")}"></label>
+    ${NUBE.superadmin ? `<label class="f"><span>Tipo de cuenta</span><select name="tipo" data-fu="tipo"><option value="miembro" ${f.tipo === "miembro" ? "selected" : ""}>Persona de una campaña</option><option value="creador" ${f.tipo === "creador" ? "selected" : ""}>Creador de campañas (gestor de cuadrilla)</option></select></label>` : ""}
+    ${f.tipo === "miembro" ? `<label class="f"><span>Campaña</span><select name="campana" data-fu="campana">${camps.map(c => `<option value="${esc(c.campana_id)}" ${c.campana_id === f.campana ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
+    <label class="f"><span>Rol</span><select name="rol" data-fu="rol">${ROL_ALTA.map(([k, t]) => `<option value="${k}" ${k === f.rol ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+    ${conFicha ? `<label class="f"><span>Ficha de ${f.rol === "dueno" ? "dueño" : "trabajador"}</span><select name="ficha">${fichas ? (fichas[f.rol] || []).map(x => `<option value="${x.id}">${esc(x.nombre)}</option>`).join("") || `<option value="">No hay fichas sin cuenta: añádelas en Personas</option>` : `<option value="">Cargando…</option>`}</select></label>` : ""}` : ""}
+   </div>
+   ${f.tipo === "miembro" && !camps.length ? `<div class="hint">Primero crea una campaña.</div>` : ""}
+   <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nCrearUsuario">${ic("mas")}Crear usuario</button></div></section>
+  <section class="stack"><h2>Cuentas</h2>${!U ? `<div class="empty"><b>Cargando…</b></div>` : U.length ? `<div class="list">${U.map(vUsuarioFila).join("")}</div>` : `<div class="empty"><span>Todavía no hay cuentas.</span></div>`}</section></div>`;
+}
+function vUsuarioFila(u) {
+  const estado = u.bloqueado ? ` <span class="pill p-ausente">Bloqueada</span>` : u.debe_cambiar_clave ? ` <span class="pill p-gris">Contraseña temporal</span>` : "";
+  const camp = (u.campanas || []).map(m => `${esc(m.campana)}: ${ROL_TXT[m.rol]}${m.rol === "admin" ? (m.puede_editar ? " (edita)" : " (consulta)") : ""}${u.gestionable && m.rol === "admin" ? ` <button class="btn ghost sm" data-act="nEditorToggle" data-id="${m.miembro_id}" data-v="${m.puede_editar ? 0 : 1}">${m.puede_editar ? "Quitar edición" : "Dar edición"}</button>` : ""}`).join(" · ");
+  const global = u.es_superadmin ? "Superadministrador" : u.puede_crear_campanas ? "Creador de campañas" : "";
+  return `<div class="mrow" style="flex-wrap:wrap" data-usuario="${esc(u.usuario || "")}"><div class="grow"><b>${esc(u.nombre)}</b> <span class="muted small">${u.usuario ? "@" + esc(u.usuario) : ""}</span>${estado}
+    <div class="muted small">${[global, camp].filter(Boolean).join(" · ")}</div></div>
+    ${u.gestionable && u.usuario && u.id !== NUBE.sesion.user.id ? `<div class="row"><button class="btn ghost sm" data-act="nRestablecer" data-u="${esc(u.usuario)}">Restablecer contraseña</button><button class="btn ghost sm ${u.bloqueado ? "" : "danger"}" data-act="nBloquear" data-u="${esc(u.usuario)}" data-v="${u.bloqueado ? 0 : 1}">${u.bloqueado ? "Desbloquear" : "Bloquear"}</button></div>` : ""}</div>`;
+}
+nAfter.usuarios = async () => {
+  const box = $("#fusuario");
+  if (box) box.onchange = e => { if (!e.target.dataset.fu) return; NUBE.altaForm = { ...NUBE.altaForm, ...leer("#fusuario") }; render(); };
+  if (!NUBE.usuarios) { try { NUBE.usuarios = await nq(NUBE.sb.rpc("usuarios_gestionados")); } catch (e) { NUBE.usuarios = []; toast(nubeMsg(e)); } if (location.hash === "#usuarios") render(); return; }
+  const f = NUBE.altaForm;
+  if (f?.tipo === "miembro" && f.campana && !NUBE.fichas?.[f.campana]) {
+    try {
+      const c = f.campana, [t, d, m] = await Promise.all([nq(NUBE.sb.from("trabajadores").select("id, nombre").eq("campana_id", c).eq("activo", true).order("nombre")),
+        nq(NUBE.sb.from("duenos").select("id, nombre").eq("campana_id", c).order("nombre")), nq(NUBE.sb.from("miembros").select("trabajador_id, dueno_id").eq("campana_id", c).eq("activo", true))]);
+      (NUBE.fichas ||= {})[c] = { trabajador: t.filter(x => !m.some(y => y.trabajador_id === x.id)), dueno: d.filter(x => !m.some(y => y.dueno_id === x.id)) };
+      if (location.hash === "#usuarios") render();
+    } catch (e) { toast(nubeMsg(e)); }
+  }
+};
+function nMostrarClave(titulo, nombre, usuario, clave) {
+  openModal(`<div class="stack"><h2>${esc(titulo)}</h2><div class="hint">${nombre ? esc(nombre) + " · " : ""}Entrégale estos datos en persona. La contraseña es temporal y no se volverá a mostrar: al entrar tendrá que poner una propia.</div>
+   <div class="card stack" style="gap:6px"><div>Usuario: <b id="credUsuario" style="user-select:all">${esc(usuario)}</b></div><div>Contraseña temporal: <b id="codigoInv" style="font-family:var(--f-display);font-size:24px;letter-spacing:.06em;user-select:all">${esc(clave)}</b></div></div>
+   <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar contraseña</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
 }
 function vNCampanas() {
   const p = NUBE.perfil, puede = NUBE.superadmin || p?.puede_crear_campanas, y = new Date().getFullYear();
-  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || NUBE.sesion.user.email)}</div><h1>Tus campañas</h1></div>${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div>
+  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || usuarioDe(NUBE.sesion.user.email))}</div><h1>Tus campañas</h1></div><div class="row">${nPuedeUsuarios() ? `<a class="btn" href="#usuarios">${ic("trabajadores")}Gestión de usuarios</a>` : ""}${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div></div>
   ${NUBE.campanas.length ? `<div class="list">${NUBE.campanas.map(c => `<button class="li" data-act="nElegir" data-id="${esc(c.campana_id)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="muted small">${esc((c.roles || []).map(r => ROL_TXT[r]).join(" · ") || "Superadministrador")}</div></div></button>`).join("")}</div>`
-    : `<div class="empty"><b>Aún no estás en ninguna campaña</b><span>Pide a quien gestiona la campaña un código de invitación y escríbelo abajo.</span></div>`}
-  <section class="card stack" id="fcodigo"><h2>Unirme con un código</h2><div class="row"><input name="codigo" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1 1 220px;text-transform:uppercase"><button class="btn pri" data-act="nCanjear">Unirme</button></div></section>
+    : `<div class="empty"><b>Aún no tienes ninguna campaña</b><span>${puede ? "Crea la primera abajo." : "Pide acceso a quien gestiona tu campaña."}</span></div>`}
   ${puede ? `<section class="card stack" id="fnueva"><h2>Nueva campaña</h2>
     <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="Campaña ${y}"></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${y}"></label><label class="f"><span>Inicio</span><input type="date" name="inicio" value="${hoy()}"></label></div>
     <div class="grid2"><label class="f"><span>Horas de un día normal</span><input name="horas" inputmode="decimal" value="7,5"></label><label class="f"><span>€/hora al trabajador</span><input name="ptrab" inputmode="decimal" value="10"></label><label class="f"><span>€/hora al dueño</span><input name="pdueno" inputmode="decimal" value="10"></label><label class="f"><span>IVA (%)</span><input name="iva" inputmode="decimal" value="0"></label></div>
@@ -1893,7 +1938,7 @@ function vNCampanas() {
 function vNAjustes() {
   const p = NUBE.perfil;
   return `<div class="stack"><h1>Ajustes</h1>
-  <section class="card stack" id="fperfil"><h2>Tu cuenta</h2><div class="muted small">${esc(NUBE.sesion.user.email)}${NUBE.superadmin ? " · superadministrador" : ""}</div>
+  <section class="card stack" id="fperfil"><h2>Tu cuenta</h2><div class="muted small">Usuario: ${esc(usuarioDe(NUBE.sesion.user.email))}${NUBE.superadmin ? " · superadministrador" : ""}</div>
    <label class="f"><span>Tu nombre (lo ven quienes gestionan tus campañas)</span><input name="nombre" value="${esc(p?.nombre || "")}"></label>
    <div class="row between"><button class="btn danger" data-act="nSalir">Cerrar sesión</button><span class="row"><button class="btn" data-act="nCambiarClave">Cambiar contraseña</button><button class="btn pri" data-act="nGuardarPerfil">Guardar nombre</button></span></div></section>
   ${NUBE.c ? `<section class="card stack"><h2>Campaña ${esc(NUBE.c.nombre)}</h2><div class="muted small">Tus roles: ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><a class="btn" href="#campanas" style="align-self:flex-start">Cambiar de campaña</a></section>` : ""}
@@ -1917,9 +1962,9 @@ function vNInicio() {
   const kilos = d.partes.reduce((s, p) => s + (+p.kilos || 0), 0);
   return `<div class="stack"><div class="head"><div><div class="lbl">Campaña · ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><h1>${esc(d.campana.nombre)}</h1>
    <div class="muted small">Jornada de ${fH(nHd())}${d.eco ? ` · ${eurosC(d.eco.precio_hora_trab_cent)}/h trabajador · ${eurosC(d.eco.precio_hora_dueno_cent)}/h dueño` : ""}</div></div>
-   ${nGestiona() ? `<a class="btn pri" href="#n-parte">${ic("partes")}Parte de hoy</a>` : `<span class="pill p-gris">Solo lectura</span>`}</div>
+   ${nEdita() ? `<a class="btn pri" href="#n-parte">${ic("partes")}Parte de hoy</a>` : `<span class="pill p-gris">Solo lectura</span>`}</div>
   <div class="kpis"><div class="kpi"><span class="lbl">Días con parte</span><b>${new Set(d.partes.map(p => p.fecha)).size}</b></div><div class="kpi"><span class="lbl">Horas totales</span><b>${fN(horas)}</b></div><div class="kpi"><span class="lbl">Ganado por trabajadores</span><b>${eurosC(ganado)}</b></div><div class="kpi"><span class="lbl">Falta pagarles</span><b>${eurosC(ganado - entregado)}</b></div><div class="kpi"><span class="lbl">Kilos anotados</span><b>${fN(kilos, 0)}</b></div></div>
-  <section class="stack"><h2>Últimos partes</h2>${d.partes.length ? `<div class="list">${d.partes.slice(0, 15).map(p => { const fs = d.filas.filter(f => f.parte_id === p.id && f.tipo !== "ausente"); return `<${nGestiona() ? `button class="li" data-act="nAbrirParte" data-d="${p.dueno_id}" data-f="${p.fecha}"` : `div class="li"`}><div class="grow"><div class="t">${esc(nDueno(p.dueno_id)?.nombre || "—")}</div><div class="muted small">${fFecha(p.fecha)} · ${fs.length} trabajadores${p.kilos ? " · " + fN(p.kilos, 0) + " kg" : ""}</div></div><span class="pill p-ok">${fH(fs.reduce((s, f) => s + hFila(f, nHd()), 0))}</span></${nGestiona() ? "button" : "div"}>`; }).join("")}</div>` : `<div class="empty"><span>Todavía no hay partes.</span></div>`}</section></div>`;
+  <section class="stack"><h2>Últimos partes</h2>${d.partes.length ? `<div class="list">${d.partes.slice(0, 15).map(p => { const fs = d.filas.filter(f => f.parte_id === p.id && f.tipo !== "ausente"); return `<${nEdita() ? `button class="li" data-act="nAbrirParte" data-d="${p.dueno_id}" data-f="${p.fecha}"` : `div class="li"`}><div class="grow"><div class="t">${esc(nDueno(p.dueno_id)?.nombre || "—")}</div><div class="muted small">${fFecha(p.fecha)} · ${fs.length} trabajadores${p.kilos ? " · " + fN(p.kilos, 0) + " kg" : ""}</div></div><span class="pill p-ok">${fH(fs.reduce((s, f) => s + hFila(f, nHd()), 0))}</span></${nEdita() ? "button" : "div"}>`; }).join("")}</div>` : `<div class="empty"><span>Todavía no hay partes.</span></div>`}</section></div>`;
 }
 // Parte: el borrador se guarda en memoria para que una recarga en tiempo real no borre lo que se está escribiendo
 function nBorrador() {
@@ -2000,14 +2045,10 @@ function vNPersonas() {
    ${g ? `<div class="row" id="fndueno"><input name="nombre" placeholder="Nombre del dueño" style="flex:2 1 180px"><input name="finca" placeholder="Finca (opcional)" style="flex:1 1 120px"><button class="btn" data-act="nAltaDueno">${ic("mas")}Añadir</button></div>` : ""}</section>
   <section class="stack"><h2>Cuentas con acceso</h2>
    <div class="list">${d.miembros.filter(m => m.activo).map(m => `<div class="mrow"><div class="grow"><b>${esc(nom(m.user_id))}</b><div class="muted small">${ROL_TXT[m.rol]}${m.trabajador_id ? " · " + esc(nTrab(m.trabajador_id)?.nombre || "") : ""}${m.dueno_id ? " · " + esc(nDueno(m.dueno_id)?.nombre || "") : ""}</div></div>${g && (m.rol !== "creador" || NUBE.superadmin) ? `<button class="btn ghost sm danger" data-act="nQuitarMiembro" data-id="${m.id}">Quitar</button>` : ""}</div>`).join("")}</div>
-   ${g ? `<div class="card stack" id="fninv"><b>Invitar a alguien</b><div class="hint">Se genera un código de un solo uso que caduca en 7 días. Pásalo por WhatsApp o en persona; la otra persona crea su cuenta y lo escribe en «Unirme con un código».</div>
-     <div class="grid2"><label class="f"><span>Rol</span><select name="rol"><option value="trabajador">Trabajador (solo ve lo suyo)</option><option value="dueno">Dueño (solo ve su cuenta)</option><option value="jefe">Jefe de equipo (ve a su equipo)</option><option value="admin">Administrador (lee toda la campaña)</option>${NUBE.superadmin ? `<option value="creador">Creador</option>` : ""}</select></label>
-     <label class="f"><span>Ficha (trabajador o dueño)</span><select name="ficha"><option value="">—</option>${d.trab.map(t => `<option value="t:${t.id}">${esc(t.nombre)}</option>`).join("")}${d.duenos.map(x => `<option value="d:${x.id}">${esc(x.nombre)} (dueño)</option>`).join("")}</select></label></div>
-     <button class="btn pri" data-act="nInvitar" style="align-self:flex-start">Generar código</button></div>` : ""}
-   ${g && d.inv?.length ? `<div class="stack" style="gap:6px"><b>Invitaciones sin usar</b><div class="list">${d.inv.map(i => `<div class="mrow"><div class="grow"><b>${ROL_TXT[i.rol]}${i.trabajador_id ? " · " + esc(nTrab(i.trabajador_id)?.nombre || "") : ""}${i.dueno_id ? " · " + esc(nDueno(i.dueno_id)?.nombre || "") : ""}</b><div class="muted small">caduca el ${fFechaL(String(i.caduca_en).slice(0, 10))}</div></div><button class="btn ghost sm danger" data-act="nAnularInv" data-id="${i.id}">Anular</button></div>`).join("")}</div></div>` : ""}</section>
+   ${g ? `<a class="btn" href="#usuarios" style="align-self:flex-start">${ic("trabajadores")}Crear cuentas en «Gestión de usuarios»</a>` : ""}</section>
   <section class="stack"><h2>Equipos (jefe → trabajadores)</h2>
    <div class="list">${d.asig.map(a => `<div class="mrow"><div class="grow"><b>${esc(nom(a.jefe_user_id))} → ${esc(nTrab(a.trabajador_id)?.nombre || "")}</b><div class="muted small">desde ${fFechaL(a.desde)}${a.hasta ? " hasta " + fFechaL(a.hasta) : " · vigente"}</div></div>${g && !a.hasta ? `<button class="btn ghost sm" data-act="nCerrarAsig" data-id="${a.id}">Terminar hoy</button>` : ""}</div>`).join("") || `<div class="mrow muted">Sin equipos.</div>`}</div>
-   ${g && jefes.length ? `<div class="row" id="fnasig"><select name="jefe" style="flex:1 1 140px">${jefes.map(m => `<option value="${m.user_id}">${esc(nom(m.user_id))}</option>`).join("")}</select><select name="trab" style="flex:1 1 140px">${d.trab.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}</select><input type="date" name="desde" value="${hoy()}" style="flex:0 1 150px"><button class="btn" data-act="nAsignar">Asignar</button></div>` : g ? `<div class="hint">Invita primero a un jefe de equipo para poder asignarle trabajadores.</div>` : ""}</section></div>`;
+   ${g && jefes.length ? `<div class="row" id="fnasig"><select name="jefe" style="flex:1 1 140px">${jefes.map(m => `<option value="${m.user_id}">${esc(nom(m.user_id))}</option>`).join("")}</select><select name="trab" style="flex:1 1 140px">${d.trab.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}</select><input type="date" name="desde" value="${hoy()}" style="flex:0 1 150px"><button class="btn" data-act="nAsignar">Asignar</button></div>` : g ? `<div class="hint">Crea primero la cuenta de un jefe de equipo en «Gestión de usuarios».</div>` : ""}</section></div>`;
 }
 
 /* ---------- Cuentas (trabajadores y dueños) ---------- */
@@ -2060,10 +2101,10 @@ function vNGlobal() {
   return `<div class="stack"><h1>Panel global</h1>
   <div class="kpis"><div class="kpi"><span class="lbl">Usuarios</span><b>${g.est.usuarios}</b></div><div class="kpi"><span class="lbl">Activos</span><b>${g.est.usuarios_activos}</b></div><div class="kpi"><span class="lbl">Campañas</span><b>${g.est.campanas}</b></div><div class="kpi"><span class="lbl">Partes</span><b>${g.est.partes}</b></div><div class="kpi"><span class="lbl">Base de datos</span><b>${fN(g.est.tamano_bd_bytes / 1048576, 1)} MB</b></div></div>
   <div class="hint">Plan gratuito de Supabase: 500 MB de base de datos y 1 GB de fotos.</div>
-  <section class="card stack"><h2>Nuevos creadores de campaña</h2><div class="hint">Solo tú puedes autorizar a alguien a crear campañas. Genera un código de un solo uso y entrégaselo en persona o por mensaje.</div><button class="btn pri" data-act="nAutorizarCreador" style="align-self:flex-start">${ic("mas")}Autorizar un creador</button></section>
-  <section class="stack"><h2>Usuarios</h2><div class="list">${g.usuarios.map(u => `<div class="mrow"><div class="grow"><b>${esc(u.nombre || u.email)}</b><div class="muted small">${esc(u.email)} · ${u.campanas} campañas${u.ultimo_acceso ? " · último acceso " + fFechaL(String(u.ultimo_acceso).slice(0, 10)) : ""}</div></div>
+  <section class="card stack"><h2>Cuentas</h2><div class="hint">Crea creadores de campañas, restablece contraseñas y bloquea cuentas en «Gestión de usuarios».</div><a class="btn pri" href="#usuarios" style="align-self:flex-start">${ic("trabajadores")}Gestión de usuarios</a></section>
+  <section class="stack"><h2>Usuarios</h2><div class="list">${g.usuarios.map(u => `<div class="mrow"><div class="grow"><b>${esc(u.nombre || usuarioDe(u.email))}</b><div class="muted small">@${esc(usuarioDe(u.email))} · ${u.campanas} campañas${u.ultimo_acceso ? " · último acceso " + fFechaL(String(u.ultimo_acceso).slice(0, 10)) : ""}</div></div>
    <label class="row small" style="gap:4px"><input type="checkbox" data-act2="crear" data-id="${u.id}" ${u.puede_crear_campanas ? "checked" : ""}> crea campañas</label>
-   <label class="row small" style="gap:4px"><input type="checkbox" data-act2="activo" data-id="${u.id}" ${u.activo ? "checked" : ""} ${u.id === NUBE.sesion.user.id ? "disabled" : ""}> activo</label></div>`).join("")}</div></section></div>`;
+   ${u.activo ? "" : `<span class="pill p-gris">Sin acceso</span>`}</div>`).join("")}</div></section></div>`;
 }
 nAfter.global = async () => {
   if (!NUBE.global) { try { NUBE.global = { est: await nq(NUBE.sb.rpc("admin_estadisticas")), usuarios: await nq(NUBE.sb.rpc("admin_usuarios")) }; render(); } catch (e) { toast(nubeMsg(e)); } return; }
@@ -2076,78 +2117,70 @@ nAfter.global = async () => {
 
 /* ---------- Acciones del modo cuenta ---------- */
 Object.assign(A, {
-  nAlta() { NUBE.alta = !NUBE.alta; render(); },
   async nEntrar() {
-    const f = $("#fentrar"), email = $('[name="email"]', f).value.trim(), password = $('[name="password"]', f).value, nombre = $('[name="nombre"]', f)?.value.trim();
-    if (!email || !password) return toast("Escribe el correo y la contraseña");
+    const f = $("#fentrar"), usuario = $('[name="usuario"]', f).value.trim().toLowerCase(), password = $('[name="password"]', f).value;
+    if (!usuario || !password) return toast("Escribe el usuario y la contraseña");
+    if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(usuario)) return toast("Usuario o contraseña incorrectos.");
     if (nSinRed()) return;
-    if (NUBE.alta) {
-      const codigo = $('[name="codigo"]', f).value.trim().toUpperCase();
-      if (!codigo) return toast("Escribe el código de invitación");
-      if (!nombre) return toast("Escribe tu nombre"); if (password.length < 8) return toast("La contraseña debe tener al menos 8 caracteres");
-      // El servidor comprueba el código, lo gasta y da el acceso al crear la cuenta (la app no decide nada)
-      const r = await NUBE.sb.auth.signUp({ email, password, options: { data: { nombre, codigo_invitacion: codigo } } });
-      if (r.error) return toast(nubeMsg(r.error));
-      // Con «Confirm email», Supabase no revela si el correo ya existía: devuelve un usuario sin identidades
-      if (!r.data.session && r.data.user && !(r.data.user.identities || []).length) return toast("Ya existe una cuenta con ese correo. Entra con tu contraseña o recupérala.");
-      if (!r.data.session) { NUBE.verificar = { email, tipo: "email", enviado: Date.now(), fallos: 0 }; NUBE.alta = false; render(); return toast("Te hemos enviado un código a tu correo"); }
-    } else {
-      const r = await NUBE.sb.auth.signInWithPassword({ email, password });
-      if (r.error && (r.error.code === "email_not_confirmed" || /Email not confirmed/i.test(r.error.message))) { NUBE.verificar = { email, tipo: "email", enviado: 0, fallos: 0 }; render(); return toast(nubeMsg(r.error)); }
-      if (r.error) return toast(nubeMsg(r.error));
-    }
-    NUBE.alta = false; toast("Sesión iniciada");
-  },
-  async nVerificar() {
-    const v = NUBE.verificar; if (!v || nSinRed()) return;
-    const token = $('#fverificar [name="token"]').value.replace(/\D/g, "");
-    if (token.length < 6) return toast("Escribe el código que te ha llegado por correo");
-    if (v.fallos >= MAX_FALLOS) return toast("Demasiados intentos con este código: pide otro.");
-    if (v.tipo === "recovery") NUBE.nuevaClave = true;                        // antes de que llegue la sesión
-    const r = await NUBE.sb.auth.verifyOtp({ email: v.email, token, type: v.tipo });
-    if (r.error) { if (v.tipo === "recovery") NUBE.nuevaClave = false; v.fallos++; return toast(nubeMsg(r.error)); }
-    NUBE.verificar = null; NUBE.alta = false; NUBE.olvido = false;
-    toast(v.tipo === "recovery" ? "Código correcto: elige tu contraseña nueva" : "Correo confirmado");
-    if (r.data?.session && !NUBE.sesion) { NUBE.sesion = r.data.session; await nubeTrasSesion(); } else render();
-  },
-  async nReenviar() {
-    const v = NUBE.verificar; if (!v || nSinRed()) return;
-    if (Date.now() - (v.enviado || 0) < REENVIO_S * 1000) return toast("Espera un poco para pedir otro código");
-    const r = v.tipo === "recovery" ? await NUBE.sb.auth.resetPasswordForEmail(v.email) : await NUBE.sb.auth.resend({ type: "signup", email: v.email });
+    const r = await NUBE.sb.auth.signInWithPassword({ email: emailDe(usuario), password });
     if (r.error) return toast(nubeMsg(r.error));
-    Object.assign(v, { enviado: Date.now(), fallos: 0 }); toast("Te hemos enviado otro código"); render();
-  },
-  nVolverEntrar() { NUBE.verificar = null; NUBE.olvido = false; NUBE.nuevaClave = false; clearTimeout(NUBE.tReenvio); render(); },
-  nOlvide() { NUBE.olvido = true; NUBE.alta = false; render(); },
-  async nPedirRecuperacion() {
-    const email = $('#folvido [name="email"]').value.trim(); if (!/^\S+@\S+\.\S+$/.test(email)) return toast("Escribe tu correo"); if (nSinRed()) return;
-    const r = await NUBE.sb.auth.resetPasswordForEmail(email);
-    if (r.error) return toast(nubeMsg(r.error));
-    NUBE.olvido = false; NUBE.verificar = { email, tipo: "recovery", enviado: Date.now(), fallos: 0 }; render();
-    toast("Si existe una cuenta con ese correo, te llegará un código");
+    toast("Sesión iniciada");
   },
   async nGuardarClave() {
-    const f = $("#fclave"), p1 = $('[name="p1"]', f).value, p2 = $('[name="p2"]', f).value;
-    if (p1.length < 8) return toast("La contraseña debe tener al menos 8 caracteres"); if (p1 !== p2) return toast("Las dos contraseñas no coinciden"); if (nSinRed()) return;
-    const r = await NUBE.sb.auth.updateUser({ password: p1 });
-    if (r.error) return toast(nubeMsg(r.error));
-    NUBE.nuevaClave = false; toast("Contraseña cambiada"); render();
+    const f = $("#fclave"), actual = $('[name="actual"]', f).value, p1 = $('[name="p1"]', f).value, p2 = $('[name="p2"]', f).value;
+    if (!actual) return toast("Escribe tu contraseña actual");
+    if (p1.length < 8) return toast("La contraseña debe tener al menos 8 caracteres"); if (p1 !== p2) return toast("Las dos contraseñas no coinciden");
+    if (p1 === actual) return toast("La contraseña nueva debe ser distinta de la anterior"); if (nSinRed()) return;
+    try {
+      await nFuncion({ accion: "cambiar_clave", actual, nueva: p1 });
+      // Al cambiar la contraseña, Supabase cierra las sesiones anteriores: se entra de nuevo con la nueva
+      const email = NUBE.sesion.user.email; NUBE.nuevaClave = false;
+      const r = await NUBE.sb.auth.signInWithPassword({ email, password: p1 });
+      if (r.error) { toast("Contraseña cambiada. Vuelve a entrar con la nueva."); await NUBE.sb.auth.signOut({ scope: "local" }); return; }
+      NUBE.sesion = r.data.session; toast("Contraseña guardada"); await nubeTrasSesion();
+    } catch (e) { toast(nubeMsg(e)); }
   },
   nCancelarClave() { NUBE.nuevaClave = false; render(); },
   nCambiarClave() { NUBE.nuevaClave = true; render(); },
+  async nCrearUsuario() {
+    const f = { ...NUBE.altaForm, ...leer("#fusuario") }; NUBE.altaForm = f;
+    const usuario = String(f.usuario || "").trim().toLowerCase(), nombre = String(f.nombre || "").trim();
+    if (!nombre) return toast("Escribe el nombre de la persona");
+    if (!/^[a-z0-9][a-z0-9._-]{2,29}$/.test(usuario)) return toast("Usuario: de 3 a 30 caracteres; letras sin tilde, números, punto o guion");
+    const cuerpo = { accion: "crear", nombre, usuario, tipo: f.tipo || "miembro" };
+    if (cuerpo.tipo === "miembro") {
+      if (!f.campana) return toast("Elige la campaña");
+      Object.assign(cuerpo, { campana: f.campana, rol: f.rol === "admin+" ? "admin" : f.rol, editor: f.rol === "admin+" });
+      if (f.rol === "trabajador" || f.rol === "dueno") { if (!f.ficha) return toast("Elige la ficha"); cuerpo[f.rol] = f.ficha; }
+    }
+    if (nSinRed()) return;
+    try {
+      const r = await nFuncion(cuerpo);
+      NUBE.altaForm = { tipo: f.tipo, campana: f.campana, rol: f.rol }; NUBE.usuarios = null; if (NUBE.fichas) delete NUBE.fichas[f.campana];
+      if (cuerpo.campana && cuerpo.campana === NUBE.c?.campana_id) nubeRecargar();
+      render(); nMostrarClave("Usuario creado", nombre, r.usuario, r.clave_temporal);
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  nRestablecer(el) {
+    confirmar(`¿Generar una contraseña temporal nueva para @${el.dataset.u}? La actual dejará de servir y no tendrá acceso hasta poner una propia.`, async () => {
+      try { const r = await nFuncion({ accion: "restablecer", usuario: el.dataset.u }); NUBE.usuarios = null; nMostrarClave("Contraseña restablecida", "", r.usuario, r.clave_temporal); } catch (e) { toast(nubeMsg(e)); }
+    }, "Generar");
+  },
+  nBloquear(el) {
+    const b = el.dataset.v === "1";
+    confirmar(b ? `¿Bloquear a @${el.dataset.u}? Perderá el acceso al momento en todos sus dispositivos.` : `¿Desbloquear a @${el.dataset.u}?`, async () => {
+      try { await nFuncion({ accion: "bloquear", usuario: el.dataset.u, bloquear: b }); NUBE.usuarios = null; toast(b ? "Cuenta bloqueada" : "Cuenta desbloqueada"); } catch (e) { toast(nubeMsg(e)); }
+    }, b ? "Bloquear" : "Desbloquear");
+  },
+  async nEditorToggle(el) {
+    if (nSinRed()) return;
+    try { const r = await nq(NUBE.sb.from("miembros").update({ puede_editar: el.dataset.v === "1" }).eq("id", el.dataset.id).select("id")); if (!r.length) throw new Error("PERMISO"); NUBE.usuarios = null; toast("Permiso actualizado"); render(); }
+    catch (e) { toast(nubeMsg(e)); }
+  },
   nSalir() { confirmar("¿Cerrar la sesión en este dispositivo?", async () => { nubeDesuscribir(); await NUBE.sb.auth.signOut(); history.replaceState(null, "", "#"); }, "Cerrar sesión"); },
   nSinCuenta() { confirmar("La app se usará sin cuenta y los datos quedarán solo en este dispositivo. Puedes volver a entrar con tu cuenta desde Ajustes.", async () => { try { localStorage.setItem(PREF_MODO, "local"); } catch (e) { } location.hash = ""; location.reload(); }, "Usar sin cuenta"); },
   nConCuenta() { try { localStorage.setItem(PREF_MODO, "cuenta"); } catch (e) { } location.hash = ""; location.reload(); },
   async nElegir(el) { await nubeElegir(el.dataset.id); },
-  async nCanjear() {
-    const c = $('#fcodigo [name="codigo"]').value.trim(); if (!c) return toast("Escribe el código"); if (nSinRed()) return;
-    try {
-      const id = await nq(NUBE.sb.rpc("canjear_invitacion", { p_codigo: c }));
-      if (!id) { NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, activo, puede_crear_campanas").eq("id", NUBE.sesion.user.id).maybeSingle()); toast("Ya puedes crear campañas"); return render(); }   // código de creador
-      NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas")); toast("Te has unido a la campaña"); await nubeElegir(id);
-    }
-    catch (e) { toast(nubeMsg(e)); }
-  },
   async nCrearCampana() {
     const f = leer("#fnueva"); if (!f.nombre) return toast("Pon un nombre a la campaña"); if (nSinRed()) return;
     try {
@@ -2187,32 +2220,7 @@ Object.assign(A, {
     const f = leer("#fndueno"); if (!f.nombre) return toast("Escribe el nombre"); if (nSinRed()) return;
     try { await nq(NUBE.sb.from("duenos").insert({ campana_id: NUBE.c.campana_id, nombre: f.nombre, finca: f.finca || null, num: NUBE.d.duenos.length + 1 })); await nubeCargar(); toast("Dueño añadido"); render(); } catch (e) { toast(nubeMsg(e)); }
   },
-  async nInvitar() {
-    const f = leer("#fninv"), [k, id] = (f.ficha || "").split(":");
-    if (f.rol === "trabajador" && k !== "t") return toast("Elige la ficha del trabajador");
-    if (f.rol === "dueno" && k !== "d") return toast("Elige la ficha del dueño");
-    if (nSinRed()) return;
-    try {
-      const codigo = await nq(NUBE.sb.rpc("crear_invitacion", { p_campana: NUBE.c.campana_id, p_rol: f.rol, p_trabajador: f.rol === "trabajador" ? id : null, p_dueno: f.rol === "dueno" ? id : null, p_dias: 7 }));
-      await nubeCargar(); render();
-      openModal(`<div class="stack"><h2>Código de invitación</h2><div class="hint">${ROL_TXT[f.rol]}${id ? " · " + esc((nTrab(id) || nDueno(id))?.nombre || "") : ""} · un solo uso · caduca en 7 días</div>
-        <div style="font-family:var(--f-display);font-size:32px;letter-spacing:.08em;text-align:center;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;user-select:all" id="codigoInv">${esc(codigo)}</div>
-        <div class="hint">Cópialo ahora: por seguridad no se guarda y no se puede volver a ver. Si se pierde, genera otro.</div>
-        <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
-    } catch (e) { toast(nubeMsg(e)); }
-  },
-  nAnularInv(el) { confirmar("¿Anular esta invitación? El código dejará de servir para crear cuenta o unirse.", async () => { if (nSinRed()) return; try { const r = await nq(NUBE.sb.from("invitaciones").update({ revocada: true }).eq("id", el.dataset.id).select("id")); if (!r.length) throw new Error("PERMISO"); await nubeCargar(); toast("Invitación anulada"); render(); } catch (e) { toast(nubeMsg(e)); } }, "Anular"); },
-  async nAutorizarCreador() {
-    if (nSinRed()) return;
-    try {
-      const codigo = await nq(NUBE.sb.rpc("crear_autorizacion_creador", { p_dias: 7 }));
-      openModal(`<div class="stack"><h2>Autorización de creador</h2><div class="hint">Permite crear campañas · un solo uso · caduca en 7 días. Sirve para crear una cuenta nueva o, con una cuenta existente, en «Unirme con un código».</div>
-        <div style="font-family:var(--f-display);font-size:32px;letter-spacing:.08em;text-align:center;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:10px;user-select:all" id="codigoInv">${esc(codigo)}</div>
-        <div class="hint">Cópialo ahora: por seguridad no se guarda y no se puede volver a ver. Entrégalo solo a la persona autorizada.</div>
-        <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
-    } catch (e) { toast(nubeMsg(e)); }
-  },
-  async nCopiarCodigo() { try { await navigator.clipboard.writeText($("#codigoInv").innerText.trim()); toast("Código copiado"); } catch (e) { toast("Selecciónalo y cópialo a mano"); } },
+  async nCopiarCodigo() { try { await navigator.clipboard.writeText($("#codigoInv").innerText.trim()); toast("Copiada"); } catch (e) { toast("Selecciónala y cópiala a mano"); } },
   nQuitarMiembro(el) { confirmar("¿Quitar el acceso de esta cuenta a la campaña? Sus datos (horas, pagos) se conservan.", async () => { if (nSinRed()) return; try { await nq(NUBE.sb.from("miembros").delete().eq("id", el.dataset.id)); await nubeCargar(); toast("Acceso retirado"); } catch (e) { toast(nubeMsg(e)); } }, "Quitar acceso"); },
   async nAsignar() {
     const f = leer("#fnasig"); if (nSinRed()) return;

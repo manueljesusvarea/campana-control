@@ -545,7 +545,7 @@ prueba("migracion-v3", "Versión 3.0 con cuenta configurada: un dispositivo con 
     const recargarSin = async w => { await w.webContents.reload(); await new Promise(r => w.webContents.once("did-finish-load", r)); };
     // 1) Dispositivo nuevo: pantalla de entrar
     const nuevo = await abrir("m3-nuevo", { esperarApp: false }); await modo(nuevo, "cuenta");
-    const pantalla = await ev(nuevo, `return { entrar: !!document.querySelector("#fentrar [name=email]"), sinCuenta: !!document.querySelector('[data-act="nSinCuenta"]') };`);
+    const pantalla = await ev(nuevo, `return { entrar: !!document.querySelector("#fentrar [name=usuario]"), sinCuenta: !!document.querySelector('[data-act="nSinCuenta"]') };`);
     ok(pantalla.entrar && pantalla.sinCuenta, "dispositivo nuevo sin pantalla de entrar: " + JSON.stringify(pantalla));
     // 2) Dispositivo que ya usaba la 2.3.0 (datos guardados y sin preferencia de modo)
     const v23 = await abrir("m3-v23", { esperarApp: false }); await modo(v23, "cuenta");
@@ -569,90 +569,15 @@ prueba("migracion-v3", "Versión 3.0 con cuenta configurada: un dispositivo con 
   } finally { SRV.nube = false; }
 });
 
-/* ---------- Versión 3.0: pantallas de confirmación de correo con respuestas de Supabase SIMULADAS ----------
-   Sin red: la configuración apunta a un proyecto inexistente y las funciones de Supabase Auth se sustituyen en la
-   página por respuestas fijas con el formato real. Comprueba la interfaz (pantallas, esperas, intentos, mensajes),
-   NO el envío de correos ni la validación del servidor (eso se prueba contra el proyecto real). */
-prueba("correo-codigo", "3.0 (simulado): confirmar el correo con código, reenvío, intentos, cuenta sin confirmar y contraseña olvidada", async () => {
-  SRV.nubeFalsa = true;
-  try {
-    const w = await abrir("correo-codigo", { esperarApp: false, ancho: 390, alto: 844 });
-    await w.webContents.executeJavaScript(AYUDAS + "; true");
-    await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 8000, "pantalla de entrar"); return true;`);
-    const r = await ev(w, `
-      const L = window.__llamadas = [], aviso = () => t.q("#toast").textContent, SES = { user: { id: "u-simulado", email: "persona@ejemplo.test" }, access_token: "simulado" };
-      let existe = false;
-      const reg = (n, f) => async (...a) => { L.push([n, a[0]]); return f(...a); };
-      const au = NUBE.sb.auth;
-      au.signUp = reg("signUp", () => ({ data: { user: { id: "u-simulado", identities: existe ? [] : [{ id: "i" }] }, session: null }, error: null }));
-      au.verifyOtp = reg("verifyOtp", p => p.token === "123456" ? { data: { session: SES, user: SES.user }, error: null } : { data: {}, error: { message: "Token has expired or is invalid", code: "otp_expired" } });
-      au.resend = reg("resend", () => ({ data: {}, error: null }));
-      au.signInWithPassword = reg("signIn", () => ({ data: {}, error: { message: "Email not confirmed", code: "email_not_confirmed" } }));
-      au.resetPasswordForEmail = reg("reset", () => ({ data: {}, error: null }));
-      au.updateUser = reg("updateUser", p => p.password === "misma-clave-1" ? { data: {}, error: { message: "New password should be different from the old password.", code: "same_password" } } : { data: { user: SES.user }, error: null });
-      const vacio = new Proxy(function () {}, { get: (o, k) => k === "then" ? res => res({ data: [], error: null }) : () => vacio, apply: () => vacio });
-      NUBE.sb.from = () => vacio; NUBE.sb.rpc = () => vacio;
-      const cuenta = n => L.filter(x => x[0] === n).length, res = {};
-      // 1) Crear cuenta con código → pantalla del código (sin sesión)
-      await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="codigo"]', "ABCD-EF01-2345-6789"); t.rellenar('#fentrar [name="nombre"]', "Persona Simulada");
-      t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1"); await t.pulsar('[data-act="nEntrar"]');
-      res.alta = { pantalla: !!t.q("#fverificar"), codigoEnviado: L[0][1].options.data.codigo_invitacion, reenvioBloqueado: t.q('[data-act="nReenviar"]').disabled, texto: t.q('[data-act="nReenviar"]').textContent };
-      // 2) Reenviar enseguida: no llama a Supabase
-      t.q('[data-act="nReenviar"]').disabled = false; await t.pulsar('[data-act="nReenviar"]'); res.reenvioPronto = { llamadas: cuenta("resend"), aviso: aviso() };
-      // 3) Código corto, código incorrecto ×5 y sexto intento bloqueado
-      t.rellenar('#fverificar [name="token"]', "12"); await t.pulsar('[data-act="nVerificar"]'); res.corto = { llamadas: cuenta("verifyOtp"), aviso: aviso() };
-      for (let i = 0; i < 6; i++) { t.rellenar('#fverificar [name="token"]', "654 321"); await t.pulsar('[data-act="nVerificar"]'); }
-      res.incorrecto = { llamadas: cuenta("verifyOtp"), tipo: L.find(x => x[0] === "verifyOtp")[1].type, aviso: aviso(), sigue: !!t.q("#fverificar") };
-      // 4) Pasados 60 s, «Pedir otro código» funciona y reinicia los intentos
-      NUBE.verificar.enviado -= 61000; render(); res.reenvioListo = !t.q('[data-act="nReenviar"]').disabled;
-      await t.pulsar('[data-act="nReenviar"]'); res.reenvio = { llamada: L.filter(x => x[0] === "resend").pop()?.[1], fallos: NUBE.verificar.fallos, aviso: aviso() };
-      // 5) Código correcto → sesión y pantalla de campañas
-      t.rellenar('#fverificar [name="token"]', "123456"); await t.pulsar('[data-act="nVerificar"]'); await t.esperar(() => t.q("#fcodigo"), 5000, "campañas tras confirmar");
-      res.confirmado = { sesion: !!NUBE.sesion, pantalla: !t.q("#fverificar") };
-      // 6) Entrar con una cuenta sin confirmar → pantalla del código, con reenvío disponible
-      NUBE.sesion = null; NUBE.alta = false; render();
-      t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1"); await t.pulsar('[data-act="nEntrar"]');
-      res.sinConfirmar = { pantalla: !!t.q("#fverificar"), reenvio: !t.q('[data-act="nReenviar"]').disabled, aviso: aviso() };
-      // 7) Contraseña olvidada → código → contraseña nueva
-      await t.pulsar('[data-act="nVolverEntrar"]'); await t.pulsar('[data-act="nOlvide"]'); t.rellenar('#folvido [name="email"]', "persona@ejemplo.test"); await t.pulsar('[data-act="nPedirRecuperacion"]');
-      res.olvido = { llamada: L.filter(x => x[0] === "reset").pop()?.[1], titulo: t.q("#view h1").textContent, aviso: aviso() };
-      t.rellenar('#fverificar [name="token"]', "123456"); await t.pulsar('[data-act="nVerificar"]'); await t.esperar(() => t.q("#fclave"), 5000, "pantalla de contraseña nueva");
-      res.recuperacionTipo = L.filter(x => x[0] === "verifyOtp").pop()[1].type;
-      t.rellenar('#fclave [name="p1"]', "nueva-clave-1"); t.rellenar('#fclave [name="p2"]', "otra-cosa"); await t.pulsar('[data-act="nGuardarClave"]'); res.noCoinciden = { llamadas: cuenta("updateUser"), aviso: aviso() };
-      t.rellenar('#fclave [name="p1"]', "misma-clave-1"); t.rellenar('#fclave [name="p2"]', "misma-clave-1"); await t.pulsar('[data-act="nGuardarClave"]'); res.misma = aviso();
-      t.rellenar('#fclave [name="p1"]', "nueva-clave-1"); t.rellenar('#fclave [name="p2"]', "nueva-clave-1"); await t.pulsar('[data-act="nGuardarClave"]');
-      res.clave = { llamadas: cuenta("updateUser"), aviso: aviso(), pantalla: !t.q("#fclave") };
-      // 8) Ajustes → Cambiar contraseña
-      await t.ir("#ajustes"); render(); await t.pulsar('[data-act="nCambiarClave"]'); res.ajustes = !!t.q("#fclave"); await t.pulsar('[data-act="nCancelarClave"]');
-      // 9) Correo ya registrado (Supabase no lo revela con error): aviso y sin pantalla de código
-      NUBE.sesion = null; NUBE.alta = false; existe = true; render(); await t.pulsar('[data-act="nAlta"]');
-      t.rellenar('#fentrar [name="codigo"]', "ABCD-EF01-2345-6789"); t.rellenar('#fentrar [name="nombre"]', "Repetida"); t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1");
-      await t.pulsar('[data-act="nEntrar"]'); res.repetida = { pantalla: !!t.q("#fverificar"), aviso: aviso() };
-      return res;`);
-    ok(r.alta.pantalla && r.alta.codigoEnviado === "ABCD-EF01-2345-6789" && r.alta.reenvioBloqueado && /en (59|60) s/.test(r.alta.texto), "alta: " + JSON.stringify(r.alta));
-    ok(r.reenvioPronto.llamadas === 0 && /Espera/.test(r.reenvioPronto.aviso), "reenvío inmediato: " + JSON.stringify(r.reenvioPronto));
-    ok(r.corto.llamadas === 0, "código corto enviado a Supabase");
-    ok(r.incorrecto.llamadas === 5 && r.incorrecto.tipo === "email" && /Demasiados intentos/.test(r.incorrecto.aviso) && r.incorrecto.sigue, "código incorrecto: " + JSON.stringify(r.incorrecto));
-    ok(r.reenvioListo && r.reenvio.llamada?.type === "signup" && r.reenvio.llamada?.email === "persona@ejemplo.test" && r.reenvio.fallos === 0, "reenvío: " + JSON.stringify(r.reenvio));
-    ok(r.confirmado.sesion && r.confirmado.pantalla, "confirmar: " + JSON.stringify(r.confirmado));
-    ok(r.sinConfirmar.pantalla && r.sinConfirmar.reenvio && /confirmar tu correo/.test(r.sinConfirmar.aviso), "entrar sin confirmar: " + JSON.stringify(r.sinConfirmar));
-    ok(r.olvido.llamada === "persona@ejemplo.test" && /Recuperar/.test(r.olvido.titulo) && r.recuperacionTipo === "recovery", "olvido: " + JSON.stringify(r.olvido));
-    ok(r.noCoinciden.llamadas === 0 && /no coinciden/.test(r.noCoinciden.aviso) && /distinta/.test(r.misma) && r.clave.llamadas === 2 && /cambiada/.test(r.clave.aviso) && r.clave.pantalla, "contraseña nueva: " + JSON.stringify({ n: r.noCoinciden, m: r.misma, c: r.clave }));
-    ok(r.ajustes, "Ajustes no ofrece cambiar la contraseña");
-    ok(!r.repetida.pantalla && /Ya existe una cuenta/.test(r.repetida.aviso), "correo repetido: " + JSON.stringify(r.repetida));
-    return { simulado: true, ...r };
-  } finally { SRV.nubeFalsa = false; }
-});
-
 /* ---------- Versión 3.0: prueba real contra el proyecto Supabase de PRUEBAS (solo con filtro «nube») ----------
-   Necesita conexión, supabase/config-app.local.json y las cuentas fijas de supabase/pruebas/.cuentas-pruebas.json
-   (node real.test.mjs --preparar). Cada ventana es un dispositivo con su propio almacenamiento y su propia sesión.
-   Nada se simula: la app habla con la base de datos real y el tiempo real de Supabase. Solo datos ficticios. */
+   Cuentas privadas: usuario y contraseña, sin correo. Necesita conexión, supabase/config-app.local.json y el
+   superadministrador de pruebas en supabase/pruebas/.cuentas-pruebas.json (propietario). Cada ventana es un
+   dispositivo con su propio almacenamiento y su propia sesión. Todo se hace pulsando la app contra la base real. */
 const pruebaRed = (id, nombre, fn) => PRUEBAS.push({ id, nombre, fn, red: true });
-pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Windows) y trabajador (iPhone) lo ven; jefe de otro equipo no; conflicto", async () => {
+pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas; editor y lector; trabajador y jefe; bloqueo; restablecer; tiempo real", async () => {
   const fijas = JSON.parse(fs.readFileSync(path.join(RAIZ, "supabase", "pruebas", ".cuentas-pruebas.json"), "utf8"));
-  ok(fijas.creadorA, "faltan las cuentas fijas (node real.test.mjs --preparar)");
-  const run = Date.now().toString(36), clave = () => require("crypto").randomBytes(18).toString("base64url");
+  ok(fijas.propietario && !fijas.propietario.temporal, "falta el superadministrador de pruebas (node real.test.mjs lo prepara)");
+  const run = Date.now().toString(36).slice(-5), clave = () => require("crypto").randomBytes(12).toString("base64url");
   SRV.nube = true;
   try {
     const dispositivo = async (perfil, ancho, alto) => {
@@ -661,120 +586,122 @@ pruebaRed("nube-sesiones", "3.0 real: creador (Android) anota 8 h; admin (Window
       await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 15000, "pantalla de entrar"); return true;`);
       return w;
     };
-    const entrar = (w, email, password) => ev(w, `t.rellenar('#fentrar [name="email"]', ${JSON.stringify(email)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(password)});
-      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "iniciar sesión"); return NUBE.sesion.user.id;`);
-    // Crear cuenta en la app CON el código: el servidor la crea ya unida a su campaña y rol (o con permiso de creador)
-    const rellenarAlta = (nombre, codigo) => `if (!NUBE.alta) await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="codigo"]', ${JSON.stringify(codigo || "")});
-      t.rellenar('#fentrar [name="nombre"]', ${JSON.stringify(nombre)}); t.rellenar('#fentrar [name="email"]', ${JSON.stringify(nombre.toLowerCase().replace(/\W+/g, "-") + "-" + run + "@pruebas.example.com")});
-      t.rellenar('#fentrar [name="password"]', ${JSON.stringify(clave())}); await t.pulsar('[data-act="nEntrar"]');`;
-    const alta = (w, nombre, codigo, conCampana = true) => ev(w, rellenarAlta(nombre, codigo) + `
-      await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "crear cuenta");
-      ${conCampana ? `await t.esperar(() => NUBE.c && NUBE.d, 20000, "campaña de la invitación");` : ""} return { id: NUBE.sesion.user.id, roles: NUBE.roles, campanas: NUBE.campanas.length };`);
-    // Alta que el servidor debe rechazar: sin sesión, con el aviso en pantalla
-    const altaRechazada = (w, nombre, codigo) => ev(w, `t.q("#toast").textContent = ""; ` + rellenarAlta(nombre, codigo) + `
-      const aviso = await t.esperar(() => t.q("#toast")?.textContent, 15000, "aviso de alta rechazada"); await t.dormir(800);
-      return { sesion: !!NUBE.sesion, aviso };`);
-    const invitar = (w, rol, ficha) => ev(w, `await t.ir("#n-personas"); t.rellenar('#fninv [name="rol"]', ${JSON.stringify(rol)}); t.rellenar('#fninv [name="ficha"]', ${JSON.stringify(ficha)});
-      await t.pulsar('[data-act="nInvitar"]'); const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 15000, "código de invitación"); await t.pulsar('[data-act="cerrar"]'); return c;`);
+    const aviso = `" · aviso: «" + (t.q("#toast")?.textContent || "") + "»"`;
+    const entrar = (w, usuario, password) => ev(w, `t.rellenar('#fentrar [name="usuario"]', ${JSON.stringify(usuario)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(password)});
+      await t.pulsar('[data-act="nEntrar"]'); try { await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "entrar"); } catch (e) { throw new Error(e.message + ${aviso}); }
+      return { id: NUBE.sesion.user.id, temporal: !!NUBE.perfil.debe_cambiar_clave, clave: !!t.q("#fclave") };`);
+    const ponerClave = (w, actual, nueva) => ev(w, `await t.esperar(() => t.q("#fclave"), 8000, "pantalla de contraseña");
+      t.rellenar('#fclave [name="actual"]', ${JSON.stringify(actual)}); t.rellenar('#fclave [name="p1"]', ${JSON.stringify(nueva)}); t.rellenar('#fclave [name="p2"]', ${JSON.stringify(nueva)});
+      await t.pulsar('[data-act="nGuardarClave"]'); try { await t.esperar(() => NUBE.perfil && !NUBE.perfil.debe_cambiar_clave && !t.q("#fclave"), 20000, "poner la contraseña"); } catch (e) { throw new Error(e.message + ${aviso}); }
+      return true;`);
+    // Crear usuario desde «Gestión de usuarios» y leer la contraseña temporal que se muestra una sola vez
+    const crearUsuario = (w, d) => ev(w, `await t.ir("#usuarios"); render(); await t.esperar(() => t.q("#fusuario") && NUBE.usuarios, 15000, "gestión de usuarios");
+      const sel = async (n, v) => { if (!t.q('#fusuario [name="' + n + '"]')) return; t.rellenar('#fusuario [name="' + n + '"]', v); await t.dormir(150); };
+      ${d.tipo ? `await sel("tipo", ${JSON.stringify(d.tipo)});` : ""}
+      ${d.rol ? `await sel("campana", ${JSON.stringify(d.campana)}); await sel("rol", ${JSON.stringify(d.rol)});` : ""}
+      ${d.ficha ? `await t.esperar(() => [...t.q('#fusuario [name="ficha"]').options].some(o => o.value === ${JSON.stringify(d.ficha)}), 15000, "fichas"); t.rellenar('#fusuario [name="ficha"]', ${JSON.stringify(d.ficha)});` : ""}
+      t.rellenar('#fusuario [name="nombre"]', ${JSON.stringify(d.nombre)}); t.rellenar('#fusuario [name="usuario"]', ${JSON.stringify(d.usuario)});
+      await t.pulsar('[data-act="nCrearUsuario"]'); let c; try { c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 20000, "contraseña temporal"); } catch (e) { throw new Error(e.message + ${aviso}); }
+      const u = t.q("#credUsuario").innerText.trim(); await t.pulsar('[data-act="cerrar"]'); return { usuario: u, clave: c };`);
+    const accionCuenta = (w, accion, usuario) => ev(w, `await t.ir("#usuarios"); NUBE.usuarios = null; render(); await t.esperar(() => t.q('[data-usuario="${usuario}"] [data-act="${accion}"]'), 15000, "cuenta en la lista");
+      t.q('[data-usuario="${usuario}"] [data-act="${accion}"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmación"); t.q("#cfOk").click();
+      ${accion === "nRestablecer" ? `const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 20000, "contraseña temporal"); await t.pulsar('[data-act="cerrar"]'); return c;`
+        : `await t.esperar(() => /bloqueada|desbloqueada/i.test(t.q("#toast").textContent), 20000, "bloqueo"); return t.q("#toast").textContent;`}`);
 
-    // 1) Creador en el «Android» (390 px): entra con su cuenta fija y crea la campaña desde la app
+    // 1) Superadministrador en el ordenador: crea la cuenta de un creador
+    const pcSa = await dispositivo("e2e-superadmin", 1280, 860);
+    await entrar(pcSa, fijas.propietario.usuario, fijas.propietario.password);
+    const credGestor = await crearUsuario(pcSa, { tipo: "creador", nombre: "Gestor E2E", usuario: "gestor.e2e." + run });
+    ok(credGestor.usuario === "gestor.e2e." + run && credGestor.clave.length === 12, "credenciales del creador: " + JSON.stringify({ ...credGestor, clave: credGestor.clave.length }));
+
+    // 2) El creador en su móvil: usuario + temporal → pone la suya → crea campaña, fichas y cuentas
     const movil = await dispositivo("e2e-creador-android", 390, 844);
-    const idCreador = await entrar(movil, fijas.creadorA.email, fijas.creadorA.password);
+    const e1 = await entrar(movil, credGestor.usuario, credGestor.clave);
+    ok(e1.temporal && e1.clave, "el creador no tuvo que cambiar la temporal: " + JSON.stringify(e1));
+    const claveGestor = clave(); await ponerClave(movil, credGestor.clave, claveGestor);
     const nombreCamp = "Campaña E2E " + run;
-    await ev(movil, `await t.ir("#campanas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombreCamp)}); t.rellenar('#fnueva [name="horas"]', "8");
+    await ev(movil, `await t.ir("#campanas"); render(); await t.esperar(() => t.q("#fnueva"), 15000, "puede crear campañas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombreCamp)}); t.rellenar('#fnueva [name="horas"]', "8");
       t.rellenar('#fnueva [name="ptrab"]', "10"); t.rellenar('#fnueva [name="pdueno"]', "12"); await t.pulsar('[data-act="nCrearCampana"]');
       await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombreCamp)} && NUBE.d, 20000, "crear campaña"); return true;`);
-    const fichas = await ev(movil, `await t.ir("#n-personas"); const aviso = () => " · aviso en pantalla: «" + (t.q("#toast")?.textContent || "") + "» · vista: " + location.hash;
-      for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]');
-        try { await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); } catch (e) { throw new Error(e.message + aviso()); } }
-      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]');
-      try { await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño"); } catch (e) { throw new Error(e.message + aviso()); }
-      const id = n => NUBE.d.trab.find(x => x.nombre === n).id; return { t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: NUBE.d.duenos[0].id };`);
-    const codAdmin = await invitar(movil, "admin", ""), codTrab = await invitar(movil, "trabajador", "t:" + fichas.t1), codJefe = await invitar(movil, "jefe", "");
+    const fichas = await ev(movil, `await t.ir("#n-personas"); render();
+      for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]'); await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); }
+      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño");
+      const id = n => NUBE.d.trab.find(x => x.nombre === n).id; return { c: NUBE.c.campana_id, t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: NUBE.d.duenos[0].id };`);
+    const cred = {};
+    for (const [k, rol, ficha] of [["lector", "admin"], ["editor", "admin+"], ["jefe", "jefe"], ["trab1", "trabajador", fichas.t1]])
+      cred[k] = await crearUsuario(movil, { nombre: k + " E2E", usuario: k + ".e2e." + run, campana: fichas.c, rol, ficha });
 
-    // 2) Administrador en «Windows» (1280 px), trabajador en «iPhone» y jefe de OTRO equipo: cuentas nuevas + código
-    // Alta controlada en la app: sin código, con un código inventado o anulado → no se crea la cuenta
-    const intento = await dispositivo("e2e-sin-codigo", 390, 844);
-    const sinCodigo = await altaRechazada(intento, "Sin Codigo E2E", "");
-    const inventado = await altaRechazada(intento, "Inventado E2E", "ABCD-EF01-2345-6789");
-    const codAnulado = await invitar(movil, "admin", "");
-    await ev(movil, `await t.ir("#n-personas"); render(); await t.esperar(() => t.q('[data-act="nAnularInv"]'), 8000, "lista de invitaciones sin usar");
-      const n = NUBE.d.inv.length; t.q('[data-act="nAnularInv"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmación"); t.q("#cfOk").click();
-      await t.esperar(() => NUBE.d.inv.length === n - 1, 15000, "anular invitación"); return true;`);
-    const anulado = await altaRechazada(intento, "Anulado E2E", codAnulado);
-    ok(!sinCodigo.sesion && /código de invitación/i.test(sinCodigo.aviso) && !inventado.sesion && /no es válido/.test(inventado.aviso) && !anulado.sesion && /no es válido/.test(anulado.aviso),
-      "altas indebidas: " + JSON.stringify({ sinCodigo, inventado, anulado }));
-
-    const pc = await dispositivo("e2e-admin-windows", 1280, 860); const rolesAdmin = (await alta(pc, "Admin E2E", codAdmin)).roles;
-    const iphone = await dispositivo("e2e-trab-iphone", 390, 844); const rolesTrab = (await alta(iphone, "Trabajador Uno E2E", codTrab)).roles;
-    const jefe = await dispositivo("e2e-jefe-otro", 390, 844); const aj = await alta(jefe, "Jefe E2E", codJefe); const idJefe = aj.id, rolesJefe = aj.roles;
-    const reusado = await altaRechazada(intento, "Reusado E2E", codTrab);
-    ok(!reusado.sesion && /no es válido/.test(reusado.aviso), "código reutilizado: " + JSON.stringify(reusado));
-    ok(rolesAdmin.join() === "admin" && rolesTrab.join() === "trabajador" && rolesJefe.join() === "jefe", "roles: " + JSON.stringify({ rolesAdmin, rolesTrab, rolesJefe }));
-    // El jefe lleva al trabajador Dos (otro equipo distinto del trabajador Uno)
-    await ev(movil, `await t.esperar(() => NUBE.d.miembros.some(m => m.user_id === ${JSON.stringify(idJefe)}), 20000, "el creador ve al jefe (tiempo real)"); await t.ir("#n-personas"); render();
+    // 3) Cada persona en su dispositivo: entra con la temporal y pone la suya
+    const disp = { lector: await dispositivo("e2e-lector-windows", 1280, 860), editor: await dispositivo("e2e-editor-pc", 1280, 860),
+      jefe: await dispositivo("e2e-jefe-movil", 390, 844), trab1: await dispositivo("e2e-trab-iphone", 390, 844) };
+    const claves = {};
+    for (const k of Object.keys(disp)) {
+      const e = await entrar(disp[k], cred[k].usuario, cred[k].clave); ok(e.temporal, k + " entró sin tener que cambiar la temporal");
+      await ponerClave(disp[k], cred[k].clave, claves[k] = clave());
+      await ev(disp[k], `await t.esperar(() => NUBE.c && NUBE.d, 20000, "su campaña"); return true;`);
+    }
+    const permisos = await ev(disp.editor, `return { vistas: nubeVistas().map(x => x[0]), edita: nEdita() };`), permisosL = await ev(disp.lector, `return { vistas: nubeVistas().map(x => x[0]), edita: nEdita() };`);
+    ok(permisos.edita && permisos.vistas.includes("parte") && !permisosL.edita && !permisosL.vistas.includes("parte"), "vistas: " + JSON.stringify({ permisos, permisosL }));
+    // El creador asigna el trabajador Dos al jefe (otro equipo distinto del trabajador Uno)
+    const idJefe = await ev(disp.jefe, `return NUBE.sesion.user.id;`);
+    await ev(movil, `await t.esperar(() => NUBE.d.miembros.some(m => m.user_id === ${JSON.stringify(idJefe)}), 20000, "el creador ve al jefe"); await t.ir("#n-personas"); render();
       t.rellenar('#fnasig [name="jefe"]', ${JSON.stringify(idJefe)}); t.rellenar('#fnasig [name="trab"]', ${JSON.stringify(fichas.t2)}); await t.pulsar('[data-act="nAsignar"]');
       await t.esperar(() => NUBE.d.asig.length === 1, 15000, "asignar equipo"); return true;`);
-    // Cada uno deja abierta su pantalla, sin recargar
-    await ev(pc, `await t.ir("#n-inicio"); return true;`); await ev(iphone, `await t.ir("#n-mis-jornadas"); return true;`); await ev(jefe, `await t.ir("#n-equipo"); return true;`);
-    const jefeAntes = await ev(jefe, `return (NUBE.d.equipo || []).length;`);
 
-    // 3) El creador anota el parte de hoy en el móvil: trabajador Uno 8 h (día normal de 8 h) y trabajador Dos 8 h
+    // 4) El creador anota el parte (2 trabajadores, 8 h); el editor lo modifica desde su ordenador
+    await ev(disp.trab1, `await t.ir("#n-mis-jornadas"); render(); return true;`); await ev(disp.lector, `await t.ir("#n-inicio"); render(); return true;`); await ev(disp.jefe, `await t.ir("#n-equipo"); render(); return true;`);
+    const p1 = await ev(movil, `await t.ir("#n-parte"); render(); await t.esperar(() => t.q('[data-act="nGuardarParte"]'), 8000, "parte");
+      t.rellenar('[data-np="kilos"]', "2.350"); await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return NUBE.d.partes[0].version;`);
     const t0 = Date.now();
-    const parte = await ev(movil, `await t.ir("#n-parte"); render(); await t.esperar(() => t.q('[data-act="nGuardarParte"]'), 8000, "pantalla del parte");
-      t.rellenar('[data-np="kilos"]', "2.350"); await t.pulsar('[data-act="nGuardarParte"]');
-      await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return { version: NUBE.d.partes[0].version, filas: NUBE.d.filas.length, kilos: +NUBE.d.partes[0].kilos };`);
-    ok(parte.filas === 2 && parte.kilos === 2350, "parte guardado: " + JSON.stringify(parte));
+    const p2 = await ev(disp.editor, `await t.esperar(() => NUBE.d.partes.length === 1, 20000, "el editor recibe el parte"); NUBE.borrador = null; await t.ir("#n-parte"); render();
+      await t.esperar(() => t.q('[data-np="tipo"][data-id="${fichas.t1}"]'), 8000, "parte en el editor");
+      t.rellenar('[data-np="tipo"][data-id="${fichas.t1}"]', "mas"); await t.dormir(200); await t.pulsar('[data-act="nGuardarParte"]');
+      await t.esperar(() => NUBE.d.partes[0].version === ${p1} + 1, 20000, "guardar como editor"); return NUBE.d.partes[0].version;`);
+    ok(p2 === p1 + 1, "el editor no pudo modificar la jornada");
+    // 5) Lo ven al momento, cada uno lo suyo
+    const trab = await ev(disp.trab1, `await t.esperar(() => NUBE.d.resumen && +NUBE.d.resumen.horas === 9, 20000, "el trabajador recibe su jornada"); render();
+      return { ms: Date.now(), horas: +NUBE.d.resumen.horas, importe: NUBE.d.resumen.importe_cent, texto: t.texto(), otros: NUBE.d.filas.length + NUBE.d.trab.length };`);
+    ok(trab.horas === 9 && trab.importe === 9000 && /90,00\s*€/.test(trab.texto) && !trab.otros && !/Trabajador E2E Dos/.test(trab.texto), "trabajador: " + JSON.stringify({ ...trab, texto: trab.texto.slice(0, 160) }));
+    const lect = await ev(disp.lector, `await t.esperar(() => NUBE.d.partes[0]?.version === ${p2}, 20000, "el lector recibe el cambio"); render();
+      const api = await NUBE.sb.from("partes_filas").update({ horas: 1 }).eq("campana_id", NUBE.c.campana_id).select();
+      return { horas: NUBE.d.filas.reduce((s, f) => s + hFila(f, nHd()), 0), boton: !!t.q('[data-act="nAbrirParte"]'), api: !!api.error || !(api.data || []).length };`);
+    ok(lect.horas === 17 && !lect.boton && lect.api, "lector: " + JSON.stringify(lect));
+    const jef = await ev(disp.jefe, `await t.esperar(() => (NUBE.d.equipo || []).length === 1, 20000, "el jefe recibe su equipo"); render(); return { equipo: NUBE.d.equipo.map(x => x.trabajador), texto: t.texto() };`);
+    ok(jef.equipo.join() === "Trabajador E2E Dos" && !/Trabajador E2E Uno/.test(jef.texto), "jefe: " + JSON.stringify(jef.equipo));
 
-    // 4) Lo ven al momento, sin recargar (tiempo real), cada uno solo lo suyo
-    const admin = await ev(pc, `await t.esperar(() => NUBE.d.filas.length === 2, 20000, "el administrador recibe el parte"); render();
-      return { ms: Date.now(), horas: NUBE.d.filas.reduce((s, f) => s + hFila(f, nHd()), 0), texto: t.texto(), puedeEditar: !!t.q('[data-act="nAbrirParte"]') };`);
-    const trab = await ev(iphone, `await t.esperar(() => NUBE.d.resumen && +NUBE.d.resumen.horas === 8, 20000, "el trabajador recibe su jornada"); render();
-      return { ms: Date.now(), horas: +NUBE.d.resumen.horas, importe: NUBE.d.resumen.importe_cent, texto: t.texto(), veOtros: !!NUBE.d.filas.length || !!NUBE.d.trab.length };`);
-    const jef = await ev(jefe, `await t.esperar(() => (NUBE.d.equipo || []).length === 1, 20000, "el jefe recibe la jornada de su equipo"); render();
-      return { equipo: NUBE.d.equipo.map(x => x.trabajador), texto: t.texto(), veTodo: NUBE.d.filas.length };`);
-    ok(admin.horas === 16 && /16/.test(admin.texto) && !admin.puedeEditar, "administrador: " + JSON.stringify({ ...admin, texto: undefined }));
-    ok(trab.horas === 8 && trab.importe === 8000 && /80,00\s*€/.test(trab.texto) && !trab.veOtros && !/Trabajador E2E Dos/.test(trab.texto), "trabajador: " + JSON.stringify({ ...trab, texto: trab.texto.slice(0, 200) }));
-    ok(jefeAntes === 0 && jef.equipo.join() === "Trabajador E2E Dos" && !/Trabajador E2E Uno/.test(jef.texto) && jef.veTodo === 0, "jefe de otro equipo: " + JSON.stringify(jef));
-    // Lo que la interfaz no enseña tampoco se puede hacer: el administrador intenta cambiar el parte por la API
-    const intentoApi = await ev(pc, `const r = await NUBE.sb.from("partes").update({ kilos: 1 }).eq("id", NUBE.d.partes[0].id).select(); return { error: !!r.error, filas: (r.data || []).length };`);
-    ok(intentoApi.error || intentoApi.filas === 0, "el administrador ha modificado un parte: " + JSON.stringify(intentoApi));
+    // 6) El superadministrador bloquea al trabajador: al volver a abrir la app no ve nada
+    const bl = await accionCuenta(pcSa, "nBloquear", cred.trab1.usuario);
+    ok(/bloqueada/i.test(bl), "bloqueo: " + bl);
+    await disp.trab1.webContents.reload(); await new Promise(r => disp.trab1.webContents.once("did-finish-load", r)); await disp.trab1.webContents.executeJavaScript(AYUDAS + "; true");
+    const tb = await ev(disp.trab1, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && (t.q("#fentrar") || /bloqueada/i.test(t.texto())), 20000, "estado tras bloquear");
+      return { pantalla: t.q("#fentrar") ? "entrar" : "bloqueada", datos: !!NUBE.d };`);
+    ok(!tb.datos, "el trabajador bloqueado ve datos: " + JSON.stringify(tb));
+    const tb2 = await ev(disp.trab1, `if (!t.q("#fentrar")) { await NUBE.sb.auth.signOut({ scope: "local" }); await t.esperar(() => t.q("#fentrar"), 10000, "salir"); }
+      t.rellenar('#fentrar [name="usuario"]', ${JSON.stringify(cred.trab1.usuario)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(claves.trab1)});
+      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => /bloqueada/i.test(t.q("#toast").textContent), 15000, "aviso de cuenta bloqueada"); return { sesion: !!NUBE.sesion, aviso: t.q("#toast").textContent };`);
+    ok(!tb2.sesion, "una cuenta bloqueada inicia sesión: " + JSON.stringify(tb2));
 
-    // 5) Conflicto: el mismo creador con el parte abierto en el móvil y en el ordenador
-    const pc2 = await dispositivo("e2e-creador-pc", 1280, 860); await entrar(pc2, fijas.creadorA.email, fijas.creadorA.password);
-    await ev(pc2, `const c = NUBE.campanas.find(x => x.nombre === ${JSON.stringify(nombreCamp)}); await nubeElegir(c.campana_id); await t.ir("#n-parte"); render();
-      await t.esperar(() => NUBE.borrador?.version === ${parte.version}, 15000, "parte abierto en el ordenador"); t.rellenar('[data-np="kilos"]', "9.999"); return true;`);
-    await ev(movil, `await t.ir("#n-parte"); render(); t.rellenar('[data-np="kilos"]', "2.400"); await t.pulsar('[data-act="nGuardarParte"]');
-      await t.esperar(() => NUBE.d.partes[0].version === ${parte.version + 1}, 15000, "guardar en el móvil"); return true;`);
-    const conflicto = await ev(pc2, `await t.dormir(1500);   // le llega el aviso en tiempo real, pero su borrador sin guardar se conserva
-      const antes = { version: NUBE.borrador.version, kilos: NUBE.borrador.kilos };
-      await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.borrador?.version === ${parte.version + 1}, 15000, "recarga tras el conflicto");
-      return { antes, despues: { version: NUBE.borrador.version, kilos: +NUBE.d.partes[0].kilos }, aviso: document.body.innerText.includes("Otra persona ha cambiado esto") };`);
-    ok(conflicto.antes.version === parte.version && conflicto.despues.kilos === 2400 && conflicto.aviso, "conflicto: " + JSON.stringify(conflicto));
-    // 6) Solo el superadministrador autoriza creadores: genera el código en su panel y la persona crea su campaña
-    const sa = await dispositivo("e2e-superadmin", 1280, 860); await entrar(sa, fijas.superadmin.email, fijas.superadmin.password);
-    const codCreador = await ev(sa, `await t.ir("#global"); render(); await t.esperar(() => t.q('[data-act="nAutorizarCreador"]'), 15000, "panel global");
-      await t.pulsar('[data-act="nAutorizarCreador"]'); const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 15000, "código de creador"); await t.pulsar('[data-act="cerrar"]'); return c;`);
-    const creadorNoAutoriza = await ev(movil, `return (await NUBE.sb.rpc("crear_autorizacion_creador", { p_dias: 7 })).error != null;`);
-    ok(creadorNoAutoriza, "un creador puede autorizar creadores");
-    const nuevo = await dispositivo("e2e-creador-nuevo", 390, 844); const an = await alta(nuevo, "Creador Nuevo E2E", codCreador, false);
-    const campNueva = "Campaña del creador nuevo " + run;
-    const creadorNuevo = await ev(nuevo, `await t.esperar(() => t.q("#fnueva"), 15000, "puede crear campañas"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(campNueva)});
-      await t.pulsar('[data-act="nCrearCampana"]'); await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(campNueva)}, 20000, "crear su campaña");
-      return { campanas: NUBE.campanas.map(c => c.nombre), roles: NUBE.roles };`);
-    ok(an.campanas === 0 && creadorNuevo.campanas.length === 1 && creadorNuevo.roles.join() === "creador", "creador nuevo: " + JSON.stringify({ an, creadorNuevo }));
+    // 7) El creador restablece la contraseña del lector: la antigua deja de servir y debe poner otra
+    const temporal = await accionCuenta(movil, "nRestablecer", cred.lector.usuario);
+    await disp.lector.webContents.reload(); await new Promise(r => disp.lector.webContents.once("did-finish-load", r)); await disp.lector.webContents.executeJavaScript(AYUDAS + "; true");
+    const lr = await ev(disp.lector, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && (t.q("#fentrar") || t.q("#fclave")), 20000, "tras restablecer");
+      if (!t.q("#fentrar")) { await NUBE.sb.auth.signOut({ scope: "local" }); await t.esperar(() => t.q("#fentrar"), 10000, "salir"); }
+      t.rellenar('#fentrar [name="usuario"]', ${JSON.stringify(cred.lector.usuario)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(claves.lector)});
+      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => /incorrectos/i.test(t.q("#toast").textContent), 15000, "contraseña antigua rechazada"); return true;`);
+    const e2 = await entrar(disp.lector, cred.lector.usuario, temporal); ok(e2.temporal && e2.clave, "con la temporal nueva no pidió cambiarla");
+    await ponerClave(disp.lector, temporal, clave());
+    const lf = await ev(disp.lector, `await t.esperar(() => NUBE.c && NUBE.d, 20000, "su campaña"); return NUBE.d.filas.length;`);
+    ok(lf === 2, "el lector no recuperó el acceso");
 
-    // Capturas de lo que ve cada uno (solo si se pide con CAPTURAS=<carpeta>; datos ficticios)
     if (process.env.CAPTURAS) {
       fs.mkdirSync(process.env.CAPTURAS, { recursive: true });
-      for (const [nombre, w, h] of [["1-creador-android", movil, "#n-inicio"], ["2-admin-windows", pc, "#n-inicio"], ["3-trabajador-iphone", iphone, "#n-mis-jornadas"], ["4-jefe-otro-equipo", jefe, "#n-equipo"], ["5-conflicto-pc", pc2, "#n-parte"]]) {
-        if (nombre !== "5-conflicto-pc") await ev(w, `await t.ir(${JSON.stringify(h)}); render(); await t.dormir(300); return true;`);
-        fs.writeFileSync(path.join(process.env.CAPTURAS, nombre + ".png"), (await w.webContents.capturePage()).toPNG());
+      for (const [n, w, h] of [["1-usuarios-superadmin", pcSa, "#usuarios"], ["2-usuarios-creador", movil, "#usuarios"], ["3-editor-parte", disp.editor, "#n-parte"], ["4-lector-inicio", disp.lector, "#n-inicio"], ["5-trabajador-bloqueado", disp.trab1, null], ["6-jefe", disp.jefe, "#n-equipo"]]) {
+        if (h) await ev(w, `await t.ir(${JSON.stringify(h)}); NUBE.usuarios = null; render(); await t.dormir(1500); render(); return true;`);
+        fs.writeFileSync(path.join(process.env.CAPTURAS, n + ".png"), (await w.webContents.capturePage()).toPNG());
       }
     }
-    return { campana: nombreCamp, roles: { admin: rolesAdmin, trabajador: rolesTrab, jefe: rolesJefe }, parte,
-      tiempoReal_ms: { administrador: admin.ms - t0, trabajador: trab.ms - t0 }, trabajador: { horas: trab.horas, euros: trab.importe / 100 }, jefeVe: jef.equipo, conflicto,
-      altasRechazadas: { sinCodigo: sinCodigo.aviso, inventado: inventado.aviso, anulado: anulado.aviso, reutilizado: reusado.aviso }, creadorNuevo };
+    return { campana: nombreCamp, cuentas: Object.keys(cred).length + 1, parte: { creador: p1, editor: p2 }, tiempoReal_ms: trab.ms - t0,
+      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
   } finally { SRV.nube = false; }
 });
 
