@@ -21,7 +21,7 @@ const FILTRO = process.argv.slice(2).find(a => !a.startsWith("-")) || "";
 /* ---------- Servidor estático en /campana-control/ ---------- */
 const TIPOS = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 // reemplazos: { "index.html": [[texto, nuevo]…] } simula publicar una versión nueva sin tocar www/
-const SRV = { caido: false, swExtra: "", reemplazos: {}, peticiones: [], nube: false };
+const SRV = { caido: false, swExtra: "", reemplazos: {}, peticiones: [], nube: false, nubeFalsa: false };
 const servidor = http.createServer((req, res) => {
   if (SRV.caido) { req.socket.destroy(); return; }            // simula «sin conexión»
   const u = new URL(req.url, "http://x"); SRV.peticiones.push(u.pathname);
@@ -31,7 +31,8 @@ const servidor = http.createServer((req, res) => {
   const f = path.join(WWW, rel);
   if (!f.startsWith(WWW) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end("no existe"); }
   let cuerpo = fs.readFileSync(f);
-  if (rel === "config-nube.js" && !SRV.nube) cuerpo = Buffer.from("window.CC_NUBE = null;\n");   // pruebas de la 2.3.0: sin cuenta
+  if (rel === "config-nube.js" && SRV.nubeFalsa) cuerpo = Buffer.from('window.CC_NUBE = {"url":"https://proyecto-simulado.supabase.co","clave":"sb_publishable_simulada"};\n');   // pantallas con respuestas simuladas, sin red
+  else if (rel === "config-nube.js" && !SRV.nube) cuerpo = Buffer.from("window.CC_NUBE = null;\n");   // pruebas de la 2.3.0: sin cuenta
   if (rel === "sw.js" && SRV.swExtra) cuerpo = Buffer.concat([cuerpo, Buffer.from("\n// " + SRV.swExtra + "\n")]);
   for (const [a, b] of SRV.reemplazos[rel] || []) cuerpo = Buffer.from(cuerpo.toString("utf8").split(a).join(b));
   res.writeHead(200, { "Content-Type": TIPOS[path.extname(f)] || "application/octet-stream", "Cache-Control": "no-cache" });
@@ -566,6 +567,81 @@ prueba("migracion-v3", "Versión 3.0 con cuenta configurada: un dispositivo con 
     ok(tras.pref === "cuenta" && tras.datos && tras.entrar, "al elegir cuenta: " + JSON.stringify(tras));
     return { nuevo: pantalla, registros: { antes, despues }, trasElegirCuenta: tras };
   } finally { SRV.nube = false; }
+});
+
+/* ---------- Versión 3.0: pantallas de confirmación de correo con respuestas de Supabase SIMULADAS ----------
+   Sin red: la configuración apunta a un proyecto inexistente y las funciones de Supabase Auth se sustituyen en la
+   página por respuestas fijas con el formato real. Comprueba la interfaz (pantallas, esperas, intentos, mensajes),
+   NO el envío de correos ni la validación del servidor (eso se prueba contra el proyecto real). */
+prueba("correo-codigo", "3.0 (simulado): confirmar el correo con código, reenvío, intentos, cuenta sin confirmar y contraseña olvidada", async () => {
+  SRV.nubeFalsa = true;
+  try {
+    const w = await abrir("correo-codigo", { esperarApp: false, ancho: 390, alto: 844 });
+    await w.webContents.executeJavaScript(AYUDAS + "; true");
+    await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 8000, "pantalla de entrar"); return true;`);
+    const r = await ev(w, `
+      const L = window.__llamadas = [], aviso = () => t.q("#toast").textContent, SES = { user: { id: "u-simulado", email: "persona@ejemplo.test" }, access_token: "simulado" };
+      let existe = false;
+      const reg = (n, f) => async (...a) => { L.push([n, a[0]]); return f(...a); };
+      const au = NUBE.sb.auth;
+      au.signUp = reg("signUp", () => ({ data: { user: { id: "u-simulado", identities: existe ? [] : [{ id: "i" }] }, session: null }, error: null }));
+      au.verifyOtp = reg("verifyOtp", p => p.token === "123456" ? { data: { session: SES, user: SES.user }, error: null } : { data: {}, error: { message: "Token has expired or is invalid", code: "otp_expired" } });
+      au.resend = reg("resend", () => ({ data: {}, error: null }));
+      au.signInWithPassword = reg("signIn", () => ({ data: {}, error: { message: "Email not confirmed", code: "email_not_confirmed" } }));
+      au.resetPasswordForEmail = reg("reset", () => ({ data: {}, error: null }));
+      au.updateUser = reg("updateUser", p => p.password === "misma-clave-1" ? { data: {}, error: { message: "New password should be different from the old password.", code: "same_password" } } : { data: { user: SES.user }, error: null });
+      const vacio = new Proxy(function () {}, { get: (o, k) => k === "then" ? res => res({ data: [], error: null }) : () => vacio, apply: () => vacio });
+      NUBE.sb.from = () => vacio; NUBE.sb.rpc = () => vacio;
+      const cuenta = n => L.filter(x => x[0] === n).length, res = {};
+      // 1) Crear cuenta con código → pantalla del código (sin sesión)
+      await t.pulsar('[data-act="nAlta"]'); t.rellenar('#fentrar [name="codigo"]', "ABCD-EF01-2345-6789"); t.rellenar('#fentrar [name="nombre"]', "Persona Simulada");
+      t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1"); await t.pulsar('[data-act="nEntrar"]');
+      res.alta = { pantalla: !!t.q("#fverificar"), codigoEnviado: L[0][1].options.data.codigo_invitacion, reenvioBloqueado: t.q('[data-act="nReenviar"]').disabled, texto: t.q('[data-act="nReenviar"]').textContent };
+      // 2) Reenviar enseguida: no llama a Supabase
+      t.q('[data-act="nReenviar"]').disabled = false; await t.pulsar('[data-act="nReenviar"]'); res.reenvioPronto = { llamadas: cuenta("resend"), aviso: aviso() };
+      // 3) Código corto, código incorrecto ×5 y sexto intento bloqueado
+      t.rellenar('#fverificar [name="token"]', "12"); await t.pulsar('[data-act="nVerificar"]'); res.corto = { llamadas: cuenta("verifyOtp"), aviso: aviso() };
+      for (let i = 0; i < 6; i++) { t.rellenar('#fverificar [name="token"]', "654 321"); await t.pulsar('[data-act="nVerificar"]'); }
+      res.incorrecto = { llamadas: cuenta("verifyOtp"), tipo: L.find(x => x[0] === "verifyOtp")[1].type, aviso: aviso(), sigue: !!t.q("#fverificar") };
+      // 4) Pasados 60 s, «Pedir otro código» funciona y reinicia los intentos
+      NUBE.verificar.enviado -= 61000; render(); res.reenvioListo = !t.q('[data-act="nReenviar"]').disabled;
+      await t.pulsar('[data-act="nReenviar"]'); res.reenvio = { llamada: L.filter(x => x[0] === "resend").pop()?.[1], fallos: NUBE.verificar.fallos, aviso: aviso() };
+      // 5) Código correcto → sesión y pantalla de campañas
+      t.rellenar('#fverificar [name="token"]', "123456"); await t.pulsar('[data-act="nVerificar"]'); await t.esperar(() => t.q("#fcodigo"), 5000, "campañas tras confirmar");
+      res.confirmado = { sesion: !!NUBE.sesion, pantalla: !t.q("#fverificar") };
+      // 6) Entrar con una cuenta sin confirmar → pantalla del código, con reenvío disponible
+      NUBE.sesion = null; NUBE.alta = false; render();
+      t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1"); await t.pulsar('[data-act="nEntrar"]');
+      res.sinConfirmar = { pantalla: !!t.q("#fverificar"), reenvio: !t.q('[data-act="nReenviar"]').disabled, aviso: aviso() };
+      // 7) Contraseña olvidada → código → contraseña nueva
+      await t.pulsar('[data-act="nVolverEntrar"]'); await t.pulsar('[data-act="nOlvide"]'); t.rellenar('#folvido [name="email"]', "persona@ejemplo.test"); await t.pulsar('[data-act="nPedirRecuperacion"]');
+      res.olvido = { llamada: L.filter(x => x[0] === "reset").pop()?.[1], titulo: t.q("#view h1").textContent, aviso: aviso() };
+      t.rellenar('#fverificar [name="token"]', "123456"); await t.pulsar('[data-act="nVerificar"]'); await t.esperar(() => t.q("#fclave"), 5000, "pantalla de contraseña nueva");
+      res.recuperacionTipo = L.filter(x => x[0] === "verifyOtp").pop()[1].type;
+      t.rellenar('#fclave [name="p1"]', "nueva-clave-1"); t.rellenar('#fclave [name="p2"]', "otra-cosa"); await t.pulsar('[data-act="nGuardarClave"]'); res.noCoinciden = { llamadas: cuenta("updateUser"), aviso: aviso() };
+      t.rellenar('#fclave [name="p1"]', "misma-clave-1"); t.rellenar('#fclave [name="p2"]', "misma-clave-1"); await t.pulsar('[data-act="nGuardarClave"]'); res.misma = aviso();
+      t.rellenar('#fclave [name="p1"]', "nueva-clave-1"); t.rellenar('#fclave [name="p2"]', "nueva-clave-1"); await t.pulsar('[data-act="nGuardarClave"]');
+      res.clave = { llamadas: cuenta("updateUser"), aviso: aviso(), pantalla: !t.q("#fclave") };
+      // 8) Ajustes → Cambiar contraseña
+      await t.ir("#ajustes"); render(); await t.pulsar('[data-act="nCambiarClave"]'); res.ajustes = !!t.q("#fclave"); await t.pulsar('[data-act="nCancelarClave"]');
+      // 9) Correo ya registrado (Supabase no lo revela con error): aviso y sin pantalla de código
+      NUBE.sesion = null; NUBE.alta = false; existe = true; render(); await t.pulsar('[data-act="nAlta"]');
+      t.rellenar('#fentrar [name="codigo"]', "ABCD-EF01-2345-6789"); t.rellenar('#fentrar [name="nombre"]', "Repetida"); t.rellenar('#fentrar [name="email"]', "persona@ejemplo.test"); t.rellenar('#fentrar [name="password"]', "clave-segura-1");
+      await t.pulsar('[data-act="nEntrar"]'); res.repetida = { pantalla: !!t.q("#fverificar"), aviso: aviso() };
+      return res;`);
+    ok(r.alta.pantalla && r.alta.codigoEnviado === "ABCD-EF01-2345-6789" && r.alta.reenvioBloqueado && /en (59|60) s/.test(r.alta.texto), "alta: " + JSON.stringify(r.alta));
+    ok(r.reenvioPronto.llamadas === 0 && /Espera/.test(r.reenvioPronto.aviso), "reenvío inmediato: " + JSON.stringify(r.reenvioPronto));
+    ok(r.corto.llamadas === 0, "código corto enviado a Supabase");
+    ok(r.incorrecto.llamadas === 5 && r.incorrecto.tipo === "email" && /Demasiados intentos/.test(r.incorrecto.aviso) && r.incorrecto.sigue, "código incorrecto: " + JSON.stringify(r.incorrecto));
+    ok(r.reenvioListo && r.reenvio.llamada?.type === "signup" && r.reenvio.llamada?.email === "persona@ejemplo.test" && r.reenvio.fallos === 0, "reenvío: " + JSON.stringify(r.reenvio));
+    ok(r.confirmado.sesion && r.confirmado.pantalla, "confirmar: " + JSON.stringify(r.confirmado));
+    ok(r.sinConfirmar.pantalla && r.sinConfirmar.reenvio && /confirmar tu correo/.test(r.sinConfirmar.aviso), "entrar sin confirmar: " + JSON.stringify(r.sinConfirmar));
+    ok(r.olvido.llamada === "persona@ejemplo.test" && /Recuperar/.test(r.olvido.titulo) && r.recuperacionTipo === "recovery", "olvido: " + JSON.stringify(r.olvido));
+    ok(r.noCoinciden.llamadas === 0 && /no coinciden/.test(r.noCoinciden.aviso) && /distinta/.test(r.misma) && r.clave.llamadas === 2 && /cambiada/.test(r.clave.aviso) && r.clave.pantalla, "contraseña nueva: " + JSON.stringify({ n: r.noCoinciden, m: r.misma, c: r.clave }));
+    ok(r.ajustes, "Ajustes no ofrece cambiar la contraseña");
+    ok(!r.repetida.pantalla && /Ya existe una cuenta/.test(r.repetida.aviso), "correo repetido: " + JSON.stringify(r.repetida));
+    return { simulado: true, ...r };
+  } finally { SRV.nubeFalsa = false; }
 });
 
 /* ---------- Versión 3.0: prueba real contra el proyecto Supabase de PRUEBAS (solo con filtro «nube») ----------

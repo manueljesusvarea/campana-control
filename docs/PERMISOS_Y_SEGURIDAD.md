@@ -142,9 +142,11 @@ Además:
    | Brevo (plan gratuito) | 0 € | Unos 300 correos al día según su web (comprobar antes); sin dominio propio, los correos desde una dirección de Gmail suelen acabar en spam |
    | SMS (teléfono) | De pago | Descartada |
 
-   **Propuesta para producción:**
-   - activar «Confirm email» con el SMTP de Gmail;
-   - usar la plantilla de confirmación con el código de 6 cifras (`{{ .Token }}`), para que funcione igual en el APK, Windows y iPhone sin depender de enlaces;
-   - añadir en la app la pantalla «Escribe el código que te hemos enviado».
+   **Hecho el 18-11-2026:**
+   - Migración 000005: sin correo confirmado la cuenta está inactiva (no ve ni hace nada aunque su invitación sea válida). Se activa sola cuando Supabase registra la confirmación; nadie la activa a mano; el bloqueo del superadministrador se respeta.
+   - Pantallas de la app para el código de 6 cifras, reenvío y contraseña olvidada.
+   - Plantillas en `supabase/plantillas-correo/`.
+
+   **Falta (lo hace el dueño):** el SMTP de Gmail y activar «Confirm email». Pasos en `docs/GUIA_CORREO_SMTP.md`. **El envío real no está probado** hasta entonces.
 
    En el proyecto de pruebas sigue desactivada, solo para cuentas ficticias `@pruebas.example.com`.

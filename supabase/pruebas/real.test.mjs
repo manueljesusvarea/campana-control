@@ -50,7 +50,7 @@ async function cuenta(nombre, codigo) {
   const { data, error } = await c.auth.signUp({ email, password, options: { data: { nombre: nombre + " (ficticio)", ...(codigo ? { codigo_invitacion: codigo } : {}) } } });
   if (error) throw new Error(`alta de ${nombre}: ${error.message}`);
   if (!data.session) throw new Error(`alta de ${nombre}: sin sesión (¿«Confirm email» sigue activo en el proyecto de pruebas?)`);
-  c.id = data.user.id; C[nombre] = c; return c;
+  c.id = data.user.id; c.email = email; C[nombre] = c; return c;
 }
 async function altaRechazada(nombre, codigo) {
   const c = nuevo(); const { data, error } = await c.auth.signUp({ email: `${nombre}-${run}@pruebas.example.com`, password: crypto.randomBytes(18).toString("base64url"),
@@ -190,6 +190,27 @@ await prueba("Solo el superadministrador autoriza creadores; la cuenta creada co
   await rpc(nuevoCreador, "crear_campana", { p_nombre: "Campaña del creador nuevo " + run });
   await altaRechazada("autorizacion-reutilizada", codigo);
   return "autorización de un solo uso · campaña propia creada";
+});
+
+await prueba("Correo: las cuentas nuevas quedan confirmadas y activas; nadie marca su correo como confirmado; el servidor rechaza un código de correo incorrecto", async () => {
+  // Proyecto de pruebas con «Confirm email» desactivado: Supabase confirma al crear la cuenta y el disparador lo copia
+  const p = await C.trab1.from("perfiles").select("activo, correo_confirmado, bloqueado").eq("id", C.trab1.id).single();
+  ok(!p.error && p.data.activo && p.data.correo_confirmado && !p.data.bloqueado, "perfil nuevo: " + JSON.stringify(p.error || p.data));
+  for (const cambio of [{ correo_confirmado: false }, { bloqueado: true }, { activo: false }]) {
+    const r = await C.trab1.from("perfiles").update(cambio).eq("id", C.trab1.id).select();
+    ok(r.error || !r.data.length, "el trabajador cambió " + Object.keys(cambio)[0]);
+  }
+  const r2 = await C.superadmin.from("perfiles").update({ correo_confirmado: false }).eq("id", C.trab1.id).select();
+  ok(r2.error, "el superadministrador cambió la confirmación del correo");
+  // Código de correo incorrecto: Supabase Auth lo rechaza (alta y recuperación). El correo real no se prueba aquí.
+  const mensajes = [];
+  for (const type of ["email", "recovery"]) {
+    const { data, error } = await nuevo().auth.verifyOtp({ email: C.trab1.email, token: "000000", type });
+    ok(error && !data?.session, "código incorrecto aceptado (" + type + ")");
+    ok(/expired|invalid/i.test(error.message + " " + (error.code || "")), "mensaje inesperado (" + type + "): " + error.message);
+    mensajes.push(type + ": " + (error.code || error.message));
+  }
+  return "perfil confirmado y activo · 4 cambios indebidos rechazados · " + mensajes.join(" · ");
 });
 
 /* ---------- 4. Requisito: creador registra 8 h en Android; administrador lo ve en Windows; trabajador en iPhone ---------- */

@@ -1695,6 +1695,11 @@ function nubeMsg(e) {
   const m = String(e?.message || e || ""), code = String(e?.code || "");
   if (!navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(m)) return "Sin conexión. Inténtalo cuando vuelva la cobertura.";
   if (/^CONFLICTO/.test(m) || code === "PT409") return "Otra persona ha cambiado esto mientras lo tenías abierto. Se ha recargado: revísalo y vuelve a guardar.";
+  if (code === "email_not_confirmed" || /Email not confirmed/i.test(m)) return "Tienes que confirmar tu correo: escribe el código que te enviamos o pide otro.";
+  if (/otp_expired|Token has expired or is invalid|invalid.*(otp|token)/i.test(code + " " + m)) return "El código no es correcto o ha caducado. Revísalo o pide otro.";
+  { const s = m.match(/only request this after (\d+) seconds?/i); if (s) return `Espera ${s[1]} segundos para pedir otro código.`; }
+  if (/email rate limit|over_email_send_rate_limit/i.test(code + " " + m)) return "Se han enviado demasiados correos. Espera un rato y vuelve a intentarlo.";
+  if (/same_password|should be different from the old/i.test(code + " " + m)) return "La contraseña nueva debe ser distinta de la anterior.";
   if (/^INVITACION|ALTA: el código|Database error saving new user/.test(m)) return "El código no es válido, ya se usó o ha caducado.";
   if (/ALTA: para crear/.test(m)) return "Para crear una cuenta necesitas un código de invitación.";
   if (/rate limit|too many/i.test(m)) return "Demasiados intentos seguidos. Espera unos minutos.";
@@ -1802,6 +1807,7 @@ function nubeNav(vistas, k) {
 function nubeRender() {
   updSync(); const v = $("#view"), r = (location.hash || "").slice(1);
   if (!NUBE.sesion) { nubeNav([]); v.innerHTML = vEntrar(); return; }
+  if (NUBE.nuevaClave) { nubeNav([]); v.innerHTML = vNuevaClave(); return; }
   const aviso = NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
   if (r === "global" && NUBE.superadmin) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNGlobal(); nAfter.global(); return; }
@@ -1816,7 +1822,35 @@ function nubeRender() {
 const nAfter = {};
 
 /* ---------- Entrar, crear cuenta, campañas ---------- */
+// Comprobación del correo con un código de un solo uso que envía Supabase Auth (alta y contraseña olvidada).
+// Supabase comprueba el código, su caducidad y el límite de intentos; la app solo lo pide y lo envía.
+const REENVIO_S = 60, MAX_FALLOS = 5;
+function vVerificar() {
+  const v = NUBE.verificar, espera = Math.max(0, REENVIO_S - Math.floor((Date.now() - (v.enviado || 0)) / 1000)), clave = v.tipo === "recovery";
+  clearTimeout(NUBE.tReenvio); if (espera) NUBE.tReenvio = setTimeout(() => NUBE.verificar && render(), espera * 1000);
+  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${clave ? "Recuperar la contraseña" : "Confirma tu correo"}</h1>
+  <div class="hint">${v.enviado ? `Te hemos enviado un código de un solo uso a <b>${esc(v.email)}</b>.` : `Para entrar con <b>${esc(v.email)}</b> tienes que confirmar el correo con el código que te enviamos.`} Escríbelo aquí; caduca en 1 hora. Si no lo ves, mira en «Spam» o «Promociones».</div>
+  <div class="card stack" id="fverificar">
+   <label class="f"><span>Código del correo</span><input name="token" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="123456" style="font-size:22px;letter-spacing:.2em;text-align:center"></label>
+   <button class="btn pri" data-act="nVerificar">${clave ? "Comprobar código" : "Confirmar correo"}</button>
+   <button class="btn ghost sm" data-act="nReenviar" ${espera ? "disabled" : ""}>${espera ? `Pedir otro código (en ${espera} s)` : "Pedir otro código"}</button>
+   <button class="btn ghost sm" data-act="nVolverEntrar">Volver</button></div></div>`;
+}
+function vOlvido() {
+  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>He olvidado mi contraseña</h1>
+  <div class="hint">Escribe el correo de tu cuenta. Si existe, te enviaremos un código para elegir una contraseña nueva. Nadie te pedirá la contraseña por mensaje.</div>
+  <div class="card stack" id="folvido"><label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
+   <button class="btn pri" data-act="nPedirRecuperacion">Enviar código</button><button class="btn ghost sm" data-act="nVolverEntrar">Volver</button></div></div>`;
+}
+function vNuevaClave() {
+  return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>Contraseña nueva</h1>
+  <div class="card stack" id="fclave"><label class="f"><span>Contraseña nueva (mínimo 8 caracteres)</span><input name="p1" type="password" autocomplete="new-password"></label>
+   <label class="f"><span>Repítela</span><input name="p2" type="password" autocomplete="new-password"></label>
+   <button class="btn pri" data-act="nGuardarClave">Guardar contraseña</button><button class="btn ghost sm" data-act="nCancelarClave">Ahora no</button></div></div>`;
+}
 function vEntrar() {
+  if (NUBE.verificar) return vVerificar();
+  if (NUBE.olvido) return vOlvido();
   const alta = NUBE.alta;
   return `<div class="stack" style="max-width:440px;margin:0 auto"><h1>${alta ? "Crear cuenta" : "Entrar"}</h1>
   <div class="hint">${alta ? "Solo se puede crear una cuenta con el código de invitación que te dé quien gestiona la campaña (o el administrador de la app, si vas a crear campañas). El código es de un solo uso." : "Entra con tu cuenta de CAMPAÑA CONTROL. La misma cuenta sirve en el móvil y en el ordenador."}</div>
@@ -1826,7 +1860,8 @@ function vEntrar() {
    <label class="f"><span>Correo electrónico</span><input name="email" type="email" autocomplete="email" inputmode="email"></label>
    <label class="f"><span>Contraseña${alta ? " (mínimo 8 caracteres)" : ""}</span><input name="password" type="password" autocomplete="${alta ? "new-password" : "current-password"}"></label>
    <button class="btn pri" data-act="nEntrar">${alta ? "Crear cuenta" : "Entrar"}</button>
-   <button class="btn ghost sm" data-act="nAlta">${alta ? "Ya tengo cuenta: entrar" : "No tengo cuenta: crearla"}</button></div>
+   <button class="btn ghost sm" data-act="nAlta">${alta ? "Ya tengo cuenta: entrar" : "No tengo cuenta: crearla"}</button>
+   ${alta ? "" : `<button class="btn ghost sm" data-act="nOlvide">He olvidado mi contraseña</button>`}</div>
   <button class="btn ghost sm" data-act="nSinCuenta" style="align-self:center">Usar sin cuenta (solo en este dispositivo)</button></div>`;
 }
 function vNCampanas() {
@@ -1846,7 +1881,7 @@ function vNAjustes() {
   return `<div class="stack"><h1>Ajustes</h1>
   <section class="card stack" id="fperfil"><h2>Tu cuenta</h2><div class="muted small">${esc(NUBE.sesion.user.email)}${NUBE.superadmin ? " · superadministrador" : ""}</div>
    <label class="f"><span>Tu nombre (lo ven quienes gestionan tus campañas)</span><input name="nombre" value="${esc(p?.nombre || "")}"></label>
-   <div class="row between"><button class="btn danger" data-act="nSalir">Cerrar sesión</button><button class="btn pri" data-act="nGuardarPerfil">Guardar nombre</button></div></section>
+   <div class="row between"><button class="btn danger" data-act="nSalir">Cerrar sesión</button><span class="row"><button class="btn" data-act="nCambiarClave">Cambiar contraseña</button><button class="btn pri" data-act="nGuardarPerfil">Guardar nombre</button></span></div></section>
   ${NUBE.c ? `<section class="card stack"><h2>Campaña ${esc(NUBE.c.nombre)}</h2><div class="muted small">Tus roles: ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><a class="btn" href="#campanas" style="align-self:flex-start">Cambiar de campaña</a></section>` : ""}
   ${vInstalar()}
   <section class="card stack"><h2>Sin cuenta</h2><div class="hint">Puedes usar la app sin cuenta, con los datos solo en este dispositivo (como la versión 2.3.0).</div><button class="btn" data-act="nSinCuenta" style="align-self:flex-start">Usar sin cuenta</button></section>
@@ -2039,10 +2074,53 @@ Object.assign(A, {
       // El servidor comprueba el código, lo gasta y da el acceso al crear la cuenta (la app no decide nada)
       const r = await NUBE.sb.auth.signUp({ email, password, options: { data: { nombre, codigo_invitacion: codigo } } });
       if (r.error) return toast(nubeMsg(r.error));
-      if (!r.data.session) return toast("Revisa tu correo para confirmar la cuenta y después entra.");
-    } else { const r = await NUBE.sb.auth.signInWithPassword({ email, password }); if (r.error) return toast(nubeMsg(r.error)); }
+      // Con «Confirm email», Supabase no revela si el correo ya existía: devuelve un usuario sin identidades
+      if (!r.data.session && r.data.user && !(r.data.user.identities || []).length) return toast("Ya existe una cuenta con ese correo. Entra con tu contraseña o recupérala.");
+      if (!r.data.session) { NUBE.verificar = { email, tipo: "email", enviado: Date.now(), fallos: 0 }; NUBE.alta = false; render(); return toast("Te hemos enviado un código a tu correo"); }
+    } else {
+      const r = await NUBE.sb.auth.signInWithPassword({ email, password });
+      if (r.error && (r.error.code === "email_not_confirmed" || /Email not confirmed/i.test(r.error.message))) { NUBE.verificar = { email, tipo: "email", enviado: 0, fallos: 0 }; render(); return toast(nubeMsg(r.error)); }
+      if (r.error) return toast(nubeMsg(r.error));
+    }
     NUBE.alta = false; toast("Sesión iniciada");
   },
+  async nVerificar() {
+    const v = NUBE.verificar; if (!v || nSinRed()) return;
+    const token = $('#fverificar [name="token"]').value.replace(/\D/g, "");
+    if (token.length < 6) return toast("Escribe el código que te ha llegado por correo");
+    if (v.fallos >= MAX_FALLOS) return toast("Demasiados intentos con este código: pide otro.");
+    if (v.tipo === "recovery") NUBE.nuevaClave = true;                        // antes de que llegue la sesión
+    const r = await NUBE.sb.auth.verifyOtp({ email: v.email, token, type: v.tipo });
+    if (r.error) { if (v.tipo === "recovery") NUBE.nuevaClave = false; v.fallos++; return toast(nubeMsg(r.error)); }
+    NUBE.verificar = null; NUBE.alta = false; NUBE.olvido = false;
+    toast(v.tipo === "recovery" ? "Código correcto: elige tu contraseña nueva" : "Correo confirmado");
+    if (r.data?.session && !NUBE.sesion) { NUBE.sesion = r.data.session; await nubeTrasSesion(); } else render();
+  },
+  async nReenviar() {
+    const v = NUBE.verificar; if (!v || nSinRed()) return;
+    if (Date.now() - (v.enviado || 0) < REENVIO_S * 1000) return toast("Espera un poco para pedir otro código");
+    const r = v.tipo === "recovery" ? await NUBE.sb.auth.resetPasswordForEmail(v.email) : await NUBE.sb.auth.resend({ type: "signup", email: v.email });
+    if (r.error) return toast(nubeMsg(r.error));
+    Object.assign(v, { enviado: Date.now(), fallos: 0 }); toast("Te hemos enviado otro código"); render();
+  },
+  nVolverEntrar() { NUBE.verificar = null; NUBE.olvido = false; NUBE.nuevaClave = false; clearTimeout(NUBE.tReenvio); render(); },
+  nOlvide() { NUBE.olvido = true; NUBE.alta = false; render(); },
+  async nPedirRecuperacion() {
+    const email = $('#folvido [name="email"]').value.trim(); if (!/^\S+@\S+\.\S+$/.test(email)) return toast("Escribe tu correo"); if (nSinRed()) return;
+    const r = await NUBE.sb.auth.resetPasswordForEmail(email);
+    if (r.error) return toast(nubeMsg(r.error));
+    NUBE.olvido = false; NUBE.verificar = { email, tipo: "recovery", enviado: Date.now(), fallos: 0 }; render();
+    toast("Si existe una cuenta con ese correo, te llegará un código");
+  },
+  async nGuardarClave() {
+    const f = $("#fclave"), p1 = $('[name="p1"]', f).value, p2 = $('[name="p2"]', f).value;
+    if (p1.length < 8) return toast("La contraseña debe tener al menos 8 caracteres"); if (p1 !== p2) return toast("Las dos contraseñas no coinciden"); if (nSinRed()) return;
+    const r = await NUBE.sb.auth.updateUser({ password: p1 });
+    if (r.error) return toast(nubeMsg(r.error));
+    NUBE.nuevaClave = false; toast("Contraseña cambiada"); render();
+  },
+  nCancelarClave() { NUBE.nuevaClave = false; render(); },
+  nCambiarClave() { NUBE.nuevaClave = true; render(); },
   nSalir() { confirmar("¿Cerrar la sesión en este dispositivo?", async () => { nubeDesuscribir(); await NUBE.sb.auth.signOut(); history.replaceState(null, "", "#"); }, "Cerrar sesión"); },
   nSinCuenta() { confirmar("La app se usará sin cuenta y los datos quedarán solo en este dispositivo. Puedes volver a entrar con tu cuenta desde Ajustes.", async () => { try { localStorage.setItem(PREF_MODO, "local"); } catch (e) { } location.hash = ""; location.reload(); }, "Usar sin cuenta"); },
   nConCuenta() { try { localStorage.setItem(PREF_MODO, "cuenta"); } catch (e) { } location.hash = ""; location.reload(); },

@@ -41,14 +41,16 @@ Revisión del 18-11-2026, al retomar el desarrollo tras la pausa del 7-11-2026. 
 | **Alta controlada:** solo se crea una cuenta con un código válido; el servidor lo comprueba, lo gasta y da el acceso (campaña, rol y ficha) en la misma transacción | ✔ Verificada | 5 pruebas locales nuevas; 17/17 reales **con y sin** el hook; app: altas sin código, con código inventado, anulado y reutilizado rechazadas |
 | Solo el superadministrador autoriza creadores (código de un solo uso desde el panel global) | ✔ Verificado | Local, real y en la app: la persona crea su cuenta y su campaña |
 | Creadores: invitan solo a sus campañas, con los roles que pueden dar; ven y anulan invitaciones sin usar | ✔ Verificado | Local (10 intentos indebidos rechazados) y en la app (anular) |
+| **Sin permisos hasta confirmar el correo** (migración 000005): una cuenta sin correo confirmado está inactiva aunque su invitación sea válida; se activa sola al confirmar; nadie la activa a mano; el bloqueo del superadministrador se respeta | ✔ Verificado en la base de datos | 2 pruebas locales nuevas (23/23); real 18/18 (perfiles confirmados, cambios indebidos rechazados) |
+| Pantallas de confirmación por código: «Confirma tu correo», «Pedir otro código» (60 s), máximo 5 intentos por código, cuenta sin confirmar, «He olvidado mi contraseña», «Cambiar contraseña» | ✔ Interfaz verificada **con respuestas simuladas** | Prueba `correo-codigo`. Contra el servidor real solo se ha comprobado que un código incorrecto se rechaza (`otp_expired`) |
 
 ## 4. Funcionalidades pendientes
 
 | Funcionalidad | Estado |
 | --- | --- |
 | Partes de la interfaz con cuenta aún sin prueba en la app: pagos y entregas, vista del dueño («Mi cuenta»), pantalla «Cuentas», maquinaria en el parte, quitar acceso, terminar asignación, panel global del superadministrador, cerrar sesión, sin conexión | Programadas; la base de datos sí está probada para todas ellas (`real.test.mjs`). Falta ampliar `nube-sesiones` |
-| **Comprobación del correo** («Confirm email» con SMTP gratuito de Gmail y código de 6 cifras en la app) | Pendiente. Necesita que el dueño configure el SMTP (ver sección 10) |
-| Restablecer contraseña olvidada | Pendiente (con el SMTP, el correo de Supabase lo resuelve) |
+| **Envío real del código por correo** | **Sin probar.** La app y la base de datos están listas. Falta que el dueño configure el SMTP gratuito de Gmail y active «Confirm email» (`docs/GUIA_CORREO_SMTP.md`). Después: prueba real con varios dispositivos |
+| Restablecer contraseña olvidada | Programado (código por correo y contraseña nueva); el envío real, sin probar (mismo SMTP) |
 | Primer superadministrador del proyecto de producción | Procedimiento listo (código emitido por el propietario en el editor SQL); el proyecto no existe todavía |
 | Fotos de documentos en Storage privado | Migración SQL escrita (`…000002_almacenamiento.sql`); falta la interfaz y probarla |
 | Documentos, plantillas y gráficas por quincena en modo cuenta | Pendiente: en modo cuenta aún no hay pantalla de documentos ni gráficas |
@@ -72,6 +74,8 @@ Comprobado el 18-11-2026 sobre el proyecto real (no simulado):
 | Migraciones aplicadas | 000001 (tablas con RLS activada y **forzada**), 000002 (bucket privado `fotos`), 000003 (`guardar_parte` con `PT409`), **000004 alta controlada** (aplicada el 18-11; huella del SQL comprobada antes de ejecutarlo). Ahora 23 tablas, 75 políticas, 37 claves foráneas |
 | Hook «Before User Created» | **Activado** → `public.hook_alta_con_codigo` (plan Free) |
 | Ajustes de acceso | Registro permitido (filtrado por código); inicio anónimo, enlace manual, teléfono y proveedores sociales **desactivados**; solo correo y contraseña |
+| Migración 000005 (correo confirmado) | Aplicada el 18-11 (huella comprobada). Antes se verificó que las 104 cuentas tenían el correo confirmado: no se desactivó ninguna |
+| SMTP propio | **No configurado** (correo integrado de Supabase, que no sirve para usuarios reales) |
 | Disparadores en `auth.users` | Solo `al_registrarse` (crea el perfil). El disparador por correo **eliminado** (SQL ejecutado y verificado: 0) |
 | Superadministrador | Una cuenta ficticia fija designada por uuid. Las cuentas recién creadas se comprobaron **sin** permisos antes de designarlas |
 | Permiso de crear campañas | Solo las 2 cuentas ficticias creadoras fijas (se retiró a 9 cuentas de pruebas anteriores) |
@@ -168,6 +172,12 @@ Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpet
       - «Unirme con un código» acepta códigos de creador.
     - Pruebas locales, reales y de la app ampliadas.
     - Aplicada en el proyecto de pruebas y hook activado.
+11. **Confirmación del correo con código de un solo uso** (encargo del dueño del 18-11).
+    - Migración `20261118000005_correo_confirmado.sql`: sin correo confirmado no hay permisos.
+    - Pantallas de la app (confirmar, reenviar, intentos, contraseña olvidada, cambiar contraseña).
+    - Plantillas de correo en `supabase/plantillas-correo/`.
+    - Guía y evaluación del correo gratuito en `docs/GUIA_CORREO_SMTP.md`.
+    - Pruebas: locales 23/23, reales 18/18, `correo-codigo` (simulada), regresión 22/22 y real con sesiones OK.
 
 ## 9. Problemas encontrados
 
@@ -185,15 +195,11 @@ Capturas de cada pantalla, con datos ficticios: se generan con `CAPTURAS=<carpet
 
 ## 10. Próximas tareas recomendadas
 
-1. **Comprobación del correo para usuarios reales (necesita al dueño).**
-   - El alta controlada ya está hecha.
-   - Falta demostrar que el correo es de quien crea la cuenta:
-     - El dueño crea una «contraseña de aplicación» de Gmail. Necesita la verificación en dos pasos activada.
-     - La escribe él mismo en Supabase → Authentication → SMTP. Nunca en el chat ni en el repositorio.
-     - Se activa «Confirm email», con una plantilla que envía un código de 6 cifras.
-   - En la app: pantalla «Escribe el código que te hemos enviado» (`verifyOtp`).
-   - Con eso también funciona «He olvidado mi contraseña».
-   - Detalle en `docs/PERMISOS_Y_SEGURIDAD.md`.
+1. **Correo real (necesita al dueño).** Pasos 1 a 4 de `docs/GUIA_CORREO_SMTP.md`:
+   - una cuenta de Gmail nueva para la app, con contraseña de aplicación escrita por el dueño en Supabase;
+   - las plantillas;
+   - activar «Confirm email».
+   - Después, Claude hace la prueba real de extremo a extremo con varios dispositivos.
 2. **Ampliar la prueba real de la app**: pagos y entregas, vista del dueño, «Cuentas», maquinaria, quitar acceso, panel global y comportamiento sin conexión.
 3. **Restablecer contraseña:** con el SMTP del punto 1, por correo de Supabase. Nunca se envían contraseñas.
 4. Documentos y fotos en Storage privado (interfaz y pruebas reales con la política ya escrita).

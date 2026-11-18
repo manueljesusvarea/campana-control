@@ -9,6 +9,7 @@ create table auth.users (
   id uuid primary key,
   email text unique,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
+  email_confirmed_at timestamptz,
   last_sign_in_at timestamptz
 );
 -- Igual que en Supabase: el usuario sale de la reclamación «sub» del JWT

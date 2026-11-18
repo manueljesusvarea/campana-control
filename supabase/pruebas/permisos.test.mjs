@@ -23,7 +23,7 @@ await aplicar(f => f < "20261118000004");
 const U = {};
 for (const n of ["super", "creadorA", "creadorB", "adminA", "jefe1", "jefe2", "trab1", "trab2", "dueno1", "dueno2", "intruso"]) {
   U[n] = crypto.randomUUID();
-  await db.query("insert into auth.users (id, email) values ($1, $2)", [U[n], n + "@ficticio.test"]);   // crea el perfil por disparador
+  await db.query("insert into auth.users (id, email, email_confirmed_at) values ($1, $2, now())", [U[n], n + "@ficticio.test"]);   // crea el perfil por disparador
 }
 // Backend (propietario): superadministrador y permiso para crear campañas. No hay forma de hacerlo desde la app.
 await db.query("insert into public.superadmin (user_id) values ($1)", [U.super]);
@@ -251,9 +251,9 @@ await prueba("Una ficha solo se vincula a una cuenta (sin duplicados)", async ()
 
 /* ---------- Alta controlada (migración 000004) ---------- */
 // Alta de cuenta como la hace Supabase Auth: un INSERT en auth.users (dispara al_registrarse). Si falla, no queda nada.
-async function alta(email, meta) {
+async function alta(email, meta, confirmado = true) {
   const id = crypto.randomUUID();
-  try { await db.transaction(tx => tx.query("insert into auth.users (id, email, raw_user_meta_data) values ($1, $2, $3)", [id, email, JSON.stringify(meta || {})])); }
+  try { await db.transaction(tx => tx.query("insert into auth.users (id, email, raw_user_meta_data, email_confirmed_at) values ($1, $2, $3, case when $4 then now() end)", [id, email, JSON.stringify(meta || {}), confirmado])); }
   catch (e) { return { error: e.message, existe: (await db.query("select count(*)::int n from auth.users where id = $1", [id])).rows[0].n + (await db.query("select count(*)::int n from public.perfiles where id = $1", [id])).rows[0].n }; }
   return { id };
 }
@@ -343,6 +343,46 @@ await prueba("Invitaciones: cada creador solo a sus campañas; administrador, je
   ok((await como(U.creadorB, ({ q }) => q("select id from public.invitaciones where campana_id = $1", [A.c]))).length === 0, "B ve invitaciones de A");
   ok(await como(U.super, ({ uno }) => uno("select public.crear_invitacion($1, 'creador') as c", [A.c])), "el superadministrador no puede invitar a un creador");
   return "10 intentos indebidos rechazados";
+});
+
+/* ---------- Correo confirmado (migración 000005) ---------- */
+await prueba("Sin confirmar el correo no hay permisos, aunque la invitación sea válida; al confirmar se activa", async () => {
+  const t4 = (await como(U.creadorA, ({ uno }) => uno("insert into trabajadores (campana_id, nombre) values ($1, 'Trabajador Cuatro') returning id", [A.c]))).id;
+  await como(U.creadorA, ({ uno }) => uno("insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 1500, '2026-11-17')", [A.c, t4]));
+  const r = await alta("sin-confirmar@ficticio.test", { nombre: "Sin confirmar", codigo_invitacion: await invitar(U.creadorA, A.c, "trabajador", t4) }, false);
+  ok(r.id, "alta: " + r.error);
+  const p0 = (await db.query("select activo, correo_confirmado from public.perfiles where id = $1", [r.id])).rows[0];
+  ok(!p0.activo && !p0.correo_confirmado, "perfil sin confirmar activo: " + JSON.stringify(p0));
+  // Aunque tuviera una sesión, no ve ni hace nada
+  for (const t of ["trabajadores", "pagos", "partes_filas", "campanas", "miembros"]) ok((await como(r.id, ({ q }) => q(`select * from ${t}`))).length === 0, "sin confirmar ve " + t);
+  ok((await como(r.id, ({ q }) => q("select * from public.mis_campanas()"))).length === 0, "sin confirmar ve sus campañas");
+  await falla(r.id, ({ q }) => q("select public.resumen_trabajador($1)", [A.c]));
+  await falla(r.id, ({ q }) => q("select public.canjear_invitacion($1)", ["ABCD-EF01-2345-6789"]));
+  // Nadie lo activa a mano: ni él mismo ni el superadministrador
+  await falla(r.id, ({ q }) => q("update public.perfiles set activo = true, correo_confirmado = true where id = $1", [r.id]));
+  await como(U.super, ({ q }) => q("update public.perfiles set activo = true where id = $1", [r.id]));
+  ok(!(await db.query("select activo from public.perfiles where id = $1", [r.id])).rows[0].activo, "el superadministrador activó una cuenta sin confirmar");
+  await falla(U.super, ({ q }) => q("update public.perfiles set correo_confirmado = true where id = $1", [r.id]));
+  // Supabase confirma el correo (el usuario escribió el código de 6 cifras) → se activa y ve lo suyo
+  await db.query("update auth.users set email_confirmed_at = now() where id = $1", [r.id]);
+  const p1 = (await db.query("select activo, correo_confirmado from public.perfiles where id = $1", [r.id])).rows[0];
+  ok(p1.activo && p1.correo_confirmado, "no se activó al confirmar: " + JSON.stringify(p1));
+  const res = await como(r.id, ({ uno }) => uno("select public.resumen_trabajador($1) r", [A.c]));
+  ok(+res.r.entregado_cent === 1500, "tras confirmar no ve lo suyo: " + JSON.stringify(res.r));
+  return "inactiva sin confirmar (5 tablas vacías, 2 funciones rechazadas, nadie la activa) · activa al confirmar";
+});
+
+await prueba("Un bloqueo del superadministrador se mantiene aunque el correo se confirme después", async () => {
+  const cod = (await como(U.super, ({ uno }) => uno("select public.crear_autorizacion_creador(3) as c"))).c;
+  const r = await alta("bloqueado@ficticio.test", { nombre: "Bloqueado", codigo_invitacion: cod }, false);
+  ok(r.id, "alta: " + r.error);
+  await como(U.super, ({ q }) => q("update public.perfiles set bloqueado = true where id = $1", [r.id]));     // lo bloquea antes de confirmar
+  await db.query("update auth.users set email_confirmed_at = now() where id = $1", [r.id]);
+  ok(!(await db.query("select activo from public.perfiles where id = $1", [r.id])).rows[0].activo, "el bloqueo se perdió al confirmar");
+  await falla(r.id, ({ q }) => q("select public.crear_campana('No debería', 2026)"));
+  await como(U.super, ({ q }) => q("update public.perfiles set activo = true where id = $1", [r.id]));        // lo desbloquea
+  ok(await como(r.id, ({ uno }) => uno("select public.crear_campana('Ya desbloqueado', 2026) as id")), "desbloqueado no puede crear campaña");
+  return "bloqueado tras confirmar · desbloqueo del superadministrador";
 });
 
 /* ---------- Resumen ---------- */
