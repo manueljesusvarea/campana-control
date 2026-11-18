@@ -22,6 +22,7 @@ Revisión del 18-11-2026, al retomar el desarrollo tras la pausa del 7-11-2026. 
 - **`main`:** `f4c9c1e`, con las etiquetas `v2.3.0` y `v2.3.0-publica`. No se ha tocado.
 - **Commits de esta sesión** (ver la sección 8):
   - `f21e5f5`: modo con cuenta, migración segura desde 2.3.0, cuentas de prueba por uuid.
+  - `ccbf086`: carrera en recargas corregida, prueba real con 5 sesiones y este documento.
 
 ## 3. Funcionalidades terminadas
 
