@@ -44,7 +44,9 @@ jobs:
           java-version: 21
           cache: gradle
       - name: Generar www/ (configuración de pruebas)
-        run: python3 herramientas/construir_www.py && grep -q '"entorno": "pruebas"' www/config-nube.js
+        run: |
+          python3 herramientas/construir_www.py
+          grep -q '"entorno": "pruebas"' www/config-nube.js
       - name: Instalar Capacitor (sin ejecutar scripts de paquetes)
         run: npm ci --ignore-scripts
       - name: Copiar la app web al proyecto Android
@@ -78,7 +80,9 @@ jobs:
           node-version: 22
       - name: Generar www/ (configuración de pruebas)
         shell: bash
-        run: python herramientas/construir_www.py && grep -q '"entorno": "pruebas"' www/config-nube.js
+        run: |
+          python herramientas/construir_www.py
+          grep -q '"entorno": "pruebas"' www/config-nube.js
       - name: Instalar Electron y electron-builder
         working-directory: windows
         run: npm ci
