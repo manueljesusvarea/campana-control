@@ -682,7 +682,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       const parte = await NUBE.sb.from("partes_filas").update({ horas: 1 }).eq("campana_id", NUBE.c.campana_id).select();
       return { dueno: NUBE.d.cuenta.dueno, horas: +NUBE.d.cuenta.horas, total: NUBE.d.cuenta.mano_cent, otro: !!otro.error, priv: (priv.data || []).length, pagos: (pagos.data || []).length,
         edita: !(parte.error || !(parte.data || []).length), vistas: nubeVistas().map(x => x[0]), texto: /Dueño E2E Dos/.test(t.texto()) };`);
-    ok(due.dueno === "Dueño E2E" && due.horas === 17 && due.total === 20400 && due.otro && !due.priv && !due.pagos && !due.edita && due.vistas.join() === "mi-cuenta" && !due.texto, "dueño: " + JSON.stringify(due));
+    ok(due.dueno === "Dueño E2E" && due.horas === 17 && due.total === 20400 && due.otro && !due.priv && !due.pagos && !due.edita && due.vistas.join() === "mi-cuenta,documentos" && !due.texto, "dueño: " + JSON.stringify(due));
 
     // 5d) Pagos y entregas (creador) e informes de cada rol: mismos cálculos que la 2.3.0, PDF y Excel en el dispositivo
     const pagar = (persona, importe, tipo) => ev(movil, `await t.ir("#n-pagos"); render(); await t.esperar(() => t.q("#fnpago"), 8000, "pagos");
@@ -717,6 +717,20 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     ok(totD && Math.abs(totD[9] - cmp.srvTotal) < 0.005 && totD[10] === 50 && !JSON.stringify(hd).includes("Dueño E2E Dos"), "Excel del dueño: " + JSON.stringify(totD));
     ok(!JSON.stringify(hj).includes("Importe") && !JSON.stringify(hj).includes("€") && !JSON.stringify(hj).includes("Trabajador E2E Uno"), "Excel del jefe con dinero o con otro equipo: " + JSON.stringify(hj).slice(0, 300));
 
+    // 5f) Documentos y fotos privadas por rol: el dueño ve la suya; el lector la ve; trabajador y jefe no pueden leerla
+    const foto = await ev(movil, `await t.ir("#n-documentos"); NUBE.docAbierto = null; render(); await t.esperar(() => t.q("#fndoc"), 8000, "documentos");
+      t.rellenar('#fndoc [name="dueno"]', ${JSON.stringify(fichas.d)}); await t.pulsar('[data-act="nCrearDoc"]'); await t.esperar(() => NUBE.docAbierto && NUBE.d.docs.length === 1, 15000, "crear documento");
+      const f = new File([await new Promise(r => ${JPEG("PARTE EN PAPEL", 1200, 900)}.toBlob(r, "image/jpeg", .9))], "papel.jpg", { type: "image/jpeg" });
+      await nSubirFoto(NUBE.docAbierto, f); return NUBE.d.fotos[0]?.ruta;`);
+    ok(foto, "no se subió la foto del documento");
+    const leer = w => ev(w, `const r = await NUBE.sb.storage.from("fotos").download(${JSON.stringify(foto)}); const fl = await NUBE.sb.from("fotos").select("id"); const dc = await NUBE.sb.from("documentos").select("id");
+      return { foto: !r.error && r.data?.size > 1000, filas: (fl.data || []).length, docs: (dc.data || []).length };`);
+    const vista = { dueno: await leer(disp.dueno), lector: await leer(disp.lector), trabajador: await leer(disp.trab1), jefe: await leer(disp.jefe) };
+    ok(vista.dueno.foto && vista.dueno.docs === 1 && vista.lector.foto && !vista.trabajador.foto && !vista.trabajador.filas && !vista.jefe.foto && !vista.jefe.docs,
+      "acceso a fotos por rol: " + JSON.stringify(vista));
+    const subeDueno = await ev(disp.dueno, `const r = await NUBE.sb.storage.from("fotos").upload(NUBE.c.campana_id + "/intruso.jpg", new Blob(["x"], { type: "image/jpeg" })); const d = await NUBE.sb.storage.from("fotos").remove([${JSON.stringify(foto)}]);
+      const sigue = await NUBE.sb.storage.from("fotos").download(${JSON.stringify(foto)}); return { subir: !r.error, borrar: !sigue.error && !!sigue.data };`);
+    ok(!subeDueno.subir && subeDueno.borrar, "el dueño pudo subir o borrar fotos: " + JSON.stringify(subeDueno));
     // 5e) Sincronización sin depender del tiempo real y casos de seguridad con la app abierta
     // · Cambios simultáneos: el editor tiene el parte abierto y modificado; el creador lo guarda antes → el editor recibe «conflicto» y no pisa nada
     const conflicto = await ev(disp.editor, `nubeDesuscribir(); await t.ir("#n-parte"); NUBE.borrador = null; render(); await t.esperar(() => t.q('[data-np="kilos"]'), 8000, "parte del editor");
@@ -761,7 +775,8 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     const bl = await accionCuenta(pcSa, "nBloquear", cred.trab1.usuario);
     ok(/bloqueada/i.test(bl), "bloqueo: " + bl);
     await disp.trab1.webContents.reload(); await new Promise(r => disp.trab1.webContents.once("did-finish-load", r)); await disp.trab1.webContents.executeJavaScript(AYUDAS + "; true");
-    const tb = await ev(disp.trab1, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && (t.q("#fentrar") || /bloqueada/i.test(t.texto())), 20000, "estado tras bloquear");
+    const tb = await ev(disp.trab1, `try { await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && (t.q("#fentrar") || /bloqueada/i.test(t.texto())), 20000, "estado tras bloquear"); }
+      catch (e) { throw new Error(e.message + " · pantalla: «" + (document.querySelector("#view")?.innerText || "").slice(0, 160) + "» · aviso: «" + (t.q("#toast")?.textContent || "") + "»"); }
       return { pantalla: t.q("#fentrar") ? "entrar" : "bloqueada", datos: !!NUBE.d };`);
     ok(!tb.datos, "el trabajador bloqueado ve datos: " + JSON.stringify(tb));
     const tb2 = await ev(disp.trab1, `if (!t.q("#fentrar")) { await NUBE.sb.auth.signOut({ scope: "local" }); await t.esperar(() => t.q("#fentrar"), 10000, "salir"); }
@@ -789,10 +804,97 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       }
     }
     return { campana: nombreCamp, cuentas: Object.keys(cred).length + 1, parte: { creador: p1, editor: p2 }, tiempoReal_ms: trab.ms - t0,
-      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, dueno: { horas: due.horas, euros: due.total / 100, otroDueno: "rechazado" }, informes: { archivos: archivos.length, cuentaDueno: cmp.total, servidor: cmp.srvTotal }, sincro: { conflicto: "rechazado y recargado", avisoPerdido: "recuperado por huella", sinConexion: "conserva y se pone al día", permisoRetirado: "sin Parte/Pagos", bloqueoEnVivo: "sin datos" }, salir: "sin datos", web: URL_PUBLICADA || "servidor local", bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
+      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, dueno: { horas: due.horas, euros: due.total / 100, otroDueno: "rechazado" }, informes: { archivos: archivos.length, cuentaDueno: cmp.total, servidor: cmp.srvTotal }, fotosPorRol: vista, sincro: { conflicto: "rechazado y recargado", avisoPerdido: "recuperado por huella", sinConexion: "conserva y se pone al día", permisoRetirado: "sin Parte/Pagos", bloqueoEnVivo: "sin datos" }, salir: "sin datos", web: URL_PUBLICADA || "servidor local", bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
   } finally { SRV.nube = false; }
 });
 
+
+// Migración y copias contra el proyecto real: copia de la 2.3.0 (caso de control + documento con foto) → importación con
+// asistente (simulación, importación, fotos, comprobación de importes) → copia de campaña 3.0 con fotos → restauración en
+// otra campaña (aislada) → mismos importes, documento, foto y PDF. Fotos privadas: acceso según rol, duplicados y restos.
+pruebaRed("nube-migracion", "3.0 real: importar copia 2.3.0 (mismos importes y foto), copia de campaña 3.0 y restauración aislada, fotos privadas", async () => {
+  const fijas = JSON.parse(fs.readFileSync(path.join(RAIZ, "supabase", "pruebas", ".cuentas-pruebas.json"), "utf8"));
+  const run = Date.now().toString(36).slice(-5);
+  // 1) Dispositivo con la 2.3.0 (sin cuenta): caso de control, documento con foto y copia .json
+  const a = await abrir("mig-origen-" + run);
+  const ids = await crearCasoControlPorPantalla(a);
+  await ev(a, `const did = Object.keys(S.duenos)[0]; UI.dueVer = did; await t.ir("#duenos"); render(); await t.pulsar('[data-act="nuevoDoc"]'); await t.pulsar('[data-act="crearDoc"]');
+    const blob = await new Promise(r => ${JPEG("PAPEL 2.3.0", 1800, 1200)}.toBlob(r, "image/jpeg", .9));
+    const dt = new DataTransfer(); dt.items.add(new File([blob], "papel.jpg", { type: "image/jpeg" }));
+    const inp = document.querySelector("#docFoto"); inp.files = dt.files; inp.dispatchEvent(new Event("change"));
+    await t.esperar(() => Object.values(S.documentos)[0]?.escaneos?.length === 1, 6000, "foto guardada"); closeModal(); return true;`);
+  const esperado = await ev(a, `const tr = resumenTrab(${JSON.stringify(ids.tid)}, {}), du = cuentaDueno(${JSON.stringify(ids.did)}, {});
+    return { ganado: tr.importe, entregado: tr.entregado, horas: tr.horas, cuenta: du.total, pagado: du.pagado };`);
+  const n0 = descargas.length; await ev(a, `await t.ir("#ajustes"); await t.pulsar('[data-act="exportar"]'); return true;`);
+  const copia230 = fs.readFileSync((await esperarDescarga(a.__perfil, n0)).ruta, "utf8");
+  SRV.nube = true;
+  try {
+    // 2) Superadministrador en la nube: campaña vacía e importación con el asistente
+    const w = await abrir("mig-nube-" + run, { esperarApp: false, url: URL_PUBLICADA });
+    await w.webContents.executeJavaScript(AYUDAS + "; true");
+    await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 15000, "entrar");
+      t.rellenar('#fentrar [name="usuario"]', ${JSON.stringify(fijas.propietario.usuario)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(fijas.propietario.password)});
+      await t.pulsar('[data-act="nEntrar"]'); await t.esperar(() => NUBE.perfil && NUBE.campanas, 20000, "sesión"); return true;`);
+    const crearCamp = nombre => ev(w, `await t.ir("#campanas"); render(); await t.esperar(() => t.q("#fnueva"), 8000, "nueva campaña"); t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombre)});
+      await t.pulsar('[data-act="nCrearCampana"]'); await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombre)} && NUBE.d, 20000, "crear campaña"); return NUBE.c.campana_id;`);
+    const importar = (archivo, nombre, destino) => ev(w, `await t.ir("#copias"); render(); await t.esperar(() => t.q("#impArchivo"), 8000, "copias");
+      await nImpLeer(new File([${JSON.stringify(archivo)}], ${JSON.stringify(nombre)}, { type: "application/json" })); NUBE.imp.destino = ${JSON.stringify(destino)}; render();
+      if (NUBE.imp.error) throw new Error(NUBE.imp.error);
+      await t.pulsar('[data-act="nImpRevisar"]'); await t.esperar(() => NUBE.imp.simulacion || NUBE.imp.resultado, 20000, "simulación");
+      const sim = NUBE.imp.simulacion; if (!sim) return { error: NUBE.imp.resultado };
+      await t.pulsar('[data-act="nImpConfirmar"]'); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar"); t.q("#cfOk").click();
+      await t.esperar(() => NUBE.imp.comprobacion || (NUBE.imp.resultado && /No se ha importado/.test(NUBE.imp.resultado)), 60000, "importación y comprobación");
+      return { convOk: NUBE.imp.convOk, convDif: NUBE.imp.convDif, sim: { partes: sim.partes.nuevos, pagos: sim.pagos.nuevos, docs: sim.documentos.nuevos }, resultado: NUBE.imp.resultado, coincide: NUBE.imp.coincide,
+        totales: { ganado: sumaTot(NUBE.imp.totales, "trabajadores", "ganado"), cuenta: sumaTot(NUBE.imp.totales, "duenos", "total") }, fotos: NUBE.d.fotos.length, docs: NUBE.d.docs.length, campana: NUBE.c.campana_id };`);
+    const C1 = await crearCamp("Importación E2E " + run);
+    const imp = await importar(copia230, "CampanaControl-copia.json", C1);
+    ok(imp.convOk && imp.coincide && imp.sim.partes === 2 && imp.sim.pagos === 2 && imp.fotos === 1 && imp.docs === 1, "importación 2.3.0: " + JSON.stringify(imp));
+    ok(Math.abs(imp.totales.ganado - esperado.ganado) < 0.005 && Math.abs(imp.totales.cuenta - esperado.cuenta) < 0.005, "importes distintos de la 2.3.0: " + JSON.stringify({ imp: imp.totales, esperado }));
+    // La misma copia otra vez: el servidor la rechaza (no se duplica nada)
+    const rep = await importar(copia230, "CampanaControl-copia.json", C1);
+    ok(rep.error && /ya se importó/.test(rep.error), "la copia se pudo importar dos veces: " + JSON.stringify(rep));
+    // 3) Copia de campaña 3.0 con fotos (huella) y restauración en otra campaña vacía (aislada)
+    const n1 = descargas.length;
+    await ev(w, `await t.ir("#copias"); render(); await t.esperar(() => t.q("#cpCamp"), 8000, "copias"); t.rellenar("#cpCamp", ${JSON.stringify(C1)}); t.rellenar("#cpFotos", "si"); await t.pulsar('[data-act="nExportar"]'); return true;`);
+    const copia3 = JSON.parse(fs.readFileSync((await esperarDescarga(w.__perfil, n1, 30000)).ruta, "utf8"));
+    ok(copia3.tipo === "copia-campana-3" && copia3.fotos.length === 1 && copia3.integridad.sha256.length === 64 && !/password|clave_temporal|sb_secret/i.test(JSON.stringify(copia3)), "copia 3.0: " + JSON.stringify(copia3.integridad).slice(0, 200));
+    // Una copia manipulada se rechaza
+    const mala = JSON.parse(JSON.stringify(copia3)); mala.datos.pagos[0].importe_cent += 100;
+    const manip = await ev(w, `await nImpLeer(new File([${JSON.stringify(JSON.stringify(mala))}], "mala.json")); return NUBE.imp.error || "";`);
+    ok(/dañada o se ha modificado/.test(manip), "aceptó una copia manipulada: " + manip);
+    const C2 = await crearCamp("Restauración E2E " + run);
+    const res = await importar(JSON.stringify(copia3), "copia3.json", C2);
+    ok(res.coincide && res.sim.partes === 2 && res.fotos === 1 && res.docs === 1, "restauración: " + JSON.stringify(res));
+    // 4) Documento restaurado: foto legible (privada, con sesión) y PDF del documento con la foto
+    const n2 = descargas.length;
+    const docInfo = await ev(w, `await t.ir("#n-documentos"); NUBE.docAbierto = NUBE.d.docs[0].id; render(); nAfter.documentos();
+      await t.esperar(() => t.q("#nThumbs img")?.src?.startsWith("blob:"), 15000, "foto en pantalla"); t.q('[data-act="nPdfDocN"]').click(); return true;`);
+    const pdfDoc = await esperarDescarga(w.__perfil, n2, 30000);
+    ok(fs.statSync(pdfDoc.ruta).size > 20000, "el PDF del documento no lleva la foto: " + fs.statSync(pdfDoc.ruta).size + " bytes");
+    // 5) Fotos privadas: sin sesión no se pueden leer; duplicado rechazado; archivo suelto detectado y limpiado
+    const priv = await ev(w, `const f = NUBE.d.fotos[0];
+      const anon = window.supabase.createClient(window.CC_NUBE.url, window.CC_NUBE.clave, { auth: { persistSession: false } });
+      const a1 = await anon.storage.from("fotos").download(f.ruta), a2 = await anon.storage.from("fotos").createSignedUrl(f.ruta, 60), a3 = await anon.from("fotos").select("*");
+      const pub = await fetch(window.CC_NUBE.url + "/storage/v1/object/public/fotos/" + f.ruta).then(r => r.status);
+      const blob = await nFotoBlob(f.ruta); const sha = await sha256Hex(await blob.arrayBuffer());
+      // La misma foto elegida dos veces (mismo archivo original): la segunda se rechaza
+      const orig = new File([await new Promise(r => ${JPEG("OTRA FOTO", 1500, 1000)}.toBlob(r, "image/jpeg", .9))], "otra.jpg", { type: "image/jpeg" });
+      const k0 = NUBE.d.fotos.length; await nSubirFoto(NUBE.docAbierto, orig); const k1 = NUBE.d.fotos.length; await nSubirFoto(NUBE.docAbierto, orig); const dup = k1 === k0 + 1 && NUBE.d.fotos.length === k1;
+      const suelta = NUBE.c.campana_id + "/suelta-" + Date.now() + ".jpg"; await NUBE.sb.storage.from("fotos").upload(suelta, blob, { contentType: "image/jpeg" });
+      const h1 = (await NUBE.sb.rpc("fotos_huerfanas", { p_campana: NUBE.c.campana_id })).data || [];
+      await NUBE.sb.storage.from("fotos").remove(h1); const h2 = (await NUBE.sb.rpc("fotos_huerfanas", { p_campana: NUBE.c.campana_id })).data || [];
+      return { anonDescarga: !!a1.error, anonFirma: !!a2.error, anonFilas: (a3.data || []).length, publica: pub, shaIgual: sha === f.sha256, duplicadoRechazado: dup, huerfanas: h1.length, trasLimpiar: h2.length };`);
+    ok(priv.anonDescarga && priv.anonFirma && !priv.anonFilas && priv.publica >= 400 && priv.shaIgual && priv.duplicadoRechazado && priv.huerfanas === 1 && priv.trasLimpiar === 0, "fotos privadas: " + JSON.stringify(priv));
+    // 6) Borrar el documento borra también su foto en Storage
+    const borr = await ev(w, `const ruta = NUBE.d.fotos[0].ruta; t.q('[data-act="nBorrarDoc"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar"); t.q("#cfOk").click();
+      await t.esperar(() => !NUBE.d.docs.length, 15000, "documento borrado");
+      const l = await NUBE.sb.storage.from("fotos").list(NUBE.c.campana_id, { limit: 100 });
+      const h = (await NUBE.sb.rpc("fotos_huerfanas", { p_campana: NUBE.c.campana_id })).data || []; return { archivo: (l.data || []).some(o => ruta.endsWith("/" + o.name)), enCarpeta: (l.data || []).length, huerfanas: h.length, fotos: NUBE.d.fotos.length };`);
+    ok(!borr.archivo && !borr.huerfanas && !borr.fotos, "al borrar el documento quedó la foto: " + JSON.stringify(borr));
+    return { esperado2_3_0: esperado, importada: { convOk: imp.convOk, coincide: imp.coincide, fotos: imp.fotos }, repetida: "rechazada", copia3: { huella: copia3.integridad.sha256.slice(0, 12), fotos: copia3.fotos.length },
+      manipulada: "rechazada", restaurada: { coincide: res.coincide, fotos: res.fotos }, pdfDocumento: fs.statSync(pdfDoc.ruta).size, privacidad: priv, borrado: "sin restos", web: URL_PUBLICADA || "servidor local" };
+  } finally { SRV.nube = false; }
+});
 // Solo contra la web publicada (URL_PUBLICADA=https://…): app instalable en HTTPS real (Cloudflare Pages)
 pruebaRed("nube-pwa", "Web publicada: HTTPS, service worker, recarga, dirección de inicio, sin conexión, manifiesto e iconos, caché sin datos", async () => {
   ok(URL_PUBLICADA && URL_PUBLICADA.startsWith("https://"), "falta URL_PUBLICADA=https://…");

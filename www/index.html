@@ -314,6 +314,7 @@ let firstSnap = false, loadTimer = null, netWarn = false;
 // (clave campana-control-v1-danado-<fecha>); si ni eso se puede, no se guarda nada para no perderlo.
 let DANADO = null;
 function saveLocal() {
+  if (typeof S_PRESTADO !== "undefined" && S_PRESTADO) return;   // S tiene datos de la nube solo para calcular: no se guardan aquí
   if (DANADO && !DANADO.copia) { toast("No se guarda: los datos anteriores están dañados y no se pudo apartar una copia. Mira Ajustes."); return; }
   try { localStorage.setItem(LKEY, JSON.stringify({ S })); } catch (e) { toast("No se pudo guardar: el almacenamiento del dispositivo está lleno o bloqueado. Haz una copia de seguridad."); }
 }
@@ -1249,6 +1250,113 @@ const A = {
   },
   infPdf() { return enNube(() => A.infPdf0()); },
   nInfRol(el) { return informeRol(el.dataset.k, el.dataset.f); },
+  // Documentos y fotos (3.0)
+  async nCrearDoc() {
+    const f = leer("#fndoc"), d = NUBE.d, pl = plantillaNube(f.modelo); if (!f.dueno || !pl) return toast("Elige dueño y modelo"); if (nSinRed()) return;
+    const fechas = d.partes.filter(p => p.dueno_id === f.dueno).map(p => p.fecha).sort(), ids = new Set(d.partes.filter(p => p.dueno_id === f.dueno).map(p => p.id));
+    const trabs = [...new Set(d.filas.filter(x => ids.has(x.parte_id)).map(x => x.trabajador_id))];
+    try {
+      const r = await nq(NUBE.sb.from("documentos").insert({ campana_id: NUBE.c.campana_id, dueno_id: f.dueno, plantilla_ref: f.modelo, nombre: pl.nombre, fecha: hoy(), desde: fechas[0] || null, hasta: fechas[fechas.length - 1] || null, campos: {}, trabajadores: trabs }).select("id").single());
+      NUBE.docAbierto = r.id; await nubeCargar(); render(); toast("Documento creado");
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  nAbrirDoc(el) { NUBE.docAbierto = el.dataset.id; render(); },
+  nCerrarDoc() { NUBE.docAbierto = null; render(); },
+  async nGuardarDocN(el) {
+    const x = NUBE.d.docs.find(y => y.id === el.dataset.id); if (!x || nSinRed()) return;
+    const campos = { ...(x.campos || {}) }; $$("#fndocu [data-campo]").forEach(i => campos[i.dataset.campo] = i.value);
+    try { await nq(NUBE.sb.from("documentos").update({ fecha: $('#fndocu [name="fecha"]').value || null, campos, version: x.version + 1 }).eq("id", x.id).select()); await nubeCargar(); render(); toast("Documento guardado"); }
+    catch (e) { toast(nubeMsg(e)); if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") { await nubeCargar(); render(); } }
+  },
+  nBorrarFoto(el) {
+    const f = NUBE.d.fotos.find(x => x.id === el.dataset.id); if (!f) return;
+    confirmar("¿Quitar esta foto del documento? Se borra de la nube.", async () => {
+      if (nSinRed()) return;
+      try { await nq(NUBE.sb.from("fotos").delete().eq("id", f.id).select()); await NUBE.sb.storage.from(BUCKET).remove([f.ruta]); await nubeCargar(); render(); toast("Foto quitada"); } catch (e) { toast(nubeMsg(e)); }
+    }, "Quitar");
+  },
+  nBorrarDoc(el) {
+    const x = NUBE.d.docs.find(y => y.id === el.dataset.id); if (!x) return; const rutas = NUBE.d.fotos.filter(f => f.documento_id === x.id).map(f => f.ruta);
+    confirmar(`¿Borrar este documento${rutas.length ? ` y sus ${rutas.length} foto(s)` : ""}? No se puede deshacer.`, async () => {
+      if (nSinRed()) return;
+      try { await nq(NUBE.sb.from("documentos").delete().eq("id", x.id).select()); if (rutas.length) await NUBE.sb.storage.from(BUCKET).remove(rutas); NUBE.docAbierto = null; await nubeCargar(); render(); toast("Documento borrado"); }
+      catch (e) { toast(nubeMsg(e)); }
+    }, "Borrar");
+  },
+  async nPdfDocN(el) {
+    const id = el.dataset.id, x = NUBE.d.docs.find(y => y.id === id); if (!x) return;
+    try {
+      const fotos = NUBE.d.fotos.filter(f => f.documento_id === id), escaneos = [];
+      for (const f of fotos) escaneos.push({ data: await blobToData(await nFotoBlob(f.ruta)) });
+      const SN = snDocumentos(nConsulta() ? snConsulta() : snDueno());
+      SN.documentos[id].escaneos = escaneos;
+      await conSAsync(SN, () => pdfDocumento(id));
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nRevisarFotos() {
+    if (nSinRed()) return; const c = NUBE.c.campana_id;
+    try {
+      const [sueltas, perdidas] = await Promise.all([nq(NUBE.sb.rpc("fotos_huerfanas", { p_campana: c })), nq(NUBE.sb.rpc("fotos_sin_archivo", { p_campana: c }))]);
+      if (!sueltas.length && !perdidas.length) return toast("Todo en orden: cada foto tiene su ficha y cada ficha su foto.");
+      NUBE.limpieza = { sueltas, perdidas };
+      openModal(`<div class="mh"><h2>Fotos sin usar</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div><div class="stack">
+        ${sueltas.length ? `<p style="margin:0">${sueltas.length} archivo(s) de foto no pertenecen a ningún documento (por ejemplo, una subida interrumpida). Se pueden borrar.</p><button class="btn danger" data-act="nLimpiarFotos" data-k="sueltas">Borrar ${sueltas.length} archivo(s)</button>` : ""}
+        ${perdidas.length ? `<p style="margin:0">${perdidas.length} ficha(s) de foto no tienen su archivo. Se pueden quitar de sus documentos.</p><button class="btn" data-act="nLimpiarFotos" data-k="perdidas">Quitar ${perdidas.length} ficha(s)</button>` : ""}</div>`);
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nLimpiarFotos(el) {
+    const l = NUBE.limpieza; if (!l || nSinRed()) return;
+    try {
+      if (el.dataset.k === "sueltas") { const r = await NUBE.sb.storage.from(BUCKET).remove(l.sueltas); if (r.error) throw r.error; }
+      else await nq(NUBE.sb.from("fotos").delete().in("id", l.perdidas.map(x => x.id)).select());
+      closeModal(); NUBE.limpieza = null; await nubeCargar(); render(); toast("Hecho");
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  // Copias e importación (3.0)
+  async nExportar() {
+    const id = $("#cpCamp")?.value, conFotos = $("#cpFotos")?.value === "si"; if (!id || nSinRed()) return;
+    try {
+      toast("Preparando la copia…");
+      const datos = await nq(NUBE.sb.rpc("exportar_campana", { p_campana: id })), fotos = [];
+      if (conFotos) for (const f of datos.fotos) fotos.push({ documento: f.documento, sha256: f.sha256, data: await blobToData(await nFotoBlob(f.ruta)) });
+      const nombre = NUBE.campanas.find(c => c.campana_id === id)?.nombre || "campana";
+      const cuerpo = JSON.stringify(datos);
+      const copia = { app: "campana-control", tipo: "copia-campana-3", version: APP_VERSION, fecha: new Date().toISOString(), campana: nombre,
+        integridad: { sha256: await sha256Hex(new TextEncoder().encode(cuerpo)), fotos: datos.fotos.length,
+          recuentos: Object.fromEntries(["trabajadores", "duenos", "maquinas", "partes", "pagos", "plantillas", "documentos"].map(k => [k, (datos[k] || []).length])),
+          totales: totalesSN(snDesdeDatos(datos, nombre), datos.trabajadores.map(t => t.o), datos.duenos.map(d => d.o)) }, datos, fotos };
+      await guardarArchivo(`CampanaControl-copia-${slug(nombre)}-${hoy()}.json`, new Blob([JSON.stringify(copia)], { type: "application/json" }));
+    } catch (e) { toast(nubeMsg(e)); }
+  },
+  async nImpRevisar() {
+    const w = NUBE.imp; if (!w || nSinRed()) return;
+    try { w.simulacion = await nImpRpc(true); w.resultado = null; }
+    catch (e) { w.simulacion = null; w.resultado = "No se puede importar: " + String(e?.message || e).replace(/^(IMPORTAR|PERMISO): /, ""); }
+    render();
+  },
+  nImpConfirmar() {
+    const w = NUBE.imp; if (!w?.simulacion) return;
+    const destino = nGestionables().find(c => c.campana_id === w.destino)?.nombre || "";
+    confirmar(`¿Importar en «${destino}»? Se añadirán ${w.simulacion.partes.nuevos} parte(s) y ${w.simulacion.pagos.nuevos} pago(s). No se borra ni se cambia nada de lo que ya hay.`, async () => {
+      if (nSinRed()) return;
+      try {
+        toast("Importando…");
+        const r = await nImpRpc(false); w.hecho = true;
+        const fo = await nImpSubirFotos(r.documentos_ids || {});
+        w.resultado = `Importado: ${r.trabajadores.nuevos} trabajador(es), ${r.duenos.nuevos} dueño(s), ${r.partes.nuevos} parte(s) con ${r.partes.filas} jornada(s), ${r.pagos.nuevos} pago(s) y ${r.documentos.nuevos} documento(s). ${fo}`;
+        await nImpComprobar();
+      } catch (e) { w.resultado = "No se ha importado nada: " + String(e?.message || e).replace(/^(IMPORTAR|PERMISO): /, ""); }
+      render();
+    }, "Importar");
+  },
+  async nImpFotos() {
+    const w = NUBE.imp; if (!w || nSinRed()) return;
+    try { const docs = await nq(NUBE.sb.from("documentos").select("id, origen_id").eq("campana_id", w.destino)); w.resultado = (w.resultado || "") + " Reintento: " + await nImpSubirFotos(Object.fromEntries(docs.filter(x => x.origen_id).map(x => [x.origen_id, x.id]))); await nubeCargar(); }
+    catch (e) { toast(nubeMsg(e)); }
+    render();
+  },
+  nImpCerrar() { NUBE.imp = null; location.hash = "#n-inicio"; render(); },
+
   infXls() { return enNube(() => A.infXls0()); },
   async infPdf0() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await pdfDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await pdfTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await pdfRegistro(fl); else await pdfGrafica(fl); },
   async infXls0() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await xlsDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await xlsTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await xlsRegistro(fl); else await xlsGrafica(fl); },
@@ -1740,7 +1848,7 @@ async function nubeIniciar() {
   await nubeTrasSesion();
 }
 async function nubeTrasSesion() {
-  nubeDesuscribir(); Object.assign(NUBE, { c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null, permisos: null, usuarios: null, fichas: null, altaForm: null });
+  nubeDesuscribir(); nLiberarFotos(); Object.assign(NUBE, { imp: null, docAbierto: null, limpieza: null, c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null, permisos: null, usuarios: null, fichas: null, altaForm: null });
   if (NUBE.sesion) {
     try {
       const uid = NUBE.sesion.user.id;
@@ -1757,7 +1865,7 @@ async function nubeTrasSesion() {
 }
 async function nubeElegir(id, sinRender) {
   const fila = NUBE.campanas.find(c => c.campana_id === id); if (!fila) return;
-  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null; NUBE.permisos = null; UI.inf = null;
+  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null; NUBE.permisos = null; UI.inf = null; NUBE.docAbierto = null;
   try { NUBE.permisos = await nq(NUBE.sb.rpc("mis_permisos", { p_campana: id })); } catch (e) { }
   try { localStorage.setItem(PREF_CAMP, id); } catch (e) { }
   await nubeCargar(); nubeSuscribir();
@@ -1768,20 +1876,22 @@ async function nubeElegir(id, sinRender) {
 // Solo vale la carga más reciente: si una recarga por tiempo real empezó antes de guardar algo y termina
 // después, sus datos (anteriores al cambio) no deben pisar los nuevos.
 let nCargaN = 0;
-async function nubeCargar() {
+// Quien espera una carga recibe siempre la más reciente: si otra (p. ej., por tiempo real) empezó después, se espera a esa
+function nubeCargar() { const p = nubeCargarUna(); NUBE.cargando = p; return p; }
+async function nubeCargarUna() {
   const n0 = nCargaN + 1, c0 = NUBE.c.campana_id;
   const [camps, perm] = await Promise.all([nq(NUBE.sb.rpc("mis_campanas")), nq(NUBE.sb.rpc("mis_permisos", { p_campana: c0 }))]);
   const fila = camps.find(x => x.campana_id === c0);
   if (!fila) throw new Error("PERMISO: ya no tienes acceso a esta campaña");
   if (n0 === nCargaN + 1 && NUBE.c?.campana_id === c0) { NUBE.campanas = camps; NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.permisos = perm; }
-  const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
+  const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { docs: [], fotos: [], plantillas: [], campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
   d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia, empresa").eq("id", c).single());
   if (nConsulta()) {
     const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
     [d.eco, d.trab, d.duenos, d.partes, d.filas, d.pmaq, d.maq, d.pagos, d.miembros, d.asig] = await Promise.all([
       nq(sb.from("campanas_economia").select("precio_hora_trab_cent, precio_hora_dueno_cent, iva, version").eq("campana_id", c).maybeSingle()),
-      sel("trabajadores", "id, nombre, precio_hora_cent, activo, version", ["nombre"]),
-      sel("duenos", "id, nombre, finca, municipio, num, kilos_total, precio_hora_cent, version", ["nombre"]),
+      sel("trabajadores", "id, nombre, precio_hora_cent, activo, origen_id, version", ["nombre"]),
+      sel("duenos", "id, nombre, finca, municipio, num, kilos_total, precio_hora_cent, origen_id, version", ["nombre"]),
       sel("partes", "id, dueno_id, fecha, kilos, notas, version", ["fecha", false]),
       sel("partes_filas", "parte_id, trabajador_id, tipo, horas, nota, fecha"),
       sel("partes_maquinas", "parte_id, maquina_id, cantidad"),
@@ -1789,6 +1899,7 @@ async function nubeCargar() {
       sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
+    d.plantillas = await sel("plantillas", "id, nombre, asesoria, titulo, cuerpo, campos, version", ["nombre"]);
     [d.tpriv, d.dpriv] = await Promise.all([sel("trabajadores_privado", "trabajador_id, nif, nss, telefono"), sel("duenos_privado", "dueno_id, nif, direccion, telefono, poligono, parcela")]);
     const ids = [...new Set(d.miembros.map(m => m.user_id))];
     if (ids.length) d.nombres = Object.fromEntries((await nq(sb.from("perfiles").select("id, nombre").in("id", ids))).map(p => [p.id, p.nombre]));
@@ -1796,8 +1907,11 @@ async function nubeCargar() {
   if (NUBE.roles.includes("trabajador")) d.resumen = await nq(sb.rpc("resumen_trabajador", { p_campana: c }));
   if (NUBE.roles.includes("dueno")) [d.cuenta, d.datosDueno] = await Promise.all([nq(sb.rpc("cuenta_dueno", { p_campana: c })), nq(sb.rpc("datos_dueno", { p_campana: c }))]);
   if (NUBE.roles.includes("jefe")) d.equipo = await nq(sb.rpc("jornadas_equipo", { p_campana: c }));
+  if (nConsulta() || NUBE.roles.includes("dueno")) [d.docs, d.fotos] = await Promise.all([   // la RLS deja al dueño solo los suyos
+    nq(sb.from("documentos").select("id, dueno_id, plantilla_ref, nombre, fecha, desde, hasta, campos, trabajadores, version").eq("campana_id", c).order("creado_en")),
+    nq(sb.from("fotos").select("id, documento_id, ruta, bytes, sha256").eq("campana_id", c).order("creado_en"))]);
   try { d.huella = await nq(sb.rpc("huella_campana", { p_campana: c })); } catch (e) { d.huella = null; }
-  if (n !== nCargaN || NUBE.c?.campana_id !== c) return;   // llegó otra carga más reciente (o se cambió de campaña)
+  if (n !== nCargaN || NUBE.c?.campana_id !== c) { try { await NUBE.cargando; } catch (e) { } return; }   // hay otra carga más reciente (o otra campaña): se espera a esa
   NUBE.d = d; NUBE.cuentas = {};
 }
 // Tiempo real: solo se avisa de cambios en esta campaña (Realtime respeta RLS) y se recarga una vez, agrupando avisos
@@ -1836,6 +1950,7 @@ function nubeRecargar() {
   clearTimeout(NUBE.recarga);
   NUBE.recarga = setTimeout(async () => {
     if (!NUBE.c) return;
+    if (document.visibilityState === "hidden") return;   // en segundo plano no se descarga nada: al volver se compara la huella
     try { await nubeCargar(); scheduleRender(); }
     catch (e) { if (navigator.onLine && !/Failed to fetch|NetworkError|Load failed/i.test(String(e?.message || e))) nubeTrasSesion(); }   // sin red se conserva lo que hay
   }, 600);
@@ -1852,10 +1967,10 @@ function nubeRecargar() {
    · creador, administrador y superadministrador: toda la campaña (tablas);
    · trabajador: su resumen (resumen_trabajador) · dueño: sus partes (datos_dueno) · jefe: su equipo, sin dinero.
    Los PDF y Excel se generan en el dispositivo y no se guardan en la nube. */
-let INF_SIN_DINERO = false;
+let INF_SIN_DINERO = false, S_PRESTADO = 0;
 function conS(SN, fn, opc = {}) {
-  const prev = {}; COLS.forEach(k => { prev[k] = S[k]; S[k] = SN[k] || {}; }); const sd = INF_SIN_DINERO; INF_SIN_DINERO = !!opc.sinDinero;
-  try { return fn(); } finally { COLS.forEach(k => S[k] = prev[k]); INF_SIN_DINERO = sd; }
+  const prev = {}; COLS.forEach(k => { prev[k] = S[k]; S[k] = SN[k] || {}; }); const sd = INF_SIN_DINERO; INF_SIN_DINERO = !!opc.sinDinero; S_PRESTADO++;
+  try { return fn(); } finally { COLS.forEach(k => S[k] = prev[k]); INF_SIN_DINERO = sd; S_PRESTADO--; }
 }
 const enNube = fn => (MODE === "cuenta" && NUBE.d?.campana) ? conS(snConsulta(), fn) : fn();
 const euroDeCent = v => v == null ? null : +v / 100;
@@ -1909,6 +2024,10 @@ function snJefe(e = NUBE.d.equipo || [], d = NUBE.d) {
     (SN.partes["p:" + did + x.fecha] ??= { campanaId: c, duenoId: did, fecha: x.fecha, filas: {}, maquinas: {} }).filas[tid] = { tipo: x.tipo, horas: x.horas }; });
   return SN;
 }
+function vNMas(vistas) {
+  return `<div class="stack"><h1>Más secciones</h1><div class="list">${vistas.slice(5).map(([id, t, i]) => `<a class="li" href="#n-${id}">${ic(i)}<div class="grow"><div class="t">${t}</div></div></a>`).join("")}
+   <a class="li" href="#campanas">${ic("inicio")}<div class="grow"><div class="t">Campañas</div></div></a>${nPuedeCopias() ? `<a class="li" href="#copias">${ic("documentos")}<div class="grow"><div class="t">Copias e importación</div></div></a>` : ""}<a class="li" href="#ajustes">${ic("ajustes")}<div class="grow"><div class="t">Ajustes</div></div></a></div></div>`;
+}
 function vNInformes() { return conS(snConsulta(), vInformes); }
 // Gráfica y tabla por quincena para el trabajador, el dueño y el jefe (con las funciones de la 2.3.0)
 function nGraficaRol(rol) {
@@ -1928,6 +2047,277 @@ function informeRol(k, f) {
   if (k === "equipo") return conS(snJefe(), () => { const rc = rangoCampana(); return f === "pdf" ? pdfRegistro(rc) : xlsRegistro(rc); }, { sinDinero: true });
 }
 
+/* ---------- Documentos y fotos privadas (Supabase Storage, bucket privado «fotos») ----------
+   · Ruta de cada foto: <campaña>/<id>.jpg. La lectura la decide la misma RLS que los documentos (quien consulta la
+     campaña y el dueño del documento); solo quien gestiona sube y borra. No hay enlaces públicos: la app descarga la
+     foto con la sesión del usuario y la enseña como blob (memoria del navegador; se libera al cerrar sesión).
+   · Antes de subir se comprime (máx. 1600 px, JPEG) y se calcula su SHA-256: la misma foto no se guarda dos veces.
+   · Primero se sube el archivo y luego su ficha; si la ficha falla, se borra el archivo (no quedan archivos sueltos).
+     Al borrar se quita primero la ficha (nadie la ve) y luego el archivo; «Revisar fotos sin usar» limpia restos. */
+const BUCKET = "fotos";
+const FOTO_NUBE = {};   // ruta → URL blob (solo en memoria)
+function nLiberarFotos() { for (const k of Object.keys(FOTO_NUBE)) { URL.revokeObjectURL(FOTO_NUBE[k]); delete FOTO_NUBE[k]; } }
+async function sha256Hex(buf) { return [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map(b => b.toString(16).padStart(2, "0")).join(""); }
+const plantillaNube = ref => PLANTILLAS_GEN[ref] ? { id: ref, ...PLANTILLAS_GEN[ref] } : (NUBE.d?.plantillas || []).find(p => p.id === ref) || null;
+const nDuenosVisibles = () => NUBE.d.duenos.length ? NUBE.d.duenos : (NUBE.d.datosDueno ? [NUBE.d.datosDueno.dueno] : []);
+function vNDocumentos() {
+  const d = NUBE.d, g = nGestiona(), ab = NUBE.docAbierto && (d.docs || []).find(x => x.id === NUBE.docAbierto);
+  if (ab) return vNDocumento(ab);
+  const modelos = [...Object.entries(PLANTILLAS_GEN).map(([id, p]) => ({ id, nombre: p.nombre })), ...(d.plantillas || []).map(p => ({ id: p.id, nombre: p.nombre }))];
+  const duenos = nDuenosVisibles();
+  return `<div class="stack"><h1>Documentos</h1>
+   ${g ? `<section class="card stack" id="fndoc"><h2>Nuevo documento</h2><div class="grid2"><label class="f"><span>Dueño</span><select name="dueno">${d.duenos.map(x => `<option value="${x.id}">${esc(x.nombre)}</option>`).join("")}</select></label>
+     <label class="f"><span>Modelo</span><select name="modelo">${modelos.map(m => `<option value="${esc(m.id)}">${esc(m.nombre)}</option>`).join("")}</select></label></div>
+     <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nCrearDoc">${ic("mas")}Crear documento</button></div></section>` : ""}
+   ${(d.docs || []).length ? `<div class="list">${d.docs.map(x => { const nf = d.fotos.filter(f => f.documento_id === x.id).length; const du = duenos.find(y => y.id === x.dueno_id);
+      return `<button class="li" data-act="nAbrirDoc" data-id="${x.id}"><div class="grow"><div class="t">${esc(x.nombre || plantillaNube(x.plantilla_ref)?.nombre || "Documento")}</div><div class="muted small">${esc(du?.nombre || "")}${x.fecha ? " · " + fFecha(x.fecha) : ""} · ${nf} ${nf === 1 ? "foto" : "fotos"}</div></div></button>`; }).join("")}</div>`
+    : `<div class="empty"><span>No hay documentos.</span></div>`}
+   ${g ? `<section class="card stack"><h2>Fotos en la nube</h2><div class="hint">Son privadas: las ven quien gestiona la campaña, sus administradores y el dueño de cada documento. Ocupan ${fN(d.fotos.reduce((s, f) => s + f.bytes, 0) / 1048576, 2)} MB (el plan gratuito permite 1 GB).</div>
+     <button class="btn sm" data-act="nRevisarFotos" style="align-self:flex-start">Revisar fotos sin usar</button></section>` : ""}</div>`;
+}
+function vNDocumento(x) {
+  const d = NUBE.d, g = nGestiona(), pl = plantillaNube(x.plantilla_ref), fotos = d.fotos.filter(f => f.documento_id === x.id), campos = pl?.campos || [];
+  const du = nDuenosVisibles().find(y => y.id === x.dueno_id);
+  return `<div class="stack" id="fndocu" data-id="${x.id}"><div class="row between"><div><div class="lbl">${esc(du?.nombre || "")} · ${esc(pl?.asesoria || "Documento")}</div><h1>${esc(x.nombre || pl?.nombre || "Documento")}</h1></div><button class="btn sm" data-act="nCerrarDoc">Volver</button></div>
+   <div class="grid2"><label class="f"><span>Fecha</span><input type="date" name="fecha" value="${x.fecha || ""}" ${g ? "" : "disabled"}></label></div>
+   ${campos.length ? `<div class="grid2">${campos.map(cp => `<label class="f"><span>${esc(cp.etiqueta || cp.clave)}</span><input data-campo="${esc(cp.clave)}" value="${esc(x.campos?.[cp.clave] ?? cp.valor ?? "")}" ${g ? "" : "disabled"}></label>`).join("")}</div>` : ""}
+   <section class="stack"><h2>Fotos del papel</h2><div class="thumbs" id="nThumbs">${fotos.map(f => `<figure class="stack" style="gap:4px;margin:0"><img data-ruta="${esc(f.ruta)}" alt="Foto del documento (cargando…)">${g ? `<button class="btn ghost sm danger" data-act="nBorrarFoto" data-id="${f.id}">Quitar</button>` : ""}</figure>`).join("") || `<span class="muted small">Sin fotos.</span>`}</div>
+    ${g ? `<label class="btn" style="align-self:flex-start">${ic("cam")}Añadir foto<input type="file" accept="image/*" capture="environment" id="nDocFoto" hidden></label>` : ""}</section>
+   <div class="row between">${g ? `<button class="btn danger" data-act="nBorrarDoc" data-id="${x.id}">Borrar documento</button>` : "<span></span>"}<span class="row">${g ? `<button class="btn" data-act="nGuardarDocN" data-id="${x.id}">Guardar</button>` : ""}${pl && (nConsulta() || PLANTILLAS_GEN[x.plantilla_ref]) ? `<button class="btn pri" data-act="nPdfDocN" data-id="${x.id}">${ic("pdf")}PDF</button>` : ""}</span></div></div>`;
+}
+async function nFotoBlob(ruta) {
+  const r = await NUBE.sb.storage.from(BUCKET).download(ruta); if (r.error || !r.data) throw new Error("No se pudo leer la foto");
+  return r.data;
+}
+async function nAfterDocumentos() {
+  const f = $("#nDocFoto"); if (f) f.onchange = () => { const file = f.files[0]; f.value = ""; if (file) nSubirFoto(NUBE.docAbierto, file); };
+  for (const im of $$("#nThumbs img[data-ruta]")) {
+    const ruta = im.dataset.ruta;
+    try { FOTO_NUBE[ruta] ||= URL.createObjectURL(await nFotoBlob(ruta)); if (im.isConnected) { im.src = FOTO_NUBE[ruta]; im.alt = "Foto del documento"; } }
+    catch (e) { im.alt = "Foto no disponible"; }
+  }
+};
+async function nSubirFoto(docId, file) {
+  if (nSinRed() || !docId) return; const d = NUBE.d, c = NUBE.c.campana_id;
+  try {
+    toast("Preparando la foto…");
+    let blob = await comprimir(file, 1600, 0.75); if (blob.size > 1900000) blob = await comprimir(file, 1200, 0.6);
+    if (blob.size > 1900000) return toast("La foto es demasiado grande incluso comprimida.");
+    const sha = await sha256Hex(await blob.arrayBuffer());
+    if (d.fotos.some(x => x.documento_id === docId && x.sha256 === sha)) return toast("Esa foto ya está en este documento.");
+    await nFotoGuardar(c, docId, blob, sha);
+    await nubeCargar(); render(); toast("Foto guardada");
+  } catch (e) { toast(nubeMsg(e)); }
+}
+// Sube el archivo y crea su ficha; si la ficha falla, borra el archivo (sin restos). Devuelve «ya» si estaba.
+async function nFotoGuardar(c, docId, blob, sha) {
+  const id = crypto.randomUUID(), ruta = c + "/" + id + ".jpg";
+  // cacheControl 0: el navegador vuelve a preguntar al servidor cada vez (con la sesión), así una foto borrada o de otra
+  // cuenta no sale de la caché en un dispositivo compartido
+  const up = await NUBE.sb.storage.from(BUCKET).upload(ruta, blob, { contentType: "image/jpeg", upsert: false, cacheControl: "0" });
+  if (up.error) throw up.error;
+  const ins = await NUBE.sb.from("fotos").insert({ id, campana_id: c, documento_id: docId, ruta, bytes: blob.size, sha256: sha, creado_por: NUBE.sesion.user.id });
+  if (ins.error) { await NUBE.sb.storage.from(BUCKET).remove([ruta]); if (ins.error.code === "23505") return "ya"; throw ins.error; }
+  return "nueva";
+}
+function snDocumentos(SN, d = NUBE.d) {
+  (d.plantillas || []).forEach(p => SN.plantillas[p.id] = { nombre: p.nombre, asesoria: p.asesoria, titulo: p.titulo, cuerpo: p.cuerpo, campos: p.campos || [], tipo: "texto" });
+  (d.docs || []).forEach(x => SN.documentos[x.id] = { campanaId: d.campana.id, duenoId: x.dueno_id, plantillaId: x.plantilla_ref, nombre: x.nombre, fecha: x.fecha, desde: x.desde, hasta: x.hasta,
+    campos: x.campos || {}, trabajadores: x.trabajadores || [], escaneos: [] });
+  return SN;
+}
+// Mientras dura el PDF (lleva «await» para leer las fotos) S tiene los datos de la nube; saveLocal() no guarda nada en ese tiempo
+async function conSAsync(SN, fn) {
+  const prev = {}; COLS.forEach(k => { prev[k] = S[k]; S[k] = SN[k] || {}; }); S_PRESTADO++;
+  try { return await fn(); } finally { COLS.forEach(k => S[k] = prev[k]); S_PRESTADO--; }
+}
+
+/* ---------- Copias de campaña (3.0) e importación (copias 2.3.0 y 3.0) ----------
+   · Copia de campaña: exportar_campana() (solo quien gestiona) + fotos opcionales, con huella SHA-256 de los datos y de
+     cada foto, recuentos y los importes calculados con las fórmulas de la 2.3.0. Sin cuentas ni contraseñas.
+   · Importar: 1) se lee y comprueba el archivo; 2) se pasa al formato de la base de datos y se comprueba que los importes
+     siguen siendo los de la copia; 3) simulación en el servidor (qué es nuevo, qué ya existe); 4) importación en una sola
+     transacción; 5) subida de fotos (sin duplicados); 6) comprobación: los importes de la campaña coinciden con la copia. */
+const nPuedeCopias = () => NUBE.superadmin || NUBE.campanas.some(c => (c.roles || []).includes("creador"));
+const nGestionables = () => NUBE.campanas.filter(c => NUBE.superadmin || (c.roles || []).includes("creador"));
+const centDe = v => { const n = num(v); return n == null ? null : Math.round(n * 100); };
+function snDesdeDatos(datos, nombre) {
+  const c = "copia", x = datos.campana || {};
+  const SN = snVacio({ id: c, nombre: nombre || "Copia", horas_dia: x.horas_dia, empresa: datos.empresa },
+    { precioHoraTrab: euroDeCent(x.precio_hora_trab_cent), precioHoraDueno: euroDeCent(x.precio_hora_dueno_cent), iva: +x.iva || 0,
+      maquinas: (datos.maquinas || []).map(m => ({ id: m.o, nombre: m.nombre, precio: m.precio_cent / 100, unidad: m.unidad })) });
+  (datos.trabajadores || []).forEach(t => SN.trabajadores[t.o] = { nombre: t.nombre, precioHora: euroDeCent(t.precio_hora_cent), activo: t.activo !== false });
+  (datos.duenos || []).forEach(d => SN.duenos[d.o] = { campanaId: c, nombre: d.nombre, precioHora: euroDeCent(d.precio_hora_cent), kilosTotal: d.kilos_total, finca: d.finca || "", num: d.num });
+  (datos.partes || []).forEach(p => SN.partes[p.o] = { campanaId: c, duenoId: p.dueno, fecha: p.fecha, kilos: p.kilos,
+    filas: Object.fromEntries((p.filas || []).map(f => [f.t, { tipo: f.tipo, horas: f.horas, nota: f.nota || "" }])), maquinas: Object.fromEntries((p.maquinas || []).map(m => [m.m, m.cantidad])) });
+  (datos.pagos || []).forEach(g => SN.pagos[g.o] = { campanaId: c, tipo: g.tipo, personaId: g.persona, importe: g.importe_cent / 100, fecha: g.fecha, hora: horaCorta(g.hora), forma: g.forma });
+  return SN;
+}
+// Importes con las funciones de la 2.3.0. ids: solo esos trabajadores/dueños (los de la copia)
+function totalesSN(SN, idsT, idsD) {
+  return conS(SN, () => {
+    const dd = {}, tt = {};
+    for (const id of idsD || duenosCamp().map(x => x.id)) { const k = cuentaDueno(id, {}); dd[id] = { nombre: nomD(id), horas: r2(k.horas), total: r2(k.total), pagado: r2(k.pagado) }; }
+    for (const id of idsT || Object.keys(S.trabajadores)) { const r = resumenTrab(id, {}); tt[id] = { nombre: nomT(id), horas: r2(r.horas), ganado: r2(r.importe), entregado: r2(r.entregado) }; }
+    return { duenos: dd, trabajadores: tt };
+  });
+}
+const sumaTot = (t, k1, k2) => r2(Object.values(t[k1]).reduce((s, x) => s + x[k2], 0));
+// Copia 2.3.0 → formato de la base de datos (una campaña). Sin inventar nada: lo que falta se marca y se cuenta.
+function convertir230(SF, campId) {
+  const c = { ...CAMP_DEF, ...SF.campanas[campId] }, avisos = [];
+  const deCamp = col => Object.entries(SF[col] || {}).filter(([, v]) => v && v.campanaId === campId);
+  const partes = deCamp("partes"), pagos = deCamp("pagos"), duenosL = deCamp("duenos"), docs = deCamp("documentos");
+  const tids = new Set(), dids = new Set(duenosL.map(([id]) => id)), mids = new Set((c.maquinas || []).map(m => m.id));
+  partes.forEach(([, p]) => { Object.keys(p.filas || {}).forEach(t => tids.add(t)); dids.add(p.duenoId); Object.keys(p.maquinas || {}).forEach(m => { if (+p.maquinas[m] > 0) mids.add(m); }); });
+  pagos.forEach(([, g]) => (g.tipo === "trabajador" ? tids : dids).add(g.personaId));
+  duenosL.forEach(([, d]) => (d.trabajadores || []).forEach(t => { if (SF.trabajadores?.[t]) tids.add(t); }));
+  docs.forEach(([, d]) => { dids.add(d.duenoId); (d.trabajadores || []).forEach(t => { if (SF.trabajadores?.[t]) tids.add(t); }); });
+  const trabajadores = [...tids].map(id => { const t = SF.trabajadores?.[id];
+    if (!t) { avisos.push("Un trabajador borrado en la 2.3.0 aparece en partes o pagos: se importa como «(trabajador borrado)»."); return { o: id, nombre: "(trabajador borrado)", activo: false }; }
+    return { o: id, nombre: t.nombre || "(sin nombre)", precio_hora_cent: centDe(t.precioHora), activo: t.activo !== false, nif: t.nif || "", nss: t.nss || "", telefono: t.telefono || "" }; });
+  const duenos = [...dids].map(id => { const d = SF.duenos?.[id];
+    if (!d) { avisos.push("Un dueño borrado en la 2.3.0 aparece en partes, pagos o documentos: se importa como «(dueño borrado)»."); return { o: id, nombre: "(dueño borrado)" }; }
+    return { o: id, nombre: d.nombre || "(sin nombre)", finca: d.finca || "", municipio: d.municipio || "", num: d.num ?? null, precio_hora_cent: centDe(d.precioHora), kilos_total: num(d.kilosTotal),
+      nif: d.nif || "", direccion: d.direccion || "", telefono: d.telefono || "", poligono: d.poligono || "", parcela: d.parcela || "", trabajadores: (d.trabajadores || []).filter(t => tids.has(t)) }; });
+  const maquinas = [...mids].map(id => { const m = (c.maquinas || []).find(x => x.id === id);
+    if (!m) { avisos.push("Un parte usa una máquina que ya no está en la campaña: se importa con precio 0, como la contaba la 2.3.0."); return { o: id, nombre: id, precio_cent: 0, unidad: "día" }; }
+    return { o: id, nombre: m.nombre || id, precio_cent: centDe(m.precio) || 0, unidad: ["día", "jornada", "hora"].includes(m.unidad) ? m.unidad : "día" }; });
+  const datosPartes = partes.map(([id, p]) => ({ o: id, dueno: p.duenoId, fecha: p.fecha, kilos: num(p.kilos), notas: p.notas || "",
+    filas: Object.entries(p.filas || {}).map(([t, f]) => { const tipo = f.tipo || "normal";
+      return { t, tipo, horas: (tipo === "normal" || tipo === "ausente" || f.horas == null || f.horas === "") ? null : (+f.horas || 0), nota: f.nota || "" }; }),
+    maquinas: Object.entries(p.maquinas || {}).filter(([, q]) => +q > 0).map(([m, q]) => ({ m, cantidad: +q })) }));
+  let omitidos = 0;
+  const datosPagos = pagos.map(([id, g]) => ({ o: id, tipo: g.tipo, persona: g.personaId, importe_cent: Math.round((+g.importe || 0) * 100), fecha: g.fecha,
+    hora: /^\d{1,2}:\d{2}/.test(g.hora || "") ? g.hora.slice(0, 5) : "", forma: FORMAS.some(f => f[0] === g.forma) ? g.forma : "otro", nota: g.nota || "" }))
+    .filter(g => { if (g.importe_cent > 0) return true; omitidos++; return false; });
+  if (omitidos) avisos.push(`${omitidos} pago(s) de 0 € no se importan (no cambian ninguna cuenta).`);
+  const pls = new Set(docs.map(([, d]) => d.plantillaId).filter(id => id && !PLANTILLAS_GEN[id]));
+  const plantillas = [...pls].filter(id => SF.plantillas?.[id]).map(id => { const p = SF.plantillas[id]; return { o: id, nombre: p.nombre, asesoria: p.asesoria || "", titulo: p.titulo || "", cuerpo: p.cuerpo || "", campos: p.campos || [] }; });
+  const documentos = docs.filter(([, d]) => PLANTILLAS_GEN[d.plantillaId] || SF.plantillas?.[d.plantillaId])
+    .map(([id, d]) => ({ o: id, dueno: d.duenoId, plantilla: d.plantillaId, nombre: d.nombre || "", fecha: d.fecha || null, desde: d.desde || null, hasta: d.hasta || null, campos: d.campos || {}, trabajadores: (d.trabajadores || []).filter(t => tids.has(t)) }));
+  if (documentos.length < docs.length) avisos.push(`${docs.length - documentos.length} documento(s) usan un modelo que ya no existe y no se importan.`);
+  if (datosPartes.some(p => p.filas.some(f => f.horas != null && (f.horas < 0 || f.horas > 24)))) avisos.push("Hay jornadas con horas fuera de 0–24: la importación se detendrá en ellas.");
+  if (datosPartes.some(p => p.maquinas.some(m => !Number.isInteger(m.cantidad)))) avisos.push("Hay maquinaria con cantidades con decimales: la importación se detendrá en ellas.");
+  return { datos: { campana: { horas_dia: +c.horasDia, precio_hora_trab_cent: centDe(c.precioHoraTrab) ?? 1000, precio_hora_dueno_cent: centDe(c.precioHoraDueno) ?? 1000, iva: +c.iva || 0 },
+    empresa: SF.ajustes?.general?.empresa || {}, trabajadores, duenos, maquinas, partes: datosPartes, pagos: datosPagos, plantillas, documentos }, avisos };
+}
+function fotosDe230(j, campId) {
+  const out = []; let faltan = 0;
+  for (const [id, d] of Object.entries(j.S.documentos || {})) {
+    if (d?.campanaId !== campId) continue;
+    for (const s of d.escaneos || []) { const data = s.data || (s.foto && j.fotos?.[s.foto]); if (data) out.push({ documento: id, data }); else faltan++; }
+  }
+  return { fotos: out, faltan };
+}
+function vNCopias() {
+  const cs = nGestionables(), w = NUBE.imp;
+  return `<div class="stack"><div class="row between"><h1>Copias e importación</h1><a class="btn sm" href="#campanas">Volver</a></div>
+   <section class="card stack"><h2>Copia de seguridad de una campaña</h2><div class="hint">Descarga en este dispositivo un archivo con todos los datos de la campaña (trabajadores, dueños, partes, maquinaria, pagos, modelos, documentos y, si quieres, las fotos), con una huella para comprobar que está entera. No lleva cuentas ni contraseñas. Guárdalo en un sitio seguro: tiene datos personales.</div>
+    <div class="grid2"><label class="f"><span>Campaña</span><select id="cpCamp">${cs.map(c => `<option value="${c.campana_id}" ${c.campana_id === NUBE.c?.campana_id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
+     <label class="f"><span>Fotos</span><select id="cpFotos"><option value="si">Incluir las fotos</option><option value="no">Sin fotos (archivo más pequeño)</option></select></label></div>
+    <button class="btn pri" data-act="nExportar" style="align-self:flex-start" ${cs.length ? "" : "disabled"}>Descargar copia</button></section>
+   <section class="card stack"><h2>Importar o restaurar</h2><div class="hint">Para una copia de la versión 2.3.0 («CampanaControl-copia-….json») o una copia de campaña de esta versión. Antes de guardar nada verás qué se va a importar, qué ya existe y los importes. Nunca borra ni cambia lo que ya hay en la campaña de destino, y si algo falla no se guarda nada. El archivo original no se toca.</div>
+    <label class="btn" style="align-self:flex-start">Elegir archivo .json<input type="file" accept=".json,application/json" id="impArchivo" hidden></label>
+    ${w ? vNImport(w, cs) : ""}</section></div>`;
+}
+const nCifra = v => `<b class="num">${typeof v === "number" ? v : esc(String(v))}</b>`;
+function vNImport(w, cs) {
+  if (w.error) return `<div class="banner">${esc(w.error)}</div>`;
+  const t = w.totales, sim = w.simulacion, res = w.resultado;
+  const filaSim = (n, o, ks) => o ? `<tr><td>${n}</td>${ks.map(k => `<td class="r">${o[k] ?? 0}</td>`).join("")}</tr>` : "";
+  return `<div class="stack" id="fimp"><div class="muted small">Archivo: <b>${esc(w.nombre)}</b> · ${w.tipo === "2.3.0" ? "copia de la versión " + esc(w.version || "2.x") : "copia de campaña 3.0"} · ${esc(w.fecha ? fFechaL(String(w.fecha).slice(0, 10)) : "")}${w.integridad ? " · huella comprobada" : ""}</div>
+   ${w.tipo === "2.3.0" ? `<label class="f"><span>Campaña de la copia</span><select id="impFuente">${w.fuentes.map(f => `<option value="${esc(f.id)}" ${f.id === w.fuente ? "selected" : ""}>${esc(f.nombre)} · ${f.partes} partes</option>`).join("")}</select></label>` : ""}
+   <label class="f"><span>Importar en la campaña</span><select id="impDestino">${cs.map(c => `<option value="${c.campana_id}" ${c.campana_id === w.destino ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
+   <div class="hint">Recomendado: crea antes una campaña vacía para la importación. Si la campaña de destino ya tiene partes, sus horas por día, precios e IVA deben ser los mismos que los de la copia.</div>
+   ${w.avisos?.length ? `<div class="banner">${w.avisos.map(esc).join("<br>")}</div>` : ""}
+   ${t ? `<div class="kpis"><div class="kpi"><span class="lbl">Partes</span>${nCifra(w.datos.partes.length)}</div><div class="kpi"><span class="lbl">Horas</span>${nCifra(fN(sumaTot(t, "trabajadores", "horas")))}</div><div class="kpi"><span class="lbl">Ganado trabajadores</span>${nCifra(eur(sumaTot(t, "trabajadores", "ganado")))}</div><div class="kpi"><span class="lbl">Entregado</span>${nCifra(eur(sumaTot(t, "trabajadores", "entregado")))}</div><div class="kpi"><span class="lbl">Cuentas dueños</span>${nCifra(eur(sumaTot(t, "duenos", "total")))}</div><div class="kpi"><span class="lbl">Pagado por dueños</span>${nCifra(eur(sumaTot(t, "duenos", "pagado")))}</div><div class="kpi"><span class="lbl">Fotos</span>${nCifra(w.fotos.length)}</div></div>
+     <div class="muted small">${w.convOk ? "Importes comprobados: el paso al formato nuevo da exactamente las mismas cifras que la copia." : `<b>Atención:</b> ${esc(w.convDif || "")}`}</div>` : ""}
+   ${sim ? `<div class="tw"><table><thead><tr><th>Qué</th><th class="r">Nuevos</th><th class="r">Ya estaban</th><th class="r">Por nombre</th><th class="r">Mismo día / iguales</th></tr></thead><tbody>
+     ${filaSim("Trabajadores", sim.trabajadores, ["nuevos", "ya", "por_nombre"])}${filaSim("Dueños", sim.duenos, ["nuevos", "ya", "por_nombre"])}${filaSim("Máquinas", sim.maquinas, ["nuevas", "ya", "por_nombre"])}
+     ${filaSim("Partes", sim.partes, ["nuevos", "ya", "x", "mismo_dia"])}${filaSim("Pagos y entregas", sim.pagos, ["nuevos", "ya", "x", "iguales"])}${filaSim("Documentos", sim.documentos, ["nuevos", "ya"])}</tbody></table></div>
+     <div class="hint">«Ya estaban»: se importaron antes y no se tocan. «Por nombre»: se usa la ficha que ya existe con ese nombre. «Mismo día / iguales»: ya hay un parte de ese dueño ese día o un pago idéntico; no se duplican.</div>` : ""}
+   ${res ? `<div class="banner" style="background:var(--surface)">${esc(res)}</div>` : ""}
+   ${w.comprobacion ? `<div class="stack"><h3>Comprobación después de importar</h3>${w.comprobacion}</div>` : ""}
+   <div class="row" style="justify-content:flex-end">${!w.hecho ? `<button class="btn" data-act="nImpRevisar">Revisar</button>${sim && !sim.error ? `<button class="btn pri" data-act="nImpConfirmar">Importar ahora</button>` : ""}` : `${w.fotosFallidas ? `<button class="btn" data-act="nImpFotos">Reintentar ${w.fotosFallidas} foto(s)</button>` : ""}<button class="btn" data-act="nImpCerrar">Terminar</button>`}</div></div>`;
+}
+function nAfterCopias() {
+  const f = $("#impArchivo"); if (f) f.onchange = async () => { const file = f.files[0]; f.value = ""; if (file) await nImpLeer(file); };
+  const a = $("#impFuente"); if (a) a.onchange = () => { NUBE.imp.fuente = a.value; nImpPreparar(); render(); };
+  const b = $("#impDestino"); if (b) b.onchange = () => { NUBE.imp.destino = b.value; NUBE.imp.simulacion = null; render(); };
+};
+async function nImpLeer(file) {
+  const w = NUBE.imp = { nombre: file.name, destino: NUBE.c?.campana_id || nGestionables()[0]?.campana_id };
+  try {
+    const texto = await file.text(); let j; try { j = JSON.parse(texto); } catch (e) { throw new Error("El archivo no es una copia de Campaña Control (no es JSON válido)."); }
+    w.texto = texto; w.fecha = j.fecha; w.version = j.version;
+    if (j.tipo === "copia-campana-3" && j.datos) {
+      const h = await sha256Hex(new TextEncoder().encode(JSON.stringify(j.datos)));
+      if (h !== j.integridad?.sha256) throw new Error("La copia está dañada o se ha modificado: su huella no coincide. No se importa.");
+      for (const f of j.fotos || []) if (f.sha256 && await sha256Hex(await dataABlob(f.data).arrayBuffer()) !== f.sha256) throw new Error("Una foto de la copia está dañada (huella distinta). No se importa.");
+      Object.assign(w, { tipo: "3.0", integridad: true, datos: j.datos, campanaNombre: j.campana, fotos: (j.fotos || []).map(f => ({ documento: f.documento, data: f.data, sha256: f.sha256 })),
+        avisos: (j.integridad.fotos || 0) > (j.fotos || []).length ? [`La copia se hizo sin ${(j.integridad.fotos || 0) - (j.fotos || []).length} foto(s).`] : [] });
+      nImpTotales(j.integridad?.totales);
+    } else if (j.app === "campana-control" && j.S && j.S.campanas) {
+      const fuentes = Object.entries(j.S.campanas).map(([id, c]) => ({ id, nombre: c.nombre || id, partes: Object.values(j.S.partes || {}).filter(p => p.campanaId === id).length }));
+      if (!fuentes.length) throw new Error("La copia no tiene ninguna campaña.");
+      Object.assign(w, { tipo: "2.3.0", S: j.S, j, fuentes, fuente: (fuentes.find(f => f.id === j.S.ajustes?.general?.campanaActiva) || fuentes.sort((a, b) => b.partes - a.partes)[0]).id });
+      nImpPreparar();
+    } else throw new Error("El archivo no es una copia de Campaña Control.");
+  } catch (e) { w.error = e.message; }
+  render();
+}
+function nImpPreparar() {
+  const w = NUBE.imp, SF = clone(w.S); SF.ajustes ||= {}; SF.ajustes.general = { ...(SF.ajustes.general || {}), campanaActiva: w.fuente };
+  const conv = convertir230(SF, w.fuente), fo = fotosDe230(w.j, w.fuente);
+  Object.assign(w, { datos: conv.datos, avisos: [...new Set(conv.avisos)], fotos: fo.fotos, simulacion: null, resultado: null, comprobacion: null });
+  if (w.j.incompleta || fo.faltan) w.avisos.push(`La copia no tiene ${fo.faltan || w.j.fotosFaltan} foto(s) de documentos: esos documentos se importan sin ellas.`);
+  // Cifras de la copia original con las funciones de la 2.3.0 y con los datos ya convertidos: deben coincidir
+  for (const col of COLS) SF[col] ||= {};
+  const ids = { t: w.datos.trabajadores.map(x => x.o), d: w.datos.duenos.map(x => x.o) };
+  const orig = totalesSN(SF, ids.t.filter(id => SF.trabajadores[id]), ids.d.filter(id => SF.duenos[id]));
+  nImpTotales(orig);
+}
+function nImpTotales(ref) {
+  const w = NUBE.imp, ids = { t: w.datos.trabajadores.map(x => x.o), d: w.datos.duenos.map(x => x.o) };
+  w.totales = totalesSN(snDesdeDatos(w.datos), ids.t, ids.d);
+  const dif = [];
+  if (ref) {
+    for (const [k1, campos] of [["duenos", ["horas", "total", "pagado"]], ["trabajadores", ["horas", "ganado", "entregado"]]])
+      for (const [id, v] of Object.entries(ref[k1] || {})) for (const c of campos) if (Math.abs((w.totales[k1][id]?.[c] ?? 0) - v[c]) > 0.005) dif.push(`${v.nombre}: ${c} ${v[c]} en la copia y ${w.totales[k1][id]?.[c] ?? 0} al convertir`);
+  }
+  w.convOk = !!ref && !dif.length; w.convDif = !ref ? "la copia no trae importes de referencia; se comprobarán al terminar." : dif.slice(0, 6).join(" · ");
+}
+async function nImpHuella() { const w = NUBE.imp; return sha256Hex(new TextEncoder().encode(w.texto + "|" + (w.fuente || "campana"))); }
+async function nImpRpc(simular) {
+  const w = NUBE.imp;
+  return nq(NUBE.sb.rpc("importar_campana", { p_campana: w.destino, p_huella: await nImpHuella(), p_datos: w.datos, p_simular: simular }));
+}
+async function nImpComprobar() {
+  const w = NUBE.imp;
+  if (NUBE.c?.campana_id !== w.destino) await nubeElegir(w.destino, true); else await nubeCargar();
+  const d = NUBE.d, porO = (l) => Object.fromEntries(l.filter(x => x.origen_id).map(x => [x.origen_id, x.id]));
+  const mt = porO(d.trab), md = porO(d.duenos), nube = totalesSN(snConsulta(), Object.values(mt), Object.values(md));
+  const filas = [], ok2 = [];
+  for (const [o, v] of Object.entries(w.totales.duenos)) { const n = nube.duenos[md[o]]; const igual = n && Math.abs(n.total - v.total) < 0.005 && Math.abs(n.pagado - v.pagado) < 0.005; ok2.push(igual);
+    filas.push(`<tr><td>${esc(v.nombre)}</td><td class="r">${eur(v.total)}</td><td class="r">${n ? eur(n.total) : "—"}</td><td>${igual ? "Igual" : "<b>Distinto</b>"}</td></tr>`); }
+  for (const [o, v] of Object.entries(w.totales.trabajadores)) { const n = nube.trabajadores[mt[o]]; const igual = n && Math.abs(n.ganado - v.ganado) < 0.005 && Math.abs(n.entregado - v.entregado) < 0.005; ok2.push(igual);
+    filas.push(`<tr><td>${esc(v.nombre)}</td><td class="r">${eur(v.ganado)}</td><td class="r">${n ? eur(n.ganado) : "—"}</td><td>${igual ? "Igual" : "<b>Distinto</b>"}</td></tr>`); }
+  w.coincide = ok2.every(Boolean);
+  w.comprobacion = `<div class="muted small">${w.coincide ? "Todas las cuentas de la campaña coinciden con la copia." : "Hay cuentas distintas: puede que la campaña ya tuviera datos de esas personas o precios propios distintos. Revísalas antes de usar la campaña."}</div>
+    <div class="tw"><table><thead><tr><th>Persona</th><th class="r">En la copia</th><th class="r">En la campaña</th><th></th></tr></thead><tbody>${filas.join("")}</tbody></table></div>`;
+}
+// Sube las fotos de la copia a sus documentos (las que ya estén, por su huella, no se repiten)
+async function nImpSubirFotos(mapa) {
+  const w = NUBE.imp; let subidas = 0, ya = 0, fallos = 0;
+  for (const f of w.fotos) {
+    const docId = mapa[f.documento]; if (!docId) { fallos++; continue; }
+    try { const blob = dataABlob(f.data), sha = f.sha256 || await sha256Hex(await blob.arrayBuffer()); (await nFotoGuardar(w.destino, docId, blob, sha)) === "ya" ? ya++ : subidas++; } catch (e) { fallos++; }
+  }
+  w.fotosFallidas = fallos;
+  return w.fotos.length ? `Fotos: ${subidas} subida(s)${ya ? `, ${ya} ya estaban` : ""}${fallos ? `, ${fallos} sin subir (pulsa «Reintentar»)` : ""}.` : "";
+}
+
 function nubeVistas() {
   if (!NUBE.c) return [];
   const v = [];
@@ -1937,11 +2327,14 @@ function nubeVistas() {
   if (NUBE.roles.includes("jefe")) v.push(["equipo", "Mi equipo", "trabajadores"]);
   if (NUBE.roles.includes("trabajador")) v.push(["mis-jornadas", "Mis jornadas", "partes"]);
   if (NUBE.roles.includes("dueno")) v.push(["mi-cuenta", "Mi cuenta", "euro"]);
+  if (nConsulta() || NUBE.roles.includes("dueno")) v.push(["documentos", "Documentos", "documentos"]);
   return v;
 }
 function nubeNav(vistas, k) {
   const enl = ([id, t, i]) => `<a href="#n-${id}" ${id === k ? 'aria-current="page"' : ""}>${ic(i)}<span>${t}</span></a>`;
-  $("#tabs").innerHTML = vistas.slice(0, 6).map(enl).join("");
+  // En el móvil caben 6 pestañas: si hay más, la sexta es «Más» con el resto de secciones
+  const tabs = vistas.length > 6 ? [...vistas.slice(0, 5), ["mas", "Más", "ajustes"]] : vistas;
+  $("#tabs").innerHTML = tabs.map(x => x[0] === "mas" && vistas.slice(5).some(y => y[0] === k) ? enl([x[0], x[1], x[2]]).replace("<a ", '<a aria-current="page" ') : enl(x)).join("");
   $("#tabs").hidden = !vistas.length;
   $("#side").innerHTML = vistas.map(enl).join("") + (NUBE.sesion ? `<a href="#campanas">${ic("inicio")}<span>Campañas</span></a>` : "") + (NUBE.sesion && nPuedeUsuarios() ? `<a href="#usuarios" ${location.hash === "#usuarios" ? 'aria-current="page"' : ""}>${ic("trabajadores")}<span>Usuarios</span></a>` : "") + (NUBE.superadmin ? `<a href="#global" ${location.hash === "#global" ? 'aria-current="page"' : ""}>${ic("chart")}<span>Panel global</span></a>` : "") + `<a href="#ajustes" ${location.hash === "#ajustes" ? 'aria-current="page"' : ""}>${ic("ajustes")}<span>Ajustes</span></a>`;
   const cs = $("#campsel");
@@ -1956,16 +2349,17 @@ function nubeRender() {
   const aviso = NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
   if (r === "usuarios" && nPuedeUsuarios()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vUsuarios(); nAfter.usuarios(); return; }
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
+  if (r === "copias" && nPuedeCopias()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCopias(); nAfter.copias(); return; }
   if (r === "global" && NUBE.superadmin) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNGlobal(); nAfter.global(); return; }
   if (!NUBE.c || r === "campanas") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCampanas(); return; }
   if (!NUBE.d) { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b></div>`; return; }
   const vistas = nubeVistas(), k = r.startsWith("n-") ? r.slice(2) : vistas[0]?.[0];
   nubeNav(vistas, k);
-  const fn = { inicio: vNInicio, parte: vNParte, pagos: vNPagos, personas: vNPersonas, cuentas: vNCuentas, informes: vNInformes, equipo: vNEquipo, "mis-jornadas": vNMisJornadas, "mi-cuenta": vNMiCuenta }[k];
-  v.innerHTML = aviso + (fn && vistas.some(x => x[0] === k) ? fn() : `<div class="empty"><span>No tienes acceso a esta sección.</span></div>`);
+  const fn = { inicio: vNInicio, parte: vNParte, pagos: vNPagos, personas: vNPersonas, cuentas: vNCuentas, informes: vNInformes, documentos: vNDocumentos, equipo: vNEquipo, "mis-jornadas": vNMisJornadas, "mi-cuenta": vNMiCuenta }[k];
+  v.innerHTML = aviso + (k === "mas" ? vNMas(vistas) : fn && vistas.some(x => x[0] === k) ? fn() : `<div class="empty"><span>No tienes acceso a esta sección.</span></div>`);
   nAfter[k]?.();
 }
-const nAfter = {}; nAfter.informes = () => after.informes();
+const nAfter = { informes: () => after.informes(), documentos: () => nAfterDocumentos(), copias: () => nAfterCopias() };
 
 /* ---------- Entrar (usuario y contraseña), contraseña propia y cuenta bloqueada ---------- */
 // Cuentas privadas: no hay registro ni correo. Las crea «Gestión de usuarios» (Edge Function «gestion-usuarios»).
@@ -2054,7 +2448,7 @@ function nMostrarClave(titulo, nombre, usuario, clave) {
 }
 function vNCampanas() {
   const p = NUBE.perfil, puede = NUBE.superadmin || p?.puede_crear_campanas, y = new Date().getFullYear();
-  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || usuarioDe(NUBE.sesion.user.email))}</div><h1>Tus campañas</h1></div><div class="row">${nPuedeUsuarios() ? `<a class="btn" href="#usuarios">${ic("trabajadores")}Gestión de usuarios</a>` : ""}${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div></div>
+  return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || usuarioDe(NUBE.sesion.user.email))}</div><h1>Tus campañas</h1></div><div class="row">${nPuedeUsuarios() ? `<a class="btn" href="#usuarios">${ic("trabajadores")}Gestión de usuarios</a>` : ""}${nPuedeCopias() ? `<a class="btn" href="#copias">Copias e importación</a>` : ""}${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div></div>
   ${NUBE.campanas.length ? `<div class="list">${NUBE.campanas.map(c => `<button class="li" data-act="nElegir" data-id="${esc(c.campana_id)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="muted small">${esc((c.roles || []).map(r => ROL_TXT[r]).join(" · ") || "Superadministrador")}</div></div></button>`).join("")}</div>`
     : `<div class="empty"><b>Aún no tienes ninguna campaña</b><span>${puede ? "Crea la primera abajo." : "Pide acceso a quien gestiona tu campaña."}</span></div>`}
   ${puede ? `<section class="card stack" id="fnueva"><h2>Nueva campaña</h2>

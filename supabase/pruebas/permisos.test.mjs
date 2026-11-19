@@ -4,6 +4,7 @@
 // Solo datos ficticios. Uso: node permisos.test.mjs
 import { PGlite } from "@electric-sql/pglite";
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -454,6 +455,68 @@ await prueba("Huella de cambios (000009): cambia con cada edición que el usuari
   ok(despues.d2 === antes.d2 && despues.intruso === antes.intruso, "cambió para quien no ve el parte (fuga de información)");
   await falla(null, ({ uno }) => uno("select public.huella_campana($1)", [A.c]));
   return "cambia para admin, dueño 1 y trabajador 1 · igual para dueño 2 y un intruso · anónimo rechazado";
+});
+
+/* ---------- 000010: importar y exportar campañas ---------- */
+const huella = s => createHash("sha256").update(s).digest("hex");
+const COPIA = {
+  campana: { horas_dia: 7.5, precio_hora_trab_cent: 1000, precio_hora_dueno_cent: 1200, iva: 10 },
+  empresa: { nombre: "Cuadrilla ficticia", iban: "ES00 0000" },
+  trabajadores: [{ o: "t1", nombre: "Ana Copia", nif: "11111111H" }, { o: "t2", nombre: "Luis Copia", precio_hora_cent: 1100 }],
+  duenos: [{ o: "d1", nombre: "Finca Copia", finca: "Olivar", num: 1, trabajadores: ["t1", "t2"] }],
+  maquinas: [{ o: "m1", nombre: "Tractor copia", precio_cent: 3000, unidad: "día" }],
+  partes: [{ o: "d1_2026-11-10", dueno: "d1", fecha: "2026-11-10", kilos: 1500, filas: [{ t: "t1", tipo: "normal" }, { t: "t2", tipo: "mas", horas: 9 }], maquinas: [{ m: "m1", cantidad: 1 }] },
+           { o: "d1_2026-11-11", dueno: "d1", fecha: "2026-11-11", filas: [{ t: "t1", tipo: "ausente" }, { t: "t2", tipo: "menos", horas: 5 }], maquinas: [] }],
+  pagos: [{ o: "g1", tipo: "trabajador", persona: "t1", importe_cent: 2000, fecha: "2026-11-10", hora: "19:00", forma: "efectivo" },
+          { o: "g2", tipo: "dueno", persona: "d1", importe_cent: 10000, fecha: "2026-11-11", forma: "transferencia" }],
+  plantillas: [{ o: "pl1", nombre: "Contrato copia", asesoria: "Asesoría", titulo: "T", cuerpo: "Hola {{dueno}}", campos: [] }],
+  documentos: [{ o: "doc1", dueno: "d1", plantilla: "pl1", nombre: "Contrato copia", fecha: "2026-11-10", campos: {}, trabajadores: ["t1"] }]
+};
+const recuento = c => como(U.creadorA, ({ uno }) => uno(`select (select count(*) from trabajadores where campana_id = $1)::int as t, (select count(*) from duenos where campana_id = $1)::int as d,
+  (select count(*) from partes where campana_id = $1)::int as p, (select count(*) from partes_filas where campana_id = $1)::int as f, (select count(*) from pagos where campana_id = $1)::int as g,
+  (select count(*) from documentos where campana_id = $1)::int as doc, (select count(*) from maquinas where campana_id = $1)::int as m`, [c]));
+await prueba("Importar una copia (000010): todo o nada, sin duplicados, simulación, solo quien gestiona y mismos importes", async () => {
+  const C = (await como(U.creadorA, ({ uno }) => uno("select public.crear_campana('Campaña importada', 2026) as id"))).id;
+  const s1 = JSON.stringify(COPIA), h1 = huella(s1);
+  for (const u of [U.adminA, U.trab1, U.dueno1, U.creadorB, U.intruso]) await falla(u, ({ uno }) => uno("select public.importar_campana($1, $2, $3)", [C, h1, s1]));
+  // Simulación: devuelve el resumen y no guarda nada
+  const sim = (await como(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3, true) as r", [C, h1, s1]))).r;
+  ok(sim.simulacion && sim.partes.nuevos === 2 && sim.pagos.nuevos === 2, "simulación: " + JSON.stringify(sim));
+  ok(JSON.stringify(await recuento(C)) === JSON.stringify({ t: 0, d: 0, p: 0, f: 0, g: 0, doc: 0, m: 0 }), "la simulación guardó datos");
+  // Copia con un error al final (fila de un trabajador que no está): no se guarda nada
+  const mala = JSON.parse(s1); mala.partes[1].filas.push({ t: "t9", tipo: "normal" });
+  ok(/no está en la copia/.test(await falla(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3)", [C, huella(JSON.stringify(mala)), JSON.stringify(mala)]))), "error no explicado");
+  ok((await recuento(C)).t === 0, "una importación fallida dejó datos a medias");
+  // Importación real
+  const r = (await como(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3) as r", [C, h1, s1]))).r;
+  ok(!r.simulacion && r.trabajadores.nuevos === 2 && r.partes.nuevos === 2 && r.partes.filas === 4 && r.pagos.nuevos === 2 && r.documentos.nuevos === 1 && r.documentos_ids.doc1, "importación: " + JSON.stringify(r));
+  // La misma copia otra vez: rechazada; otra copia con los mismos datos: no duplica nada
+  ok(/ya se importó/.test(await falla(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3)", [C, h1, s1]))), "la misma copia se importó dos veces");
+  const s2 = JSON.stringify({ ...COPIA, nota: "otra exportación" });
+  const r2 = (await como(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3) as r", [C, huella(s2), s2]))).r;
+  ok(r2.partes.ya === 2 && r2.pagos.ya === 2 && r2.trabajadores.ya === 2 && r2.partes.nuevos === 0, "segunda copia: " + JSON.stringify(r2));
+  ok(JSON.stringify(await recuento(C)) === JSON.stringify({ t: 2, d: 1, p: 2, f: 4, g: 2, doc: 1, m: 1 }), "hay duplicados: " + JSON.stringify(await recuento(C)));
+  // Importes: 7,5 + 9 + 5 h = 21,5 h × 12 € = 258 € + tractor 30 € = 288 € + IVA 10 % = 316,80 €; pagado 100 € → pendiente 216,80 €
+  const k = (await como(U.creadorA, ({ uno }) => uno("select public.cuenta_dueno($1, (select id from duenos where campana_id = $1)) as r", [C]))).r;
+  ok(+k.total_cent === 31680 && +k.pendiente_cent === 21680 && +k.horas === 21.5, "cuenta tras importar: " + JSON.stringify([k.total_cent, k.pendiente_cent, k.horas]));
+  // Precios distintos en una campaña que ya tiene partes: rechazado
+  const s3 = JSON.stringify({ ...COPIA, campana: { ...COPIA.campana, precio_hora_dueno_cent: 1500 } });
+  ok(/otras horas por día, precios o IVA/.test(await falla(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3)", [C, huella(s3), s3]))), "aceptó otros precios");
+  A.importada = C;
+  return "simulación sin cambios · error al final sin datos a medias · 2 trabajadores, 2 partes (4 filas), 2 pagos, 1 documento · repetida rechazada · sin duplicados · cuenta 316,80 €";
+});
+await prueba("Copia de campaña 3.0 (000010): exportar solo quien gestiona; restaurar en una campaña aislada con los mismos importes", async () => {
+  for (const u of [U.adminA, U.trab1, U.dueno1, U.jefe1, U.creadorB, U.intruso]) await falla(u, ({ uno }) => uno("select public.exportar_campana($1)", [A.importada]));
+  const e = (await como(U.creadorA, ({ uno }) => uno("select public.exportar_campana($1) as r", [A.importada]))).r;
+  ok(e.partes.length === 2 && e.pagos.length === 2 && e.trabajadores.length === 2 && e.documentos.length === 1 && !JSON.stringify(e).includes("password"), "copia: " + JSON.stringify(e).slice(0, 200));
+  const R = (await como(U.creadorA, ({ uno }) => uno("select public.crear_campana('Restauración aislada', 2026) as id"))).id;
+  const s = JSON.stringify(e), r = (await como(U.creadorA, ({ uno }) => uno("select public.importar_campana($1, $2, $3) as r", [R, huella(s), s]))).r;
+  ok(r.partes.nuevos === 2 && r.pagos.nuevos === 2, "restauración: " + JSON.stringify(r));
+  const total = c => como(U.creadorA, ({ uno }) => uno("select (public.cuenta_dueno($1, (select id from duenos where campana_id = $1))) ->> 'total_cent' as t", [c]));
+  const [a, b] = [await total(A.importada), await total(R)];
+  ok(a.t === b.t && a.t === "31680", "importes distintos tras restaurar: " + JSON.stringify([a, b]));
+  ok(JSON.stringify(await recuento(R)) === JSON.stringify(await recuento(A.importada)), "recuentos distintos tras restaurar");
+  return "6 roles sin permiso rechazados · restaurada en otra campaña: mismos recuentos y cuenta 316,80 €";
 });
 
 /* ---------- Resumen ---------- */
