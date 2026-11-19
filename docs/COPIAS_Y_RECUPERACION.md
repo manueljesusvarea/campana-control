@@ -6,7 +6,7 @@ Supabase Free no ofrece copias automáticas descargables ni restauración a un m
 
 | Copia | Qué contiene | Quién la hace | Cómo |
 | --- | --- | --- | --- |
-| **1. Copia de campaña** | Una campaña entera: trabajadores (con sus datos personales), dueños, maquinaria, partes, jornadas, pagos, modelos y documentos, y opcionalmente las fotos | Quien gestiona la campaña (creador o superadministrador) | App → Campañas → **Copias e importación** → «Descargar copia» |
+| **1. Copia de campaña** | Una campaña entera: trabajadores (con sus datos personales), dueños, maquinaria, partes, jornadas, pagos, modelos, documentos y cuentas autorizadas (sin contraseñas), con **sello** del servidor, y opcionalmente las fotos | Quien gestiona la campaña (creador o superadministrador) | App → Campañas → **Copias e importación** → «Descargar copia» |
 | **2. Copia completa de la base de datos** | Todas las campañas, cuentas (sin contraseñas legibles), permisos y auditoría | El dueño del proyecto, desde su ordenador | `pg_dump` (ver abajo) |
 | **3. Copia de los archivos de Storage** | Las fotos de todas las campañas (bucket privado `fotos`) | El dueño del proyecto, desde su ordenador | Descarga desde el panel o con la CLI de Supabase (ver abajo) |
 
@@ -52,6 +52,63 @@ En **Copias e importación → Importar o restaurar** se puede usar una copia de
 **Restaurar sin riesgo («entorno aislado»):** crea una campaña vacía nueva y restaura en ella. La campaña original no se toca; cuando hayas comparado las dos, decides cuál usar. Así se probó el 19-11-2026: restaurada en otra campaña, con los mismos recuentos, los mismos importes, el documento, su foto y el PDF.
 
 **Nunca restaures sobre la campaña en uso para «volver atrás»:** la importación no borra nada, solo añade.
+
+## Huella y sello: qué demuestra cada uno (000014)
+
+- **Huella SHA-256:** detecta un archivo **dañado** (corte de descarga, disco). **No** demuestra que nadie lo haya cambiado a propósito: quien cambie los datos puede recalcular la huella.
+- **Sello:** HMAC-SHA256 de los datos con una clave que solo existe en la base de datos del proyecto. Está en la tabla `cc_priv.sello`, con RLS, fuera de la API y sin permiso de lectura para nadie. Lo pone el servidor al hacer la copia (`copia_campana`) y lo comprueba al importarla (`verificar_sello`). Sin la clave no se puede falsificar.
+  - **Probado:** se cambia un importe y se recalcula la huella. La huella ya no lo delata, pero el sello sí, y la app no deja importar sin una confirmación expresa.
+- **Una copia de otro proyecto** (por ejemplo, de pruebas a producción) no se puede comprobar, porque la clave es otra. La app lo dice y pide confirmación.
+- **Límite honesto:** el sello demuestra que la copia la hizo este proyecto y que no se ha cambiado. No impide que alguien con la copia la lea (lleva datos personales). Para eso, el cifrado de las copias diarias.
+
+## Copias diarias automáticas, cifradas y fuera de Supabase (gratis)
+
+`herramientas/respaldo/respaldo_diario.mjs`, lanzado con `respaldo_diario.ps1` en tu ordenador con Windows.
+
+**Qué hace cada día:**
+1. Entra con una **cuenta de respaldo**: un superadministrador. Mejor una cuenta solo para esto que tu cuenta personal.
+2. Mira la huella de cambios de cada campaña y **solo copia las que han cambiado** desde la última vez.
+3. Pide la copia sellada al servidor y descarga sus fotos.
+4. **Comprueba** la huella de cada foto y el sello, y que el archivo cifrado se puede volver a leer.
+5. Lo guarda **cifrado** (AES-256-GCM con tu frase de paso) como `AAAA-MM-DD_<campaña>.ccr`, en la carpeta que elijas.
+6. Conserva las copias de los últimos **30 días** y la primera de cada mes de los últimos **12 meses**.
+
+**Fuera de Supabase:** elige una carpeta que esté fuera del ordenador o se sincronice fuera, como una memoria USB o una carpeta de OneDrive o Google Drive personal (gratis hasta su cuota). Los archivos están cifrados: sin la frase de paso no se leen.
+
+**Probado contra el proyecto de pruebas el 20-11-2026:**
+- 105 campañas copiadas en 46 s;
+- la segunda ejecución no copió nada, porque no había cambios;
+- una copia descifrada lleva su sello, sus fotos y las cuentas autorizadas, y ninguna contraseña;
+- con una frase equivocada no se descifra nada.
+
+**Configurar, una sola vez:**
+
+```
+cd herramientas\respaldo
+npm install
+powershell -ExecutionPolicy Bypass -File respaldo_diario.ps1 -Configurar
+```
+
+- Pide la URL, la clave **pública**, el usuario y la contraseña de respaldo, la frase de paso y la carpeta.
+- La contraseña y la frase se guardan **cifradas con DPAPI de Windows** en `%APPDATA%\CampanaControl\respaldo.xml`. Solo tu usuario de Windows en este ordenador puede leerlas; nunca van al proyecto ni a git.
+- **Apunta la frase de paso en un sitio seguro: sin ella, las copias no se pueden recuperar.**
+
+**Programarla a diario:** Programador de tareas de Windows → Crear tarea básica → «Copia Campaña Control» → Diariamente, a las 22:00 → Iniciar un programa:
+- Programa: `powershell`
+- Argumentos: `-ExecutionPolicy Bypass -File "<ruta>\herramientas\respaldo\respaldo_diario.ps1"`
+- Marca «Ejecutar tanto si el usuario inició sesión como si no».
+
+Cada ejecución deja un registro en `registro.txt`, en la carpeta de destino. Si el ordenador está apagado, se copia al día siguiente, porque las copias dependen de los cambios y no de la fecha.
+
+**Recuperar una copia:**
+
+```
+node respaldo_diario.mjs descifrar <archivo.ccr> <salida.json>
+```
+
+Con la frase en `CC_RESPALDO_FRASE`, en la misma sesión. Después, en la app: Copias e importación → Importar o restaurar, en una campaña nueva. El sello se comprueba y el superadministrador recupera las cuentas autorizadas.
+
+**Alternativa sin ordenador encendido:** un flujo de GitHub Actions programado en un repositorio **privado** aparte (gratis), con las credenciales como secretos cifrados de GitHub y las copias cifradas como artefactos. Necesita crear ese repositorio, y por tanto tu autorización. No está hecho.
 
 ## 2. Copia completa de la base de datos (dueño del proyecto)
 

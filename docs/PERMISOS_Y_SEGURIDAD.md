@@ -148,3 +148,14 @@ Sustituye al alta por invitación (000004) y a la confirmación del correo (0000
 | `exportar_campana()` | Solo quien gestiona la campaña | Incluye datos personales y por eso no está al alcance de administradores, trabajadores, jefes, dueños ni otros creadores (probado con los 6). Nunca lleva cuentas ni contraseñas |
 | `importar_campana()` | Solo quien gestiona la campaña de destino | Todo o nada. No sobrescribe. No duplica (`origen_id`, nombre único, parte del mismo día y pago idéntico). La misma copia (huella) no se importa dos veces. No acepta otros precios si la campaña ya tiene partes |
 | `fotos_huerfanas()` / `fotos_sin_archivo()` | Solo quien gestiona | Solo leen. El borrado lo hace la app con los permisos del usuario |
+
+## Pagos, modelos, caché sin conexión y copias selladas (20-11-2026, migraciones 000013-000014)
+
+| Pieza | Quién | Cómo se protege |
+| --- | --- | --- |
+| Corregir un pago | Quien edita la campaña (creador, superadministrador o administrador con edición) | Control de versión: no pisa un cambio ajeno. La base de datos impide cambiar el tipo o la persona del pago, para no mover un saldo a otra persona por error. Cada cambio queda en la auditoría (antes, después, quién y cuándo), que solo leen quienes consultan la campaña; el trabajador no la lee |
+| Modelos de documento | Crear, editar y borrar: solo quien gestiona | Un modelo usado por algún documento no se borra. Altas, cambios y bajas quedan en la auditoría |
+| Copia privada para consultar sin conexión | Cada usuario, en su dispositivo | Solo lo que ese usuario ya podía leer. Cifrada con AES-GCM y una clave no exportable del navegador. Caduca a los 7 días. Se borra al cerrar sesión y cuando el servidor dice que la cuenta está bloqueada. Con esa copia no se puede guardar nada. **Límite:** sin cobertura, una cuenta bloqueada sigue viendo su copia hasta que vuelva la conexión (7 días como mucho); y no protege frente a quien use el dispositivo con la sesión abierta |
+| Sello de las copias (`cc_priv.sello`) | Nadie lo lee. Solo lo usan las funciones del servidor | Tabla en un esquema que no expone la API, con RLS y sin permisos para `anon` ni `authenticated` (comprobado en el proyecto real). Una copia manipulada se detecta aunque se recalcule su huella |
+| `restaurar_miembros()` | Solo el superadministrador | Vuelve a dar acceso a cuentas que ya existen, con su rol y su ficha. No crea cuentas ni contraseñas |
+| Registros de acceso | Superadministrador y propietario | Cambios de datos: tabla `auditoria`, que nadie puede borrar ni falsear. Inicios de sesión: panel de Supabase → Authentication → Logs (en el plan Free se guardan poco tiempo, aproximadamente un día) |
