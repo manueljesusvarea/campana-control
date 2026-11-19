@@ -1781,8 +1781,17 @@ function nubeSuscribir() {
   nubeDesuscribir(); const c = NUBE.c.campana_id;
   NUBE.canal = NUBE.sb.channel("campana-" + c);
   for (const t of ["partes", "partes_filas", "pagos", "miembros"]) NUBE.canal.on("postgres_changes", { event: "*", schema: "public", table: t, filter: "campana_id=eq." + c }, () => nubeRecargar());
-  NUBE.canal.subscribe();
+  // Al (re)conectar el canal se recarga: así no se pierden los cambios hechos mientras el móvil estaba
+  // suspendido o sin cobertura. Si el canal falla, se vuelve a suscribir pasados unos segundos.
+  const canal = NUBE.canal; let conectado = false;
+  canal.subscribe(estado => {
+    if (canal !== NUBE.canal) return;
+    if (estado === "SUBSCRIBED") { if (conectado) nubeRecargar(); conectado = true; }
+    else if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT") setTimeout(() => { if (canal === NUBE.canal && NUBE.c?.campana_id === c) { nubeSuscribir(); nubeRecargar(); } }, 5000);
+  });
 }
+// Al volver a la app (pantalla encendida, otra pestaña…) se traen los cambios que hubiera
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && typeof MODE !== "undefined" && MODE === "cuenta" && NUBE.c) nubeRecargar(); });
 function nubeDesuscribir() { if (NUBE.canal) { NUBE.sb.removeChannel(NUBE.canal); NUBE.canal = null; } }
 function nubeRecargar() { clearTimeout(NUBE.recarga); NUBE.recarga = setTimeout(async () => { if (!NUBE.c) return; try { await nubeCargar(); scheduleRender(); } catch (e) { } }, 600); }
 
