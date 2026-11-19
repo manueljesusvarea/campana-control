@@ -727,6 +727,33 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
   } finally { SRV.nube = false; }
 });
 
+// Solo contra la web publicada (URL_PUBLICADA=https://…): app instalable en HTTPS real (Cloudflare Pages)
+pruebaRed("nube-pwa", "Web publicada: HTTPS, service worker, recarga, dirección de inicio, sin conexión, manifiesto e iconos, caché sin datos", async () => {
+  ok(URL_PUBLICADA && URL_PUBLICADA.startsWith("https://"), "falta URL_PUBLICADA=https://…");
+  const perfil = "pwa-" + Date.now().toString(36), ses = prepararSesion(perfil);
+  const w = await abrir(perfil, { esperarApp: false, url: URL_PUBLICADA, ancho: 390, alto: 844 });
+  const pantalla = async () => { await w.webContents.executeJavaScript(AYUDAS + "; true");
+    return ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 20000, "pantalla de entrar"); return { url: location.href, controlado: !!navigator.serviceWorker.controller };`); };
+  const recargar = async (url) => { const c = new Promise(r => w.webContents.once("did-finish-load", r)); if (url) w.webContents.loadURL(url); else w.webContents.reload(); await c; return pantalla(); };
+  const p0 = await pantalla();
+  await ev(w, `await navigator.serviceWorker.ready; return true;`);
+  const p1 = await recargar();                                    // ya con el service worker al mando
+  ok(p1.controlado, "el service worker no controla la página tras recargar");
+  const p2 = await recargar(URL_PUBLICADA + "index.html");        // start_url del manifiesto (Cloudflare lo redirige a «/»)
+  ses.enableNetworkEmulation({ offline: true });
+  let p3; try { p3 = await recargar(); } finally { ses.disableNetworkEmulation(); }
+  const info = await ev(w, `const m = await (await fetch("manifest.webmanifest", { cache: "no-store" })).json();
+    const est = async u => (await fetch(new URL(u, location.href), { cache: "no-store" })).status;
+    const iconos = await Promise.all([...m.icons.map(i => i.src), "icons/apple-touch-icon.png"].map(est));
+    let cache = []; for (const n of await caches.keys()) for (const r of await (await caches.open(n)).keys()) cache.push(r.url);
+    return { https: location.protocol === "https:", seguro: isSecureContext, display: m.display, start: m.start_url, iconos, apple: !!document.querySelector('link[rel="apple-touch-icon"]'),
+      cache: cache.length, ajenas: cache.filter(u => !u.startsWith(location.origin)).length, nube: cache.filter(u => /supabase\\.co|rest\\/v1|auth\\/v1/.test(u)).length,
+      ipLocal: /192\\.168\\.\\d+\\.\\d+/.test(document.documentElement.outerHTML + JSON.stringify(window.CC_NUBE)), nubeUrl: window.CC_NUBE?.url };`);
+  ok(info.https && info.seguro && info.display === "standalone" && info.iconos.every(s => s === 200) && info.apple, "instalable: " + JSON.stringify(info));
+  ok(info.cache > 0 && !info.ajenas && !info.nube && !info.ipLocal && /^https:\/\/[a-z0-9]+\.supabase\.co$/.test(info.nubeUrl), "caché o configuración: " + JSON.stringify(info));
+  return { primera: p0.url, recarga: p1.controlado ? "con service worker" : "sin", inicio: p2.url, sinConexion: p3 ? "abre" : "no", cache: info.cache + " archivos de la app", iconos: info.iconos.join(",") };
+});
+
 /* ---------- Ejecución ---------- */
 async function main() {
   await new Promise(r => servidor.listen(0, "127.0.0.1", r));

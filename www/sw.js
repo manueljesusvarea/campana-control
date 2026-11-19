@@ -17,7 +17,13 @@ const APP = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.p
   "./fonts/source-sans-3-latin-ext-400-normal.woff2", "./fonts/source-sans-3-latin-ext-600-normal.woff2", "./fonts/source-sans-3-latin-ext-700-normal.woff2"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(APP)).then(() => self.skipWaiting()));
+  // Como addAll, pero sin guardar respuestas «redirigidas»: Cloudflare Pages redirige index.html → «/», y el
+  // navegador rechaza (ERR_FAILED) una respuesta redirigida al abrir la página. Se guarda una copia limpia.
+  e.waitUntil(caches.open(VERSION).then(c => Promise.all(APP.map(async r => {
+    const res = await fetch(r);
+    if (!res.ok) throw new Error("No se pudo guardar " + r + ": " + res.status);
+    await c.put(r, res.redirected ? new Response(await res.blob(), { status: res.status, statusText: res.statusText, headers: res.headers }) : res);
+  }))).then(() => self.skipWaiting()));
 });
 self.addEventListener("activate", e => {
   e.waitUntil((async () => {
