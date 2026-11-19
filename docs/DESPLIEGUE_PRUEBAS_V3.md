@@ -65,6 +65,38 @@ URL_PUBLICADA=https://campana-control-v3-pruebas.pages.dev  …\electron.exe her
   - **Web:** se reconstruye desde git en cualquier momento («Retry deployment» o un `push`).
 - **Coste:** 0 €/mes. No hay facturación activada ni dominio contratado. Si Cloudflare o Supabase ofrecen un plan de pago, se rechaza.
 
+## Consumo real del plan gratuito (19-11-2026, ciclo 07-11 → 07-12)
+
+Del panel Usage de Supabase, después de dos días de pruebas automáticas intensivas:
+
+| Recurso | Uso | Límite Free |
+| --- | --- | --- |
+| Base de datos | 33 MB | 500 MB |
+| Transferencia de salida (egress) | 0,01 GB | 5 GB |
+| Usuarios activos al mes | 158 | 50.000 |
+| Llamadas a Edge Functions | 116 | 500.000 |
+| Mensajes en tiempo real | 246 | 2.000.000 |
+| Conexiones simultáneas en tiempo real (pico) | 5 | 200 |
+| Storage | 145 kB (11 fotos) | 1 GB |
+| Despliegues de Cloudflare | 5 | 500 al mes |
+
+Supabase Free **no factura excesos**: si se pasa de una cuota, limita el servicio. Cloudflare Pages Free no pide tarjeta.
+
+**Estimación para una cuadrilla** (20 trabajadores, 60 días, 10 dispositivos):
+- Base de datos: unos 2 MB.
+- Fotos: unas 300 a 300 kB, unos 90 MB.
+- Egress: cada recarga completa de una campaña así pesa unos 40 a 60 kB comprimida. Con unos 30 cambios al día y 10 dispositivos abiertos, sale menos de 1 GB al mes.
+- Lo que más transferencia gasta es ver fotos, unos 300 kB cada una, y las copias con fotos.
+
+**Optimizaciones:**
+- La app solo recarga cuando hay un aviso o cuando cambia la huella. La huella es una consulta de unos 100 bytes cada 45 s, y solo con la app visible.
+- En segundo plano no se descarga nada.
+- Las fotos se comprimen a 1600 px antes de subirlas y se descargan solo al abrir su documento.
+
+**Límite de inicios de sesión:** Supabase Auth admite unos 30 inicios de sesión cada 5 minutos por dirección IP. Una cuadrilla no lo alcanza. Las pruebas automáticas, al encadenarse, sí lo alcanzaron, y salía «Request rate limit reached».
+
+**Si Supabase pausa el proyecto por inactividad:** ver `docs/COPIAS_Y_RECUPERACION.md`, apartado final.
+
 ## Instalar la app
 
 - **iPhone (Safari):**

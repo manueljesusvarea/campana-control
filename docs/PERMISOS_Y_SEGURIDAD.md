@@ -137,3 +137,14 @@ Sustituye al alta por invitación (000004) y a la confirmación del correo (0000
   - restablecer y bloquear;
   - tiempo real en 0,7 s, sin fuga a otra campaña.
 - App con 6 sesiones contra el proyecto real (`ejecutar.js nube`): correcta.
+
+## Informes, fotos, copias e importación (19-11-2026, migraciones 000009-000012)
+
+| Pieza | Quién | Cómo se protege |
+| --- | --- | --- |
+| Informes PDF/Excel y gráficas | Cada rol, con lo que ya puede leer | Se generan en el dispositivo con las fórmulas de la 2.3.0 y no se guardan en la nube. El navegador solo recibe lo que la RLS o una función con permisos le da: el creador y el administrador, su campaña; el trabajador, `resumen_trabajador`; el dueño, `datos_dueno` (solo sus partes, sin datos personales de nadie); el jefe, `jornadas_equipo` (sin dinero: su Excel no lleva importes) |
+| `huella_campana()` | Cualquier miembro | `security invoker`: la RLS filtra, así que cada usuario solo detecta cambios en lo que puede ver. Probado: un cambio en el parte de un dueño no cambia la huella de otro dueño ni la de un intruso |
+| Fotos (bucket privado `fotos`) | Leer: quien consulta la campaña y el dueño del documento (más quien gestiona la carpeta, 000012). Subir y borrar: solo quien gestiona | No hay enlaces públicos. La app descarga con la sesión y enseña un blob en memoria, que se libera al cerrar sesión. Se sube con `cacheControl 0`, para que el navegador vuelva a preguntar al servidor. Probado: sin sesión no se descarga, no se firma un enlace ni se leen las fichas, y la URL pública da error; el trabajador y el jefe no la leen; el dueño no sube ni borra |
+| `exportar_campana()` | Solo quien gestiona la campaña | Incluye datos personales y por eso no está al alcance de administradores, trabajadores, jefes, dueños ni otros creadores (probado con los 6). Nunca lleva cuentas ni contraseñas |
+| `importar_campana()` | Solo quien gestiona la campaña de destino | Todo o nada. No sobrescribe. No duplica (`origen_id`, nombre único, parte del mismo día y pago idéntico). La misma copia (huella) no se importa dos veces. No acepta otros precios si la campaña ya tiene partes |
+| `fotos_huerfanas()` / `fotos_sin_archivo()` | Solo quien gestiona | Solo leen. El borrado lo hace la app con los permisos del usuario |

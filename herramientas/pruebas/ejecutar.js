@@ -798,7 +798,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
 
     if (process.env.CAPTURAS) {
       fs.mkdirSync(process.env.CAPTURAS, { recursive: true });
-      for (const [n, w, h] of [["1-usuarios-superadmin", pcSa, "#usuarios"], ["2-usuarios-creador", movil, "#usuarios"], ["3-editor-parte", disp.editor, "#n-parte"], ["4-lector-inicio", disp.lector, "#n-inicio"], ["5-trabajador-bloqueado", disp.trab1, null], ["6-jefe", disp.jefe, "#n-equipo"]]) {
+      for (const [n, w, h] of [["7-informes-creador", movil, "#n-informes"], ["8-documentos-creador", movil, "#n-documentos"], ["9-copias", pcSa, "#copias"], ["1-usuarios-superadmin", pcSa, "#usuarios"], ["2-usuarios-creador", movil, "#usuarios"], ["3-editor-parte", disp.editor, "#n-parte"], ["4-lector-inicio", disp.lector, "#n-inicio"], ["5-trabajador-bloqueado", disp.trab1, null], ["6-jefe", disp.jefe, "#n-equipo"]]) {
         if (h) await ev(w, `await t.ir(${JSON.stringify(h)}); NUBE.usuarios = null; render(); await t.dormir(1500); render(); return true;`);
         fs.writeFileSync(path.join(process.env.CAPTURAS, n + ".png"), (await w.webContents.capturePage()).toPNG());
       }
