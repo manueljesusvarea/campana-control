@@ -23,6 +23,7 @@ Usuario: encargado de una cuadrilla en España. Toda la interfaz, los textos y l
 - Estado actual y próximas tareas: `docs/ESTADO_ACTUAL_V3.md`. **Cuentas privadas (000006-000008): usuario y contraseña, sin correo ni registro público.** Las crea «Gestión de usuarios» mediante la Edge Function `supabase/functions/gestion-usuarios` (se despliega desde el panel de Supabase). Modo con cuenta: bloque «Modo cuenta (3.0 · Supabase)» del código fuente; solo se activa si `www/config-nube.js` tiene configuración (generado por `construir_www.py` desde `supabase/config-app.local.json`, ignorado por git).
 - Prueba real contra el proyecto de pruebas (varias sesiones, tiempo real, conflicto): `… ejecutar.js nube`. Necesita el superadministrador de pruebas `propietario.pruebas` en `supabase/pruebas/.cuentas-pruebas.json` (ignorado por git). Ningún permiso depende del identificador técnico: el superadministrador se designa por uuid con SQL del propietario.
 - Solo datos ficticios en pruebas. No migrar datos reales sin autorización.
+- **Beta de pruebas publicada:** https://campana-control-v3-pruebas.pages.dev (Cloudflare Pages Free). Cada `push` a `desarrollo/multiusuario-v3` la actualiza si pasa `herramientas/despliegue_pruebas.sh`; ninguna otra rama se despliega allí. Ver `docs/DESPLIEGUE_PRUEBAS_V3.md`. Pruebas contra ella: `URL_PUBLICADA=https://campana-control-v3-pruebas.pages.dev … ejecutar.js nube`.
 
 ## Estructura
 
