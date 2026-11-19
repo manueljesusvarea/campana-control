@@ -1,7 +1,7 @@
 // CAMPAÑA CONTROL 3.0 · Copia diaria de todas las campañas, FUERA de Supabase (gratis).
 //
 // Qué hace, en cada ejecución:
-//   1. Entra con la cuenta de respaldo (un superadministrador; la contraseña NO está en ningún archivo del proyecto:
+//   1. Entra con la cuenta técnica de copias «respaldo.copias» (solo lectura, migración 000015; la contraseña NO está en ningún archivo del proyecto:
 //      la pasa respaldo_diario.ps1, que la guarda cifrada con DPAPI de Windows solo para tu usuario).
 //   2. Para cada campaña pide su huella de cambios. Si no ha cambiado desde la última copia, no hace nada (copias
 //      «cuando hay actividad»).
@@ -68,10 +68,12 @@ if (e.error) { console.error("No se pudo entrar con la cuenta de respaldo: " + e
 const nq = async p => { const r = await p; if (r.error) throw new Error(r.error.message); return r.data; };
 let hechas = 0, iguales = 0, fallos = 0;
 try {
-  const campanas = await nq(sb.rpc("mis_campanas"));
+  // Cuenta técnica de copias (solo lectura, 000015): respaldo_campanas/respaldo_huella. Otra cuenta: mis_campanas/huella_campana
+  const tecnica = !(await sb.rpc("respaldo_campanas")).error;
+  const campanas = await nq(sb.rpc(tecnica ? "respaldo_campanas" : "mis_campanas"));
   for (const c of campanas) {
     try {
-      const h = await nq(sb.rpc("huella_campana", { p_campana: c.campana_id }));
+      const h = await nq(sb.rpc(tecnica ? "respaldo_huella" : "huella_campana", { p_campana: c.campana_id }));
       if (estado.huellas[c.campana_id] === h) { iguales++; continue; }   // sin cambios desde la última copia
       const s = await nq(sb.rpc("copia_campana", { p_campana: c.campana_id }));
       const fotos = [];

@@ -582,6 +582,62 @@ await prueba("Restauración completa aislada (000014): jornadas, pagos, document
   return `campaña nueva: ${b.filas} jornadas, ${b.maq} maquinaria, kilos ${b.kilos}, pagos ${b.pagos} céntimos y ${b.docs} documentos iguales · ${m.vinculadas} cuentas con su rol y ficha · solo el superadministrador vincula`;
 });
 
+/* ---------- 000015: cuenta técnica de copias, solo lectura ---------- */
+await prueba("Cuenta de copias (000015): lee campañas, copias selladas y fotos; no escribe nada ni puede recibir permisos", async () => {
+  // Alta: solo el propietario (editor SQL) la autoriza; nadie desde la API
+  for (const u of [U.super, U.creadorA, U.adminA, null]) await falla(u, ({ uno }) => uno("select cc_priv.autorizar_alta_respaldo('copias.intento')"));
+  await db.query("select cc_priv.autorizar_alta_respaldo('respaldo.copias')");
+  const R = crypto.randomUUID();
+  await db.query("insert into auth.users (id, email) values ($1, 'respaldo.copias@usuarios.campana-control.invalid')", [R]);
+  const p = (await db.query("select activo, debe_cambiar_clave, puede_crear_campanas from public.perfiles where id = $1", [R])).rows[0];
+  ok(p.activo && !p.debe_cambiar_clave && !p.puede_crear_campanas, "perfil de la cuenta de copias: " + JSON.stringify(p));
+  ok((await db.query("select count(*)::int as n from public.superadmin where user_id = $1", [R])).rows[0].n === 0, "la cuenta de copias es superadministrador");
+  // Lee lo necesario para las copias
+  const camps = await como(R, ({ q }) => q("select * from public.respaldo_campanas()"));
+  ok(camps.length >= 2 && camps.some(c => c.campana_id === A.c), "no ve las campañas: " + camps.length);
+  const c = (await como(R, ({ uno }) => uno("select public.copia_campana($1) as r", [A.c]))).r;
+  ok(c.datos.partes.length > 0 && /^[0-9a-f]{64}$/.test(c.sello), "no puede hacer la copia sellada");
+  ok(typeof (await como(R, ({ uno }) => uno("select public.respaldo_huella($1) as h", [A.c]))).h === "string", "sin huella");
+  await como(R, ({ q }) => q("select * from public.respaldo_fotos()"));
+  ok((await como(R, ({ uno }) => uno("select public.verificar_sello($1, $2) as v", [JSON.stringify(c.datos), c.sello]))).v === true, "no comprueba el sello");
+  // Directamente, la RLS no le deja ver nada
+  for (const t of ["partes", "pagos", "trabajadores_privado", "perfiles", "miembros", "auditoria"]) {
+    const n = (await como(R, ({ q }) => q(`select * from public.${t}`))).filter(x => x.id !== R).length;
+    ok(n === 0, "la cuenta de copias lee directamente " + t);
+  }
+  // No escribe nada
+  const intentos = [
+    ["insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 100, '2026-11-20') returning id", [A.c, A.t1]],
+    ["select public.guardar_parte($1, $2, '2026-11-25', null, 1, null, '[]', '[]')", [A.c, A.d1]],
+    ["select public.crear_campana('de copias', 2026)", []],
+    ["select public.preparar_alta('colado.copias', 'x', 'creador')", []],
+    ["insert into public.superadmin (user_id) values ($1)", [R]],
+    ["select public.importar_campana($1, repeat('a', 64), '{}')", [A.c]],
+    ["select public.restaurar_miembros($1, '[]')", [A.c]]];
+  for (const [sql, prm] of intentos) {
+    let hecho = false; try { const r = await como(R, ({ q }) => q(sql, prm)); hecho = r.length > 0; } catch (e) { hecho = false; }
+    ok(!hecho, "la cuenta de copias pudo: " + sql.slice(0, 50));
+  }
+  ok((await como(R, ({ q }) => q("update pagos set importe_cent = 1, version = version + 1 returning id"))).length === 0, "cambió pagos");
+  ok((await como(R, ({ q }) => q("update partes_filas set horas = 1 returning id"))).length === 0, "cambió jornadas");
+  try { await como(R, ({ q }) => q("update public.perfiles set puede_crear_campanas = true where id = $1 returning id", [R])); } catch (e) { }
+  ok(!(await db.query("select puede_crear_campanas from public.perfiles where id = $1", [R])).rows[0].puede_crear_campanas, "se dio permiso de crear campañas");
+  // Ni el superadministrador puede convertirla en superadministrador, miembro o creador
+  await falla(U.super, ({ uno }) => uno("insert into public.superadmin (user_id) values ($1)", [R]));
+  let msg0 = ""; try { await db.query("insert into public.superadmin (user_id) values ($1)", [R]); } catch (e) { msg0 = e.message; }
+  ok(/solo lectura|unico|duplicate/.test(msg0) && (await db.query("select count(*)::int as n from public.superadmin where user_id = $1", [R])).rows[0].n === 0, "el propietario la hizo superadministrador: " + msg0);
+  await falla(U.super, ({ uno }) => uno("insert into public.miembros (campana_id, user_id, rol) values ($1, $2, 'admin')", [A.c, R]));
+  let msg = ""; try { await db.query("update public.perfiles set puede_crear_campanas = true where id = $1", [R]); } catch (e) { msg = e.message; }
+  ok(/solo lectura/.test(msg), "se le dio crear campañas desde el propietario");
+  // Otros usuarios no usan sus funciones
+  for (const u of [U.super, U.creadorA, U.trab1]) await falla(u, ({ uno }) => uno("select * from public.respaldo_campanas()"));
+  // Si se bloquea, deja de poder leer
+  await db.query("update public.perfiles set bloqueado = true where id = $1", [R]);
+  await falla(R, ({ uno }) => uno("select public.copia_campana($1)", [A.c]));
+  await db.query("update public.perfiles set bloqueado = false where id = $1", [R]);
+  return `${camps.length} campañas y copia sellada legibles · 6 tablas sin lectura directa · 9 escrituras rechazadas · no puede ser superadministrador, miembro ni creador · bloqueada pierde el acceso`;
+});
+
 /* ---------- Resumen ---------- */
 const fallos = resultados.filter(r => !r.ok).length;
 console.log(`\n${resultados.length - fallos} correctas, ${fallos} con fallos`);
