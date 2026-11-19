@@ -1227,14 +1227,17 @@ const A = {
   infT(el) { const a = UI.inf.trabs; const i = a.indexOf(el.dataset.id); i < 0 ? a.push(el.dataset.id) : a.splice(i, 1); render(); },
   infRango(el) {
     const k = el.dataset.k; const F = UI.inf;
-    if (k === "todo") { const d = infDef(); F.desde = d.desde; F.hasta = d.hasta; }
+    if (k === "todo") { const d = enNube(infDef); F.desde = d.desde; F.hasta = d.hasta; }
     if (k === "mes") { const d = new Date(); F.desde = isoD(new Date(d.getFullYear(), d.getMonth(), 1)); F.hasta = isoD(new Date(d.getFullYear(), d.getMonth() + 1, 0)); }
     if (k === "semana") { F.hasta = hoy(); F.desde = addDays(hoy(), -6); }
     if (k === "q") { F.desde = el.dataset.d; F.hasta = el.dataset.h; }
     render();
   },
-  async infPdf() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await pdfDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await pdfTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await pdfRegistro(fl); else await pdfGrafica(fl); },
-  async infXls() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await xlsDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await xlsTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await xlsRegistro(fl); else await xlsGrafica(fl); },
+  infPdf() { return enNube(() => A.infPdf0()); },
+  nInfRol(el) { return informeRol(el.dataset.k, el.dataset.f); },
+  infXls() { return enNube(() => A.infXls0()); },
+  async infPdf0() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await pdfDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await pdfTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await pdfRegistro(fl); else await pdfGrafica(fl); },
+  async infXls0() { const F = UI.inf; const fl = { desde: F.desde, hasta: F.hasta, duenos: F.duenos, trabs: F.trabs }; if (F.tipo === "dueno") await xlsDuenos(F.duenos.length ? F.duenos : duenosCamp().map(d => d.id), fl); else if (F.tipo === "trab") await xlsTrabs(F.trabs.length ? F.trabs : lista("trabajadores").map(t => t.id), fl); else if (F.tipo === "reg") await xlsRegistro(fl); else await xlsGrafica(fl); },
   pdfDueno: el => pdfDuenos([el.dataset.id], perFl(UI.per.dueno)), xlsDueno: el => xlsDuenos([el.dataset.id], perFl(UI.per.dueno)),
   pdfTrab: el => pdfTrabs([el.dataset.id], perFl(UI.per.trab)), xlsTrab: el => xlsTrabs([el.dataset.id], perFl(UI.per.trab)),
 
@@ -1650,8 +1653,8 @@ async function xlsRegistro(fl) {
   const rs = ids.map(id => ({ id, ...resumenTrab(id, fl) })).filter(r => r.rs.length).sort((a, b) => nomT(a.id).localeCompare(nomT(b.id), "es"));
   if (!rs.length) return toast("No hay datos para esa selección");
   const dias = rangoFechas(fl.desde, fl.hasta);
-  const a = [["Registro de horas", c.nombre, periodoTxt(fl), fl.duenos?.length ? fl.duenos.map(nomD).join(", ") : "Todos los dueños"], [], ["Trabajador", ...dias.map(d => fFechaL(d)), "Total horas", "Días", "Faltas", "Importe (€)"]];
-  rs.forEach(r => { const by = {}; r.rs.forEach(x => { if (x.tipo === "ausente") { if (by[x.fecha] == null) by[x.fecha] = "F"; } else by[x.fecha] = (by[x.fecha] === "F" ? 0 : by[x.fecha] || 0) + x.horas; }); a.push([nomT(r.id), ...dias.map(d => by[d] === "F" ? "F" : by[d] ? r2(by[d]) : ""), r2(r.horas), r.dias, r.faltas, r2(r.importe)]); });
+  const a = [["Registro de horas", c.nombre, periodoTxt(fl), fl.duenos?.length ? fl.duenos.map(nomD).join(", ") : "Todos los dueños"], [], ["Trabajador", ...dias.map(d => fFechaL(d)), "Total horas", "Días", "Faltas", ...(INF_SIN_DINERO ? [] : ["Importe (€)"])]];
+  rs.forEach(r => { const by = {}; r.rs.forEach(x => { if (x.tipo === "ausente") { if (by[x.fecha] == null) by[x.fecha] = "F"; } else by[x.fecha] = (by[x.fecha] === "F" ? 0 : by[x.fecha] || 0) + x.horas; }); a.push([nomT(r.id), ...dias.map(d => by[d] === "F" ? "F" : by[d] ? r2(by[d]) : ""), r2(r.horas), r.dias, r.faltas, ...(INF_SIN_DINERO ? [] : [r2(r.importe)])]); });
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, hoja(a, [26, ...dias.map(() => 10), 11, 6, 7, 11]), "Registro");
   const pd = [["Dueño", "Trabajador", "Días", "Horas"]]; const agg = {};
   registros(fl).forEach(r => { if (r.tipo === "ausente" || (fl.trabs?.length && !fl.trabs.includes(r.trabId))) return; const k = r.duenoId + "|" + r.trabId; const o = agg[k] ??= { d: r.duenoId, t: r.trabId, dias: 0, h: 0 }; o.dias++; o.h += r.horas; });
@@ -1716,7 +1719,7 @@ const nSinRed = () => { if (NUBE.online) return false; toast("Sin conexión: no 
 async function nubeIniciar() {
   MODE = "cuenta";
   NUBE.sb = window.supabase.createClient(window.CC_NUBE.url, window.CC_NUBE.clave, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "campana-control-sesion" } });
-  addEventListener("online", () => { NUBE.online = true; updSync(); nubeRecargar(); render(); });
+  addEventListener("online", () => { NUBE.online = true; updSync(); if (NUBE.c && !NUBE.canal) nubeSuscribir(); nubeComprobar(); render(); });
   addEventListener("offline", () => { NUBE.online = false; updSync(); render(); });
   NUBE.sb.auth.onAuthStateChange((ev, s) => { const antes = NUBE.sesion?.user?.id || null; NUBE.sesion = s; if ((s?.user?.id || null) !== antes) setTimeout(nubeTrasSesion, 0); });
   NUBE.sesion = (await NUBE.sb.auth.getSession()).data.session;
@@ -1740,7 +1743,7 @@ async function nubeTrasSesion() {
 }
 async function nubeElegir(id, sinRender) {
   const fila = NUBE.campanas.find(c => c.campana_id === id); if (!fila) return;
-  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null; NUBE.permisos = null;
+  NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.cuentas = {}; NUBE.borrador = null; NUBE.permisos = null; UI.inf = null;
   try { NUBE.permisos = await nq(NUBE.sb.rpc("mis_permisos", { p_campana: id })); } catch (e) { }
   try { localStorage.setItem(PREF_CAMP, id); } catch (e) { }
   await nubeCargar(); nubeSuscribir();
@@ -1752,14 +1755,19 @@ async function nubeElegir(id, sinRender) {
 // después, sus datos (anteriores al cambio) no deben pisar los nuevos.
 let nCargaN = 0;
 async function nubeCargar() {
+  const n0 = nCargaN + 1, c0 = NUBE.c.campana_id;
+  const [camps, perm] = await Promise.all([nq(NUBE.sb.rpc("mis_campanas")), nq(NUBE.sb.rpc("mis_permisos", { p_campana: c0 }))]);
+  const fila = camps.find(x => x.campana_id === c0);
+  if (!fila) throw new Error("PERMISO: ya no tienes acceso a esta campaña");
+  if (n0 === nCargaN + 1 && NUBE.c?.campana_id === c0) { NUBE.campanas = camps; NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.permisos = perm; }
   const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
-  d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia").eq("id", c).single());
+  d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia, empresa").eq("id", c).single());
   if (nConsulta()) {
     const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
     [d.eco, d.trab, d.duenos, d.partes, d.filas, d.pmaq, d.maq, d.pagos, d.miembros, d.asig] = await Promise.all([
       nq(sb.from("campanas_economia").select("precio_hora_trab_cent, precio_hora_dueno_cent, iva, version").eq("campana_id", c).maybeSingle()),
       sel("trabajadores", "id, nombre, precio_hora_cent, activo, version", ["nombre"]),
-      sel("duenos", "id, nombre, finca, municipio, precio_hora_cent, version", ["nombre"]),
+      sel("duenos", "id, nombre, finca, municipio, num, kilos_total, precio_hora_cent, version", ["nombre"]),
       sel("partes", "id, dueno_id, fecha, kilos, notas, version", ["fecha", false]),
       sel("partes_filas", "parte_id, trabajador_id, tipo, horas, nota, fecha"),
       sel("partes_maquinas", "parte_id, maquina_id, cantidad"),
@@ -1767,12 +1775,14 @@ async function nubeCargar() {
       sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
+    [d.tpriv, d.dpriv] = await Promise.all([sel("trabajadores_privado", "trabajador_id, nif, nss, telefono"), sel("duenos_privado", "dueno_id, nif, direccion, telefono, poligono, parcela")]);
     const ids = [...new Set(d.miembros.map(m => m.user_id))];
     if (ids.length) d.nombres = Object.fromEntries((await nq(sb.from("perfiles").select("id, nombre").in("id", ids))).map(p => [p.id, p.nombre]));
   }
   if (NUBE.roles.includes("trabajador")) d.resumen = await nq(sb.rpc("resumen_trabajador", { p_campana: c }));
-  if (NUBE.roles.includes("dueno")) d.cuenta = await nq(sb.rpc("cuenta_dueno", { p_campana: c }));
+  if (NUBE.roles.includes("dueno")) [d.cuenta, d.datosDueno] = await Promise.all([nq(sb.rpc("cuenta_dueno", { p_campana: c })), nq(sb.rpc("datos_dueno", { p_campana: c }))]);
   if (NUBE.roles.includes("jefe")) d.equipo = await nq(sb.rpc("jornadas_equipo", { p_campana: c }));
+  try { d.huella = await nq(sb.rpc("huella_campana", { p_campana: c })); } catch (e) { d.huella = null; }
   if (n !== nCargaN || NUBE.c?.campana_id !== c) return;   // llegó otra carga más reciente (o se cambió de campaña)
   NUBE.d = d; NUBE.cuentas = {};
 }
@@ -1786,21 +1796,130 @@ function nubeSuscribir() {
   const canal = NUBE.canal; let conectado = false;
   canal.subscribe(estado => {
     if (canal !== NUBE.canal) return;
-    if (estado === "SUBSCRIBED") { if (conectado) nubeRecargar(); conectado = true; }
+    if (estado === "SUBSCRIBED") { if (conectado) nubeRecargar(); else setTimeout(nubeComprobar, 3000); conectado = true; }
     else if (estado === "CHANNEL_ERROR" || estado === "TIMED_OUT") setTimeout(() => { if (canal === NUBE.canal && NUBE.c?.campana_id === c) { nubeSuscribir(); nubeRecargar(); } }, 5000);
   });
 }
 // Al volver a la app (pantalla encendida, otra pestaña…) se traen los cambios que hubiera
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && typeof MODE !== "undefined" && MODE === "cuenta" && NUBE.c) nubeRecargar(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && typeof MODE !== "undefined" && MODE === "cuenta" && NUBE.c) nubeComprobar(); });
+// Reconciliación: los avisos en tiempo real pueden perderse (móvil suspendido, cambio de wifi a datos, el instante
+// entre suscribirse y que Supabase empiece a enviar cambios…). Cada 45 s con la app visible, al volver a ella y al
+// recuperar la conexión se pide la huella de la campaña (una consulta pequeña, con los permisos del usuario): si no
+// coincide con la de la última carga, se recarga. Si la carga falla (permisos retirados, cuenta bloqueada, sesión
+// caducada) se vuelve a comprobar la sesión entera, que lleva a la pantalla que corresponda sin dejar datos a la vista.
+let nComprobando = false;
+async function nubeComprobar() {
+  if (nComprobando || MODE !== "cuenta" || !NUBE.c || !NUBE.online || document.visibilityState !== "visible") return;
+  nComprobando = true;
+  try {
+    const { data, error } = await NUBE.sb.rpc("huella_campana", { p_campana: NUBE.c.campana_id });
+    if (error || data !== NUBE.d?.huella) nubeRecargar();
+  } catch (e) { nubeRecargar(); } finally { nComprobando = false; }
+}
+setInterval(nubeComprobar, 45000);
 function nubeDesuscribir() { if (NUBE.canal) { NUBE.sb.removeChannel(NUBE.canal); NUBE.canal = null; } }
-function nubeRecargar() { clearTimeout(NUBE.recarga); NUBE.recarga = setTimeout(async () => { if (!NUBE.c) return; try { await nubeCargar(); scheduleRender(); } catch (e) { } }, 600); }
+function nubeRecargar() {
+  clearTimeout(NUBE.recarga);
+  NUBE.recarga = setTimeout(async () => {
+    if (!NUBE.c) return;
+    try { await nubeCargar(); scheduleRender(); }
+    catch (e) { if (navigator.onLine && !/Failed to fetch|NetworkError|Load failed/i.test(String(e?.message || e))) nubeTrasSesion(); }   // sin red se conserva lo que hay
+  }, 600);
+}
+
+
+/* ---------- Informes con cuenta (3.0): los mismos cálculos, PDF, Excel y gráficas de la 2.3.0 ----------
+   Los datos compartidos se pasan al formato de la 2.3.0 («S») y se usan sus mismas funciones: registros(),
+   resumenTrab(), cuentaDueno(), porQuincena(), grafica(), pdf…() y xls…(). Así no hay dos juegos de fórmulas.
+   conS() pone esos datos en S solo mientras se calcula y después deja S como estaba. Todo lo que lee S ocurre
+   antes del primer «await» de cada función (código síncrono: no se ejecuta nada más entretanto), así que los
+   datos «sin cuenta» de este dispositivo nunca se mezclan ni se guardan con los de la nube.
+   Cada rol solo tiene en el navegador lo que el servidor le deja leer (RLS y funciones con permisos):
+   · creador, administrador y superadministrador: toda la campaña (tablas);
+   · trabajador: su resumen (resumen_trabajador) · dueño: sus partes (datos_dueno) · jefe: su equipo, sin dinero.
+   Los PDF y Excel se generan en el dispositivo y no se guardan en la nube. */
+let INF_SIN_DINERO = false;
+function conS(SN, fn, opc = {}) {
+  const prev = {}; COLS.forEach(k => { prev[k] = S[k]; S[k] = SN[k] || {}; }); const sd = INF_SIN_DINERO; INF_SIN_DINERO = !!opc.sinDinero;
+  try { return fn(); } finally { COLS.forEach(k => S[k] = prev[k]); INF_SIN_DINERO = sd; }
+}
+const enNube = fn => (MODE === "cuenta" && NUBE.d?.campana) ? conS(snConsulta(), fn) : fn();
+const euroDeCent = v => v == null ? null : +v / 100;
+const horaCorta = h => h ? String(h).slice(0, 5) : "";
+function snVacio(campana, extra = {}) {
+  const SN = {}; COLS.forEach(k => SN[k] = {});
+  SN.ajustes.general = { campanaActiva: campana.id, empresa: campana.empresa || {} };
+  SN.campanas[campana.id] = { nombre: campana.nombre, anio: campana.anio, inicio: campana.inicio, horasDia: +campana.horas_dia, maquinas: [], ...extra };
+  return SN;
+}
+function partesASN(SN, c, partes, filas, pmaq) {
+  partes.forEach(p => SN.partes[p.id] = { campanaId: c, duenoId: p.dueno_id, fecha: p.fecha, kilos: p.kilos, notas: p.notas || "", filas: {}, maquinas: {} });
+  filas.forEach(f => { const p = SN.partes[f.parte_id]; if (p) p.filas[f.trabajador_id] = { tipo: f.tipo, horas: f.horas, nota: f.nota || "" }; });
+  (pmaq || []).forEach(m => { const p = SN.partes[m.parte_id]; if (p) p.maquinas[m.maquina_id] = +m.cantidad; });
+}
+const maqASN = l => l.map(m => ({ id: m.id, nombre: m.nombre, precio: m.precio_cent / 100, unidad: m.unidad }));
+function snConsulta(d = NUBE.d) {
+  const c = d.campana.id, eco = d.eco || {};
+  const SN = snVacio(d.campana, { precioHoraTrab: euroDeCent(eco.precio_hora_trab_cent), precioHoraDueno: euroDeCent(eco.precio_hora_dueno_cent), iva: +eco.iva || 0, maquinas: maqASN(d.maq) });
+  const tp = Object.fromEntries((d.tpriv || []).map(x => [x.trabajador_id, x])), dp = Object.fromEntries((d.dpriv || []).map(x => [x.dueno_id, x]));
+  d.trab.forEach(t => SN.trabajadores[t.id] = { nombre: t.nombre, precioHora: euroDeCent(t.precio_hora_cent), activo: t.activo !== false, nif: tp[t.id]?.nif || "", nss: tp[t.id]?.nss || "", telefono: tp[t.id]?.telefono || "" });
+  d.duenos.forEach(x => { const v = dp[x.id] || {}; SN.duenos[x.id] = { campanaId: c, nombre: x.nombre, finca: x.finca || "", municipio: x.municipio || "", num: x.num, precioHora: euroDeCent(x.precio_hora_cent), kilosTotal: x.kilos_total,
+    nif: v.nif || "", direccion: v.direccion || "", telefono: v.telefono || "", poligono: v.poligono || "", parcela: v.parcela || "" }; });
+  partesASN(SN, c, d.partes, d.filas, d.pmaq);
+  d.pagos.forEach(p => SN.pagos[p.id] = { campanaId: c, tipo: p.tipo, personaId: p.tipo === "trabajador" ? p.trabajador_id : p.dueno_id, importe: p.importe_cent / 100, fecha: p.fecha, hora: horaCorta(p.hora), forma: p.forma, nota: p.nota || "" });
+  return SN;
+}
+function snDueno(r = NUBE.d.datosDueno) {
+  const c = r.campana.id, x = r.dueno;
+  const SN = snVacio(r.campana, { iva: +r.iva || 0, precioHoraDueno: euroDeCent(r.precio_hora_cent), maquinas: maqASN(r.maquinas) });
+  r.trabajadores.forEach(t => SN.trabajadores[t.id] = { nombre: t.nombre, activo: true });
+  SN.duenos[x.id] = { campanaId: c, nombre: x.nombre, finca: x.finca || "", municipio: x.municipio || "", num: x.num, precioHora: euroDeCent(r.precio_hora_cent), kilosTotal: x.kilos_total,
+    nif: x.nif || "", direccion: x.direccion || "", telefono: x.telefono || "", poligono: x.poligono || "", parcela: x.parcela || "" };
+  partesASN(SN, c, r.partes.map(p => ({ ...p, dueno_id: x.id })), r.filas, r.maquinas_partes);
+  r.pagos.forEach(p => SN.pagos[p.id] = { campanaId: c, tipo: "dueno", personaId: x.id, importe: p.importe_cent / 100, fecha: p.fecha, hora: horaCorta(p.hora), forma: p.forma, nota: p.nota || "" });
+  return SN;
+}
+const TRAB_YO = "yo";
+function snTrabajador(r = NUBE.d.resumen, d = NUBE.d) {
+  const c = d.campana.id, SN = snVacio(d.campana, { precioHoraTrab: euroDeCent(r.precio_hora_cent) });
+  SN.trabajadores[TRAB_YO] = { nombre: r.trabajador, precioHora: euroDeCent(r.precio_hora_cent), activo: true };
+  r.jornadas.forEach((j, i) => { const did = "d:" + j.dueno; SN.duenos[did] ??= { campanaId: c, nombre: j.dueno };
+    SN.partes["p" + i] = { campanaId: c, duenoId: did, fecha: j.fecha, filas: { [TRAB_YO]: { tipo: j.tipo, horas: j.horas, nota: j.nota || "" } }, maquinas: {} }; });
+  r.entregas.forEach((p, i) => SN.pagos["e" + i] = { campanaId: c, tipo: "trabajador", personaId: TRAB_YO, importe: p.importe_cent / 100, fecha: p.fecha, hora: horaCorta(p.hora), forma: p.forma, nota: p.nota || "" });
+  return SN;
+}
+// Jefe: solo horas de su equipo (jornadas_equipo no trae dinero; los precios quedan a 0 y no se muestran)
+function snJefe(e = NUBE.d.equipo || [], d = NUBE.d) {
+  const c = d.campana.id, SN = snVacio(d.campana, { precioHoraTrab: 0, precioHoraDueno: 0 });
+  e.forEach(x => { const tid = "t:" + x.trabajador, did = "d:" + x.dueno; SN.trabajadores[tid] ??= { nombre: x.trabajador, activo: true }; SN.duenos[did] ??= { campanaId: c, nombre: x.dueno, finca: x.finca || "" };
+    (SN.partes["p:" + did + x.fecha] ??= { campanaId: c, duenoId: did, fecha: x.fecha, filas: {}, maquinas: {} }).filas[tid] = { tipo: x.tipo, horas: x.horas }; });
+  return SN;
+}
+function vNInformes() { return conS(snConsulta(), vInformes); }
+// Gráfica y tabla por quincena para el trabajador, el dueño y el jefe (con las funciones de la 2.3.0)
+function nGraficaRol(rol) {
+  const SN = rol === "trab" ? snTrabajador() : rol === "dueno" ? snDueno() : snJefe();
+  return conS(SN, () => {
+    const rs = registros(); if (!rs.length) return "";
+    const rc = rangoCampana(), dinero = rol !== "equipo";
+    const qs = porQuincena(rs, rol === "trab" ? () => precioT(TRAB_YO) : r => precioD(r.duenoId));
+    return `<section class="stack" data-grafica="${rol}">${grafica(rs, rc.desde, rc.hasta, "Horas por día")}
+     <div class="tw"><table><thead><tr><th>Quincena</th><th>Dueño</th><th class="r">Días</th><th class="r">Horas</th>${dinero ? `<th class="r">${rol === "trab" ? "Ganado" : "Mano de obra"}</th>` : ""}</tr></thead><tbody>${qs.map(q => `<tr><td>${esc(q.corto)}</td><td>${esc(nomD(q.duenoId))}</td><td class="r">${q.dias}</td><td class="r">${fNp(q.horas)}</td>${dinero ? `<td class="r">${eur(q.importe)}</td>` : ""}</tr>`).join("")}</tbody></table></div></section>`;
+  }, { sinDinero: rol === "equipo" });
+}
+const nBotonesInf = (k, txt) => `<div class="row"><button class="btn sm pri" data-act="nInfRol" data-k="${k}" data-f="pdf">${ic("pdf")}${txt} en PDF</button><button class="btn sm" data-act="nInfRol" data-k="${k}" data-f="xls">${ic("xls")}Excel</button></div>`;
+function informeRol(k, f) {
+  if (k === "trab") return conS(snTrabajador(), () => f === "pdf" ? pdfTrabs([TRAB_YO], {}) : xlsTrabs([TRAB_YO], {}));
+  if (k === "dueno") { const id = NUBE.d.datosDueno?.dueno?.id; if (!id) return toast("No hay datos."); return conS(snDueno(), () => f === "pdf" ? pdfDuenos([id], {}) : xlsDuenos([id], {})); }
+  if (k === "equipo") return conS(snJefe(), () => { const rc = rangoCampana(); return f === "pdf" ? pdfRegistro(rc) : xlsRegistro(rc); }, { sinDinero: true });
+}
 
 function nubeVistas() {
   if (!NUBE.c) return [];
   const v = [];
   if (nConsulta()) v.push(["inicio", "Inicio", "inicio"]);
   if (nEdita()) v.push(["parte", "Parte", "partes"], ["pagos", "Pagos", "euro"]);
-  if (nConsulta()) v.push(["personas", "Personas", "trabajadores"], ["cuentas", "Cuentas", "informes"]);
+  if (nConsulta()) v.push(["personas", "Personas", "trabajadores"], ["cuentas", "Cuentas", "euro"], ["informes", "Informes", "informes"]);
   if (NUBE.roles.includes("jefe")) v.push(["equipo", "Mi equipo", "trabajadores"]);
   if (NUBE.roles.includes("trabajador")) v.push(["mis-jornadas", "Mis jornadas", "partes"]);
   if (NUBE.roles.includes("dueno")) v.push(["mi-cuenta", "Mi cuenta", "euro"]);
@@ -1828,11 +1947,11 @@ function nubeRender() {
   if (!NUBE.d) { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b></div>`; return; }
   const vistas = nubeVistas(), k = r.startsWith("n-") ? r.slice(2) : vistas[0]?.[0];
   nubeNav(vistas, k);
-  const fn = { inicio: vNInicio, parte: vNParte, pagos: vNPagos, personas: vNPersonas, cuentas: vNCuentas, equipo: vNEquipo, "mis-jornadas": vNMisJornadas, "mi-cuenta": vNMiCuenta }[k];
+  const fn = { inicio: vNInicio, parte: vNParte, pagos: vNPagos, personas: vNPersonas, cuentas: vNCuentas, informes: vNInformes, equipo: vNEquipo, "mis-jornadas": vNMisJornadas, "mi-cuenta": vNMiCuenta }[k];
   v.innerHTML = aviso + (fn && vistas.some(x => x[0] === k) ? fn() : `<div class="empty"><span>No tienes acceso a esta sección.</span></div>`);
   nAfter[k]?.();
 }
-const nAfter = {};
+const nAfter = {}; nAfter.informes = () => after.informes();
 
 /* ---------- Entrar (usuario y contraseña), contraseña propia y cuenta bloqueada ---------- */
 // Cuentas privadas: no hay registro ni correo. Las crea «Gestión de usuarios» (Edge Function «gestion-usuarios»).
@@ -2067,6 +2186,7 @@ function vNEquipo() {
   const e = NUBE.d.equipo || [], porFecha = {}; e.forEach(x => (porFecha[x.fecha] ??= []).push(x));
   return `<div class="stack"><div><div class="lbl">Jefe de equipo · solo lectura</div><h1>Mi equipo</h1></div>
   <div class="kpis"><div class="kpi"><span class="lbl">Jornadas</span><b>${e.filter(x => x.tipo !== "ausente").length}</b></div><div class="kpi"><span class="lbl">Horas del equipo</span><b>${fN(e.reduce((s, x) => s + +x.horas, 0))}</b></div><div class="kpi"><span class="lbl">Trabajadores</span><b>${new Set(e.map(x => x.trabajador)).size}</b></div></div>
+  ${e.length ? nBotonesInf("equipo", "Registro de horas") + nGraficaRol("equipo") : ""}
   ${Object.keys(porFecha).length ? Object.entries(porFecha).sort((a, b) => b[0].localeCompare(a[0])).map(([f, xs]) => `<section class="stack" style="gap:6px"><h3>${fFecha(f)}</h3><div class="list">${xs.map(x => `<div class="mrow"><div class="grow"><b>${esc(x.trabajador)}</b><div class="muted small">${esc([x.dueno, x.finca].filter(Boolean).join(" · "))}</div></div><span class="pill p-${x.tipo}">${x.tipo === "ausente" ? "Falta" : fH(x.horas)}</span></div>`).join("")}</div></section>`).join("") : `<div class="empty"><span>Todavía no hay jornadas de tu equipo.</span></div>`}</div>`;
 }
 function vNMisJornadas() {
@@ -2075,6 +2195,7 @@ function vNMisJornadas() {
   <div class="kpis"><div class="kpi"><span class="lbl">Días trabajados</span><b>${r.dias}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(r.horas)}</b></div><div class="kpi"><span class="lbl">Faltas</span><b>${r.faltas}</b></div></div>
   <div class="saldo"><div><span class="lbl">Llevas ganado</span><b>${eurosC(r.importe_cent)}</b></div><div><span class="lbl">Te han entregado</span><b>${eurosC(r.entregado_cent)}</b></div><div class="resto ${r.pendiente_cent < 0 ? "neg" : ""}"><span class="lbl">${r.pendiente_cent < 0 ? "Te han adelantado de más" : "Te queda por cobrar"}</span><b>${eurosC(Math.abs(r.pendiente_cent))}</b></div></div>
   <div class="muted small">Precio: ${eurosC(r.precio_hora_cent)}/h.</div>
+  ${nBotonesInf("trab", "Mi cuenta")}${nGraficaRol("trab")}
   <section class="stack"><h2>Tus jornadas</h2>${r.jornadas.length ? `<div class="list">${[...r.jornadas].reverse().map(j => `<div class="mrow"><div class="grow"><b>${fFecha(j.fecha)}</b><div class="muted small">${esc(j.dueno)}${j.nota ? " · " + esc(j.nota) : ""}</div></div><span class="pill p-${j.tipo}">${j.tipo === "ausente" ? "Falta" : fH(j.horas)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no tienes jornadas.</span></div>`}</section>
   <section class="stack"><h2>Entregas recibidas</h2>${r.entregas.length ? `<div class="list">${r.entregas.map(p => `<div class="pago"><div class="grow"><b>${fFecha(p.fecha)}</b><div class="muted small">${esc(formaTxt(p.forma))}${p.nota ? " · " + esc(p.nota) : ""}</div></div><span class="imp">${eurosC(p.importe_cent)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no te han entregado dinero.</span></div>`}</section></div>`;
 }
@@ -2084,6 +2205,7 @@ function vNMiCuenta() {
   <div class="kpis"><div class="kpi"><span class="lbl">Días</span><b>${k.dias.length}</b></div><div class="kpi"><span class="lbl">Horas</span><b>${fN(k.horas)}</b></div><div class="kpi"><span class="lbl">Mano de obra</span><b>${eurosC(k.mano_cent)}</b></div><div class="kpi"><span class="lbl">Maquinaria</span><b>${eurosC(k.maquinaria_cent)}</b></div><div class="kpi"><span class="lbl">Kilos</span><b>${+k.kilos ? fN(k.kilos, 0) : "—"}</b></div></div>
   <div class="saldo"><div><span class="lbl">Total cuenta</span><b>${eurosC(k.total_cent)}</b></div><div><span class="lbl">Has pagado</span><b>${eurosC(k.pagado_cent)}</b></div><div class="resto ${k.pendiente_cent < 0 ? "neg" : ""}"><span class="lbl">${k.pendiente_cent < 0 ? "Has pagado de más" : "Te falta pagar"}</span><b>${eurosC(Math.abs(k.pendiente_cent))}</b></div></div>
   ${+k.iva ? `<div class="muted small">Incluye IVA del ${fN(k.iva)} %: ${eurosC(k.iva_cent)}.</div>` : ""}
+  ${NUBE.d.datosDueno ? nBotonesInf("dueno", "Mi cuenta") + nGraficaRol("dueno") : ""}
   <section class="stack"><h2>Días trabajados en tu finca</h2>${k.dias.length ? `<div class="list">${[...k.dias].reverse().map(x => `<div class="mrow"><div class="grow"><b>${fFecha(x.fecha)}</b><div class="muted small">${x.presentes} trabajadores${+x.kilos ? " · " + fN(x.kilos, 0) + " kg" : ""}</div></div><span class="pill p-ok">${fH(x.horas)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay días.</span></div>`}</section>
   ${k.maquinas.length ? `<section class="stack"><h2>Maquinaria</h2><div class="list">${k.maquinas.map(m => `<div class="mrow"><div class="grow"><b>${esc(m.nombre)}</b><div class="muted small">${m.unidades} × ${eurosC(m.precio_cent)}</div></div><span class="imp">${eurosC(m.importe_cent)}</span></div>`).join("")}</div></section>` : ""}
   <section class="stack"><h2>Tus pagos</h2>${k.pagos.length ? `<div class="list">${k.pagos.map(p => `<div class="pago"><div class="grow"><b>${fFecha(p.fecha)}</b><div class="muted small">${esc(formaTxt(p.forma))}</div></div><span class="imp">${eurosC(p.importe_cent)}</span></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay pagos.</span></div>`}</section></div>`;

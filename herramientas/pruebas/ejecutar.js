@@ -658,7 +658,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     await ev(disp.trab1, `await t.ir("#n-mis-jornadas"); render(); return true;`); await ev(disp.lector, `await t.ir("#n-inicio"); render(); return true;`); await ev(disp.jefe, `await t.ir("#n-equipo"); render(); return true;`);
     const p1 = await ev(movil, `await t.ir("#n-parte"); render(); await t.esperar(() => t.q('[data-act="nGuardarParte"]'), 8000, "parte");
       if (t.q('[data-np="dueno"]').value !== ${JSON.stringify(fichas.d)}) { t.rellenar('[data-np="dueno"]', ${JSON.stringify(fichas.d)}); await t.esperar(() => t.q('[data-np="dueno"]')?.value === ${JSON.stringify(fichas.d)} && t.q('[data-act="nGuardarParte"]'), 8000, "parte del dueño 1"); }
-      t.rellenar('[data-np="kilos"]', "2.350"); await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return NUBE.d.partes[0].version;`);
+      t.rellenar('[data-np="kilos"]', "2.350"); t.rellenar(t.q('[data-np="maq"]'), "1"); await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return NUBE.d.partes[0].version;`);
     const t0 = Date.now();
     const p2 = await ev(disp.editor, `await t.esperar(() => NUBE.d.partes.length === 1, 20000, "el editor recibe el parte"); NUBE.borrador = null; await t.ir("#n-parte"); render();
       await t.esperar(() => t.q('[data-np="tipo"][data-id="${fichas.t1}"]'), 8000, "parte en el editor");
@@ -683,6 +683,72 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       return { dueno: NUBE.d.cuenta.dueno, horas: +NUBE.d.cuenta.horas, total: NUBE.d.cuenta.mano_cent, otro: !!otro.error, priv: (priv.data || []).length, pagos: (pagos.data || []).length,
         edita: !(parte.error || !(parte.data || []).length), vistas: nubeVistas().map(x => x[0]), texto: /Dueño E2E Dos/.test(t.texto()) };`);
     ok(due.dueno === "Dueño E2E" && due.horas === 17 && due.total === 20400 && due.otro && !due.priv && !due.pagos && !due.edita && due.vistas.join() === "mi-cuenta" && !due.texto, "dueño: " + JSON.stringify(due));
+
+    // 5d) Pagos y entregas (creador) e informes de cada rol: mismos cálculos que la 2.3.0, PDF y Excel en el dispositivo
+    const pagar = (persona, importe, tipo) => ev(movil, `await t.ir("#n-pagos"); render(); await t.esperar(() => t.q("#fnpago"), 8000, "pagos");
+      const k = NUBE.d.pagos.length; t.rellenar('#fnpago [name="tipo"]', ${JSON.stringify(tipo)}); t.rellenar('#fnpago [name="persona"]', ${JSON.stringify(persona)});
+      t.rellenar('#fnpago [name="importe"]', ${JSON.stringify(importe)}); await t.pulsar('[data-act="nGuardarPago"]'); await t.esperar(() => NUBE.d.pagos.length === k + 1, 15000, "guardar pago"); return true;`);
+    await pagar("t:" + fichas.t1, "25", "trabajador"); await pagar("d:" + fichas.d, "50", "dueno");
+    const bajar = async (w, codigo, txt) => { const n0 = descargas.length; await ev(w, codigo); const dsc = await esperarDescarga(w.__perfil, n0, 20000);
+      ok(dsc.estado === "completed" && fs.statSync(dsc.ruta).size > 1500, txt + ": descarga " + JSON.stringify(dsc)); return dsc; };
+    const archivos = [];
+    // Creador: los 4 informes de la 2.3.0 en PDF y Excel; cifras iguales a las del servidor (cuenta_dueno)
+    const cmp = await ev(movil, `await t.ir("#n-informes"); render(); await t.esperar(() => t.q('[data-act="infPdf"]'), 8000, "informes");
+      const k = conS(snConsulta(), () => cuentaDueno(${JSON.stringify(fichas.d)}, {})), r = conS(snConsulta(), () => resumenTrab(${JSON.stringify(fichas.t1)}, {}));
+      const srv = await NUBE.sb.rpc("cuenta_dueno", { p_campana: NUBE.c.campana_id, p_dueno: ${JSON.stringify(fichas.d)} });
+      return { total: k.total, horas: k.horas, maq: k.tMaq, pagado: k.pagado, pendiente: k.pendiente, srvTotal: srv.data.total_cent / 100, srvPend: srv.data.pendiente_cent / 100, srvMaq: srv.data.maquinaria_cent / 100,
+        trab: { horas: r.horas, importe: r.importe, entregado: r.entregado, pendiente: r.pendiente }, local: Object.keys(S.partes).length, texto: t.texto().includes("Dueño E2E") };`);
+    ok(Math.abs(cmp.total - cmp.srvTotal) < 0.005 && Math.abs(cmp.pendiente - cmp.srvPend) < 0.005 && Math.abs(cmp.maq - cmp.srvMaq) < 0.005 && cmp.horas === 17 && cmp.pagado === 50 && cmp.texto, "cuenta del dueño app/servidor: " + JSON.stringify(cmp));
+    ok(cmp.trab.horas === 9 && cmp.trab.importe === 90 && cmp.trab.entregado === 25 && cmp.trab.pendiente === 65 && cmp.local === 0, "cuenta del trabajador o datos locales tocados: " + JSON.stringify(cmp));
+    for (const tipo of ["dueno", "trab", "reg", "graf"]) for (const f of ["infPdf", "infXls"])
+      archivos.push((await bajar(movil, `UI.inf.tipo = ${JSON.stringify(tipo)}; render(); await t.dormir(100); t.q('[data-act="${f}"]').click(); return true;`, "creador " + tipo + " " + f)).nombre);
+    // Trabajador, dueño y jefe: sus propios informes y su gráfica por quincena
+    const rol = async (w, k, vista) => { await ev(w, `await t.ir("#n-${vista}"); NUBE.borrador = null; await nubeCargar(); render(); await t.esperar(() => t.q('[data-act="nInfRol"]') && t.q('[data-grafica]'), 15000, "informes de ${k}"); return true;`);
+      for (const f of ["pdf", "xls"]) archivos.push((await bajar(w, `t.q('[data-act="nInfRol"][data-f="${f}"]').click(); return true;`, k + " " + f)));
+      return archivos.slice(-2); };
+    const [, trabXls] = await rol(disp.trab1, "trab", "mis-jornadas");
+    const [, dueXls] = await rol(disp.dueno, "dueno", "mi-cuenta");
+    const [, jefeXls] = await rol(disp.jefe, "equipo", "equipo");
+    const hojas = async (w, dsc) => ev(w, `const wb = XLSX.read(${JSON.stringify(fs.readFileSync(dsc.ruta).toString("base64"))}, { type: "base64" });
+      return Object.fromEntries(wb.SheetNames.map(n => [n, XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1 })]));`);
+    const ht = await hojas(disp.trab1, trabXls), hd = await hojas(disp.dueno, dueXls), hj = await hojas(disp.jefe, jefeXls);
+    const filaT = ht.Resumen.find(x => x[0] === "Trabajador E2E Uno"), totD = hd.Resumen.find(x => x[0] === "TOTAL");
+    ok(filaT && filaT[4] === 9 && filaT[6] === 90 && filaT[7] === 25 && filaT[8] === 65 && !JSON.stringify(ht).includes("Trabajador E2E Dos"), "Excel del trabajador: " + JSON.stringify(filaT));
+    ok(totD && Math.abs(totD[9] - cmp.srvTotal) < 0.005 && totD[10] === 50 && !JSON.stringify(hd).includes("Dueño E2E Dos"), "Excel del dueño: " + JSON.stringify(totD));
+    ok(!JSON.stringify(hj).includes("Importe") && !JSON.stringify(hj).includes("€") && !JSON.stringify(hj).includes("Trabajador E2E Uno"), "Excel del jefe con dinero o con otro equipo: " + JSON.stringify(hj).slice(0, 300));
+
+    // 5e) Sincronización sin depender del tiempo real y casos de seguridad con la app abierta
+    // · Cambios simultáneos: el editor tiene el parte abierto y modificado; el creador lo guarda antes → el editor recibe «conflicto» y no pisa nada
+    const conflicto = await ev(disp.editor, `nubeDesuscribir(); await t.ir("#n-parte"); NUBE.borrador = null; render(); await t.esperar(() => t.q('[data-np="kilos"]'), 8000, "parte del editor");
+      t.rellenar('[data-np="kilos"]', "9.999"); return NUBE.borrador.version;`);
+    await ev(movil, `const p = NUBE.d.partes[0]; const r = await NUBE.sb.rpc("guardar_parte", { p_campana: NUBE.c.campana_id, p_dueno: p.dueno_id, p_fecha: p.fecha, p_version: p.version, p_kilos: 3000, p_notas: "del creador",
+      p_filas: NUBE.d.filas.filter(f => f.parte_id === p.id).map(f => ({ trabajador_id: f.trabajador_id, tipo: f.tipo, horas: f.horas, nota: f.nota })), p_maquinas: NUBE.d.pmaq.filter(m => m.parte_id === p.id) }); if (r.error) throw new Error(r.error.message); return true;`);
+    const conf = await ev(disp.editor, `await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => /Otra persona ha cambiado/.test(t.q("#toast").textContent), 15000, "aviso de conflicto");
+      await t.esperar(() => +NUBE.d.partes[0].kilos === 3000, 15000, "recarga tras el conflicto"); return { kilos: +NUBE.d.partes[0].kilos, notas: NUBE.d.partes[0].notas, version: NUBE.d.partes[0].version };`);
+    ok(conf.kilos === 3000 && conf.notas === "del creador" && conf.version === conflicto + 1, "el editor pisó el cambio del creador: " + JSON.stringify(conf));
+    // · Aviso en tiempo real perdido (canal caído): la comprobación de la huella trae el cambio igualmente
+    await ev(disp.lector, `nubeDesuscribir(); return true;`);
+    await pagar("t:" + fichas.t2, "7", "trabajador");
+    const perdido = await ev(disp.lector, `await nubeComprobar(); await t.esperar(() => NUBE.d.pagos.some(p => p.importe_cent === 700), 15000, "la huella trae el pago"); return NUBE.d.pagos.length;`);
+    // · Sin conexión: se conserva lo que había, se avisa y no deja guardar; al volver la conexión se pone al día
+    const dbg = disp.lector.webContents.debugger; dbg.attach("1.3"); await dbg.sendCommand("Network.enable");
+    const red = on => dbg.sendCommand("Network.emulateNetworkConditions", { offline: !on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    await red(false);
+    let off; try { off = await ev(disp.lector, `await t.esperar(() => !navigator.onLine && !NUBE.online, 8000, "evento sin conexión"); await t.ir("#n-inicio"); render(); return { datos: !!NUBE.d && NUBE.d.pagos.length, aviso: /Sin conexión/.test(t.texto()) };`); }
+    finally { await red(true); dbg.detach(); }
+    await pagar("t:" + fichas.t2, "3", "trabajador");
+    const on = await ev(disp.lector, `await t.esperar(() => navigator.onLine && NUBE.online, 8000, "evento conexión"); await t.esperar(() => NUBE.d.pagos.some(p => p.importe_cent === 300), 15000, "al día tras volver la conexión"); return NUBE.d.pagos.length;`);
+    ok(off.datos && off.aviso && on === perdido + 1, "sin conexión / reconexión: " + JSON.stringify({ off, on, perdido }));
+    // · Permisos retirados con la app abierta: el creador quita la edición al editor → su app deja de ofrecer Parte y Pagos
+    await ev(movil, `const m = NUBE.d.miembros.find(x => x.user_id === ${JSON.stringify(await ev(disp.editor, "return NUBE.sesion.user.id;"))});
+      const r = await NUBE.sb.from("miembros").update({ puede_editar: false }).eq("id", m.id).select(); if (r.error || !r.data.length) throw new Error("no se pudo quitar la edición: " + r.error?.message); return true;`);
+    const sinEd = await ev(disp.editor, `await nubeComprobar(); await t.esperar(() => !nEdita(), 15000, "pierde la edición"); return nubeVistas().map(x => x[0]);`);
+    ok(!sinEd.includes("parte") && !sinEd.includes("pagos"), "el editor sin permiso sigue viendo Parte/Pagos: " + sinEd);
+    // · Cuenta bloqueada con la app abierta: sin recargar, en la siguiente comprobación desaparecen los datos
+    await accionCuenta(pcSa, "nBloquear", cred.dueno.usuario);
+    const blq = await ev(disp.dueno, `await nubeComprobar(); await t.esperar(() => !NUBE.d && (/bloqueada/i.test(t.texto()) || t.q("#fentrar")), 20000, "dueño bloqueado sin recargar");
+      return { datos: !!NUBE.d, texto: /Dueño E2E|€/.test(t.texto()) };`);
+    ok(!blq.datos && !blq.texto, "la cuenta bloqueada sigue viendo datos: " + JSON.stringify(blq));
     // 5c) Cerrar sesión: en el dispositivo no queda nada privado (ni en memoria, ni en el almacenamiento, ni en la caché)
     const salida = await ev(disp.jefe, `await t.ir("#ajustes"); render(); await t.esperar(() => t.q('[data-act="nSalir"]'), 8000, "botón cerrar sesión"); await t.pulsar('[data-act="nSalir"]'); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar salir"); t.q("#cfOk").click();
       await t.esperar(() => t.q("#fentrar"), 15000, "pantalla de entrar tras salir");
@@ -723,7 +789,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       }
     }
     return { campana: nombreCamp, cuentas: Object.keys(cred).length + 1, parte: { creador: p1, editor: p2 }, tiempoReal_ms: trab.ms - t0,
-      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, dueno: { horas: due.horas, euros: due.total / 100, otroDueno: "rechazado" }, salir: "sin datos", web: URL_PUBLICADA || "servidor local", bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
+      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, dueno: { horas: due.horas, euros: due.total / 100, otroDueno: "rechazado" }, informes: { archivos: archivos.length, cuentaDueno: cmp.total, servidor: cmp.srvTotal }, sincro: { conflicto: "rechazado y recargado", avisoPerdido: "recuperado por huella", sinConexion: "conserva y se pone al día", permisoRetirado: "sin Parte/Pagos", bloqueoEnVivo: "sin datos" }, salir: "sin datos", web: URL_PUBLICADA || "servidor local", bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
   } finally { SRV.nube = false; }
 });
 

@@ -428,6 +428,34 @@ await prueba("El identificador técnico de una cuenta no se puede cambiar por el
   return "3 cambios indebidos rechazados · paso al identificador propio permitido";
 });
 
+/* ---------- 000009: datos para los informes del dueño y huella de cambios ---------- */
+await prueba("Informes del dueño (000009): solo sus partes, filas, maquinaria y pagos; nadie más puede pedirlos", async () => {
+  const r = (await como(U.dueno1, ({ uno }) => uno("select public.datos_dueno($1) as r", [A.c]))).r;
+  ok(r.dueno.id === A.d1 && r.partes.length === 2 && r.filas.length === 2 && r.filas.every(f => f.trabajador_id === A.t1), "partes o filas: " + JSON.stringify(r).slice(0, 300));
+  ok(r.trabajadores.length === 1 && r.trabajadores[0].nombre === "Trabajador Uno" && !("nif" in r.trabajadores[0]), "trabajadores: " + JSON.stringify(r.trabajadores));
+  ok(r.maquinas.length === 1 && r.maquinas[0].precio_cent === 4000 && r.maquinas_partes.length === 1, "maquinaria: " + JSON.stringify(r.maquinas));
+  ok(r.pagos.length === 1 && +r.pagos[0].importe_cent === 3000 && r.precio_hora_cent === 1200 && +r.campana.horas_dia === 7.5, "pagos o precio: " + JSON.stringify([r.pagos, r.precio_hora_cent]));
+  const r2 = (await como(U.dueno2, ({ uno }) => uno("select public.datos_dueno($1) as r", [A.c]))).r;
+  ok(r2.dueno.id === A.d2 && r2.partes.length === 1 && r2.pagos.length === 1 && +r2.pagos[0].importe_cent === 5000, "el dueño 2 ve datos del 1");
+  for (const u of [U.adminA, U.trab1, U.jefe1, U.creadorB, U.intruso]) await falla(u, ({ uno }) => uno("select public.datos_dueno($1)", [A.c]));
+  await falla(null, ({ uno }) => uno("select public.datos_dueno($1)", [A.c]));
+  await falla(U.dueno1, ({ uno }) => uno("select public.datos_dueno($1)", [B.c]));
+  return "dueño 1: 2 partes, 1 trabajador, 1 máquina, 1 pago · admin, trabajador, jefe, otro creador, intruso y anónimo rechazados";
+});
+await prueba("Huella de cambios (000009): cambia con cada edición que el usuario puede ver, y solo con esas", async () => {
+  const h = async u => (await como(u, ({ uno }) => uno("select public.huella_campana($1) as h", [A.c]))).h;
+  const antes = { admin: await h(U.adminA), d1: await h(U.dueno1), d2: await h(U.dueno2), t1: await h(U.trab1), intruso: await h(U.intruso) };
+  ok(new Set([antes.admin, antes.d1, antes.d2]).size === 3, "la huella no depende de lo que cada uno ve");
+  // Se cambia un parte del dueño 1 (filas del trabajador 1)
+  await como(U.creadorA, async ({ uno }) => { const v = (await uno("select version from partes where id = $1", [A.p15])).version;
+    await uno("select public.guardar_parte($1, $2, '2026-11-15', $3, 2400, null, $4, '[]')", [A.c, A.d1, v, JSON.stringify([{ trabajador_id: A.t1, tipo: "mas", horas: 8 }])]); });
+  const despues = { admin: await h(U.adminA), d1: await h(U.dueno1), d2: await h(U.dueno2), t1: await h(U.trab1), intruso: await h(U.intruso) };
+  ok(despues.admin !== antes.admin && despues.d1 !== antes.d1 && despues.t1 !== antes.t1, "no cambió para quien ve el parte");
+  ok(despues.d2 === antes.d2 && despues.intruso === antes.intruso, "cambió para quien no ve el parte (fuga de información)");
+  await falla(null, ({ uno }) => uno("select public.huella_campana($1)", [A.c]));
+  return "cambia para admin, dueño 1 y trabajador 1 · igual para dueño 2 y un intruso · anónimo rechazado";
+});
+
 /* ---------- Resumen ---------- */
 const fallos = resultados.filter(r => !r.ok).length;
 console.log(`\n${resultados.length - fallos} correctas, ${fallos} con fallos`);

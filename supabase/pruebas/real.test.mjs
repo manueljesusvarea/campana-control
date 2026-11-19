@@ -270,14 +270,16 @@ await prueba("Gestión de usuarios: cada uno ve solo las cuentas que gestiona", 
 await prueba("15 · Sincronización: el creador cambia una jornada y el administrador (otra sesión) recibe el aviso en tiempo real", async () => {
   const recibido = new Promise((res, rej) => {
     const t0 = Date.now(), canal = S.lector.cli.channel("prueba-" + run)
-      .on("postgres_changes", { event: "*", schema: "public", table: "partes_filas", filter: "campana_id=eq." + S.c }, () => res(Date.now() - t0))
-      .subscribe(async estado => {
-        if (estado === "SUBSCRIBED") {
-          const p = (await nq(S.gestor.cli.from("partes").select("version").eq("campana_id", S.c).single()));
-          await nq(S.gestor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p.version, p_kilos: 2200, p_notas: "sincronización",
-            p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "mas" , horas: 9 }], p_maquinas: [] }));
-        }
-      });
+      .on("postgres_changes", { event: "*", schema: "public", table: "partes_filas", filter: "campana_id=eq." + S.c }, () => res(Date.now() - t0));
+    // Supabase confirma la suscripción («SUBSCRIBED») un poco antes de enviar cambios de la base de datos: hasta el
+    // mensaje de sistema «postgres_changes ok» un cambio puede no notificarse (por eso la app compara además la huella).
+    let hecho = false;
+    const cambiar = async () => { if (hecho) return; hecho = true;
+      const p = (await nq(S.gestor.cli.from("partes").select("version").eq("campana_id", S.c).single()));
+      await nq(S.gestor.cli.rpc("guardar_parte", { p_campana: S.c, p_dueno: S.d, p_fecha: "2026-11-18", p_version: p.version, p_kilos: 2200, p_notas: "sincronización",
+        p_filas: [{ trabajador_id: S.t1, tipo: "normal" }, { trabajador_id: S.t2, tipo: "mas" , horas: 9 }], p_maquinas: [] })); };
+    canal.on("system", {}, m => { if (m?.extension === "postgres_changes" && m?.status === "ok") cambiar(); })
+      .subscribe(estado => { if (estado === "SUBSCRIBED") setTimeout(cambiar, 5000); });
     setTimeout(() => { S.lector.cli.removeChannel(canal); rej(new Error("no llegó el aviso en 20 s")); }, 20000);
   });
   const ms = await recibido;
