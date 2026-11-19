@@ -125,10 +125,15 @@ def escribir_config():
     """Genera www/config-nube.js (modo con cuenta, versión 3.0).
     - supabase/config-app.local.json (ignorado por git): proyecto de PRUEBAS, solo en este ordenador.
     - supabase/config-app.json (se sube a git): proyecto de PRODUCCIÓN, cuando se autorice publicar la 3.0.
+    - Variables de entorno CC_NUBE_URL y CC_NUBE_CLAVE (tienen prioridad): las define el despliegue de
+      pruebas en Cloudflare Pages (rama desarrollo/multiusuario-v3), sin guardar la configuración en git.
     - Sin ninguno: window.CC_NUBE = null y la app funciona sin cuenta, como la 2.3.0.
     Solo admite la URL y la clave PÚBLICA (sb_publishable_…); nunca claves secretas."""
     cfg, origen = None, "sin cuenta"
-    for nombre in ("config-app.local.json", "config-app.json"):
+    if os.environ.get("CC_NUBE_URL") or os.environ.get("CC_NUBE_CLAVE"):
+        cfg = {"url": os.environ.get("CC_NUBE_URL", "").strip(), "clave": os.environ.get("CC_NUBE_CLAVE", "").strip()}
+        origen = "variables de entorno CC_NUBE_URL / CC_NUBE_CLAVE"
+    for nombre in (() if cfg else ("config-app.local.json", "config-app.json")):
         f = os.path.join(RAIZ, "supabase", nombre)
         if os.path.isfile(f):
             cfg, origen = json.load(open(f, encoding="utf-8")), nombre

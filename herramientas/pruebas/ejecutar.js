@@ -22,6 +22,8 @@ const FILTRO = process.argv.slice(2).find(a => !a.startsWith("-")) || "";
 const TIPOS = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json", ".json": "application/json", ".png": "image/png", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 // reemplazos: { "index.html": [[texto, nuevo]…] } simula publicar una versión nueva sin tocar www/
 const SRV = { caido: false, swExtra: "", reemplazos: {}, peticiones: [], nube: false, nubeFalsa: false };
+// La misma política de seguridad (CSP) que envía Cloudflare Pages (www/_headers): así las pruebas detectan si la bloquea algo.
+const CSP = (() => { try { return (fs.readFileSync(path.join(WWW, "_headers"), "utf8").match(/^\s*Content-Security-Policy:\s*(.+)$/m) || [])[1]?.trim() || null; } catch (e) { return null; } })();
 const servidor = http.createServer((req, res) => {
   if (SRV.caido) { req.socket.destroy(); return; }            // simula «sin conexión»
   const u = new URL(req.url, "http://x"); SRV.peticiones.push(u.pathname);
@@ -35,7 +37,7 @@ const servidor = http.createServer((req, res) => {
   else if (rel === "config-nube.js" && !SRV.nube) cuerpo = Buffer.from("window.CC_NUBE = null;\n");   // pruebas de la 2.3.0: sin cuenta
   if (rel === "sw.js" && SRV.swExtra) cuerpo = Buffer.concat([cuerpo, Buffer.from("\n// " + SRV.swExtra + "\n")]);
   for (const [a, b] of SRV.reemplazos[rel] || []) cuerpo = Buffer.from(cuerpo.toString("utf8").split(a).join(b));
-  res.writeHead(200, { "Content-Type": TIPOS[path.extname(f)] || "application/octet-stream", "Cache-Control": "no-cache" });
+  res.writeHead(200, { "Content-Type": TIPOS[path.extname(f)] || "application/octet-stream", "Cache-Control": "no-cache", ...(CSP ? { "Content-Security-Policy": CSP } : {}) });
   res.end(cuerpo);
 });
 let BASE = "";
@@ -485,22 +487,23 @@ prueba("actualizacion-datos", "Publicar una versión nueva: la app se actualiza 
   await ev(w, SW_ACTIVO); await crearCasoControlPorPantalla(w); await anadirDocConFoto(w, "ANTES");
   const foto = w => ev(w, `return { S: JSON.stringify(S), fotos: (await fotoKeys()).sort().join(","), version: APP_VERSION, caches: (await caches.keys()).filter(n => n.startsWith("campana-control:")).map(n => n.split(":").pop()) };`);
   const antes = await foto(w);
-  // «Publicar» 2.3.1: cambia la versión de index.html y, como hace construir_www.py, la VERSION de sw.js
-  SRV.reemplazos = { "index.html": [['const APP_VERSION = "2.3.0"', 'const APP_VERSION = "2.3.1-prueba"']], "sw.js": [['+ "2.3.0-', '+ "2.3.1-prueba-']] };
+  // «Publicar» una versión nueva: cambia la versión de index.html y, como hace construir_www.py, la VERSION de sw.js
+  const V = fs.readFileSync(path.join(WWW, "index.html"), "utf8").match(/const APP_VERSION = "([^"]+)"/)[1];   // versión actual, sea cual sea
+  SRV.reemplazos = { "index.html": [[`const APP_VERSION = "${V}"`, 'const APP_VERSION = "9.9.9-prueba"']], "sw.js": [[`+ "${V}-`, '+ "9.9.9-prueba-']] };
   try {
     await ev(w, `const reg = await navigator.serviceWorker.getRegistration(); await reg.update(); await t.esperar(() => document.querySelector("#avisoVersion"), 8000, "aviso de versión nueva");`);
     const carga = new Promise(r => w.webContents.once("did-finish-load", r));
     await w.webContents.executeJavaScript(`document.querySelector("#avisoVersion button").click(); true`);   // el usuario pulsa «Actualizar»
     await carga; await listo(w);
     const despues = await foto(w);
-    ok(despues.version === "2.3.1-prueba", "tras «Actualizar» sigue la versión " + despues.version);
+    ok(despues.version === "9.9.9-prueba", "tras «Actualizar» sigue la versión " + despues.version);
     ok(despues.S === antes.S, "los datos cambiaron al actualizar");
     ok(despues.fotos === antes.fotos && despues.fotos, "las fotos cambiaron al actualizar");
-    ok(despues.caches.length === 1 && despues.caches[0].startsWith("2.3.1-prueba"), "cachés tras actualizar: " + JSON.stringify(despues.caches));
+    ok(despues.caches.length === 1 && despues.caches[0].startsWith("9.9.9-prueba"), "cachés tras actualizar: " + JSON.stringify(despues.caches));
     SRV.caido = true;
     await recargar(w);
     const sinRed = await foto(w);
-    ok(sinRed.version === "2.3.1-prueba" && sinRed.S === antes.S, "sin conexión no abre la versión nueva con los datos");
+    ok(sinRed.version === "9.9.9-prueba" && sinRed.S === antes.S, "sin conexión no abre la versión nueva con los datos");
     return { antes: { version: antes.version, caches: antes.caches }, despues: { version: despues.version, caches: despues.caches }, datosIguales: true, fotos: despues.fotos.split(",").length, sinConexion: sinRed.version };
   } finally { SRV.caido = false; SRV.reemplazos = {}; }
 });
@@ -574,6 +577,8 @@ prueba("migracion-v3", "Versión 3.0 con cuenta configurada: un dispositivo con 
    superadministrador de pruebas en supabase/pruebas/.cuentas-pruebas.json (propietario). Cada ventana es un
    dispositivo con su propio almacenamiento y su propia sesión. Todo se hace pulsando la app contra la base real. */
 const pruebaRed = (id, nombre, fn) => PRUEBAS.push({ id, nombre, fn, red: true });
+// Con URL_PUBLICADA=https://… la misma prueba se hace contra la web publicada (Cloudflare Pages) en vez del servidor local.
+const URL_PUBLICADA = process.env.URL_PUBLICADA ? process.env.URL_PUBLICADA.replace(/\/?$/, "/") : null;
 pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas; editor y lector; trabajador y jefe; bloqueo; restablecer; tiempo real", async () => {
   const fijas = JSON.parse(fs.readFileSync(path.join(RAIZ, "supabase", "pruebas", ".cuentas-pruebas.json"), "utf8"));
   ok(fijas.propietario && !fijas.propietario.temporal, "falta el superadministrador de pruebas (node real.test.mjs lo prepara)");
@@ -581,7 +586,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
   SRV.nube = true;
   try {
     const dispositivo = async (perfil, ancho, alto) => {
-      const w = await abrir(perfil + "-" + run, { esperarApp: false, ancho, alto });
+      const w = await abrir(perfil + "-" + run, { esperarApp: false, ancho, alto, url: URL_PUBLICADA });
       await w.webContents.executeJavaScript(AYUDAS + "; true");
       await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 15000, "pantalla de entrar"); return true;`);
       return w;
@@ -625,15 +630,16 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombreCamp)} && NUBE.d, 20000, "crear campaña"); return true;`);
     const fichas = await ev(movil, `await t.ir("#n-personas"); render();
       for (const n of ["Trabajador E2E Uno", "Trabajador E2E Dos"]) { const k = NUBE.d.trab.length; t.rellenar('#fntrab [name="nombre"]', n); await t.pulsar('[data-act="nAltaTrab"]'); await t.esperar(() => NUBE.d.trab.length === k + 1, 15000, "alta " + n); }
-      t.rellenar('#fndueno [name="nombre"]', "Dueño E2E"); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "alta dueño");
-      const id = n => NUBE.d.trab.find(x => x.nombre === n).id; return { c: NUBE.c.campana_id, t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: NUBE.d.duenos[0].id };`);
+      for (const n of ["Dueño E2E", "Dueño E2E Dos"]) { const k = NUBE.d.duenos.length; t.rellenar('#fndueno [name="nombre"]', n); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === k + 1, 15000, "alta " + n); }
+      const id = n => NUBE.d.trab.find(x => x.nombre === n).id, idD = n => NUBE.d.duenos.find(x => x.nombre === n).id;
+      return { c: NUBE.c.campana_id, t1: id("Trabajador E2E Uno"), t2: id("Trabajador E2E Dos"), d: idD("Dueño E2E"), d2: idD("Dueño E2E Dos") };`);
     const cred = {};
-    for (const [k, rol, ficha] of [["lector", "admin"], ["editor", "admin+"], ["jefe", "jefe"], ["trab1", "trabajador", fichas.t1]])
+    for (const [k, rol, ficha] of [["lector", "admin"], ["editor", "admin+"], ["jefe", "jefe"], ["trab1", "trabajador", fichas.t1], ["dueno", "dueno", fichas.d]])
       cred[k] = await crearUsuario(movil, { nombre: k + " E2E", usuario: k + ".e2e." + run, campana: fichas.c, rol, ficha });
 
     // 3) Cada persona en su dispositivo: entra con la temporal y pone la suya
     const disp = { lector: await dispositivo("e2e-lector-windows", 1280, 860), editor: await dispositivo("e2e-editor-pc", 1280, 860),
-      jefe: await dispositivo("e2e-jefe-movil", 390, 844), trab1: await dispositivo("e2e-trab-iphone", 390, 844) };
+      jefe: await dispositivo("e2e-jefe-movil", 390, 844), trab1: await dispositivo("e2e-trab-iphone", 390, 844), dueno: await dispositivo("e2e-dueno-movil", 390, 844) };
     const claves = {};
     for (const k of Object.keys(disp)) {
       const e = await entrar(disp[k], cred[k].usuario, cred[k].clave); ok(e.temporal, k + " entró sin tener que cambiar la temporal");
@@ -651,6 +657,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     // 4) El creador anota el parte (2 trabajadores, 8 h); el editor lo modifica desde su ordenador
     await ev(disp.trab1, `await t.ir("#n-mis-jornadas"); render(); return true;`); await ev(disp.lector, `await t.ir("#n-inicio"); render(); return true;`); await ev(disp.jefe, `await t.ir("#n-equipo"); render(); return true;`);
     const p1 = await ev(movil, `await t.ir("#n-parte"); render(); await t.esperar(() => t.q('[data-act="nGuardarParte"]'), 8000, "parte");
+      if (t.q('[data-np="dueno"]').value !== ${JSON.stringify(fichas.d)}) { t.rellenar('[data-np="dueno"]', ${JSON.stringify(fichas.d)}); await t.esperar(() => t.q('[data-np="dueno"]')?.value === ${JSON.stringify(fichas.d)} && t.q('[data-act="nGuardarParte"]'), 8000, "parte del dueño 1"); }
       t.rellenar('[data-np="kilos"]', "2.350"); await t.pulsar('[data-act="nGuardarParte"]'); await t.esperar(() => NUBE.d.partes.length === 1, 20000, "guardar parte"); return NUBE.d.partes[0].version;`);
     const t0 = Date.now();
     const p2 = await ev(disp.editor, `await t.esperar(() => NUBE.d.partes.length === 1, 20000, "el editor recibe el parte"); NUBE.borrador = null; await t.ir("#n-parte"); render();
@@ -668,6 +675,21 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     ok(lect.horas === 17 && !lect.boton && lect.api, "lector: " + JSON.stringify(lect));
     const jef = await ev(disp.jefe, `await t.esperar(() => (NUBE.d.equipo || []).length === 1, 20000, "el jefe recibe su equipo"); render(); return { equipo: NUBE.d.equipo.map(x => x.trabajador), texto: t.texto() };`);
     ok(jef.equipo.join() === "Trabajador E2E Dos" && !/Trabajador E2E Uno/.test(jef.texto), "jefe: " + JSON.stringify(jef.equipo));
+    // 5b) El dueño solo ve su cuenta: la de otro dueño y los datos privados de los trabajadores se rechazan en el servidor
+    const due = await ev(disp.dueno, `await t.esperar(() => NUBE.d.cuenta && +NUBE.d.cuenta.horas === 17, 20000, "el dueño recibe su cuenta"); await t.ir("#n-mi-cuenta"); render();
+      const otro = await NUBE.sb.rpc("cuenta_dueno", { p_campana: NUBE.c.campana_id, p_dueno: ${JSON.stringify(fichas.d2)} });
+      const priv = await NUBE.sb.from("trabajadores_privado").select("*"), pagos = await NUBE.sb.from("pagos").select("*");
+      const parte = await NUBE.sb.from("partes_filas").update({ horas: 1 }).eq("campana_id", NUBE.c.campana_id).select();
+      return { dueno: NUBE.d.cuenta.dueno, horas: +NUBE.d.cuenta.horas, total: NUBE.d.cuenta.mano_cent, otro: !!otro.error, priv: (priv.data || []).length, pagos: (pagos.data || []).length,
+        edita: !(parte.error || !(parte.data || []).length), vistas: nubeVistas().map(x => x[0]), texto: /Dueño E2E Dos/.test(t.texto()) };`);
+    ok(due.dueno === "Dueño E2E" && due.horas === 17 && due.total === 20400 && due.otro && !due.priv && !due.pagos && !due.edita && due.vistas.join() === "mi-cuenta" && !due.texto, "dueño: " + JSON.stringify(due));
+    // 5c) Cerrar sesión: en el dispositivo no queda nada privado (ni en memoria, ni en el almacenamiento, ni en la caché)
+    const salida = await ev(disp.jefe, `await t.ir("#ajustes"); render(); await t.esperar(() => t.q('[data-act="nSalir"]'), 8000, "botón cerrar sesión"); await t.pulsar('[data-act="nSalir"]'); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar salir"); t.q("#cfOk").click();
+      await t.esperar(() => t.q("#fentrar"), 15000, "pantalla de entrar tras salir");
+      const ls = Object.keys(localStorage).map(k => k + "=" + localStorage.getItem(k)).join(" | ");
+      let cache = ""; for (const n of await caches.keys()) for (const r of await (await caches.open(n)).keys()) cache += r.url + " | ";
+      return { sesion: !!NUBE.sesion, datos: !!NUBE.d || NUBE.campanas.length > 0, ls: /Trabajador E2E|${nombreCamp}|access_token|refresh_token/.test(ls), cache: /supabase\\.co/.test(cache), texto: /Trabajador E2E/.test(document.body.innerText) };`);
+    ok(!salida.sesion && !salida.datos && !salida.ls && !salida.cache && !salida.texto, "tras cerrar sesión queda información: " + JSON.stringify(salida));
 
     // 6) El superadministrador bloquea al trabajador: al volver a abrir la app no ve nada
     const bl = await accionCuenta(pcSa, "nBloquear", cred.trab1.usuario);
@@ -701,7 +723,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       }
     }
     return { campana: nombreCamp, cuentas: Object.keys(cred).length + 1, parte: { creador: p1, editor: p2 }, tiempoReal_ms: trab.ms - t0,
-      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
+      trabajador: { horas: trab.horas, euros: trab.importe / 100 }, lector: lect, jefeVe: jef.equipo, dueno: { horas: due.horas, euros: due.total / 100, otroDueno: "rechazado" }, salir: "sin datos", web: URL_PUBLICADA || "servidor local", bloqueado: { tras_recargar: tb.pantalla, al_entrar: tb2.aviso }, restablecida: lr && lf === 2 };
   } finally { SRV.nube = false; }
 });
 

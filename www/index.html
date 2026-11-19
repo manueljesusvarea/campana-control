@@ -305,7 +305,7 @@ const COLS = ["ajustes", "trabajadores", "campanas", "duenos", "partes", "planti
 const S = {}; COLS.forEach(c => S[c] = {});
 let MODE = "cargando", DB = null, ASSETS = null, DL = null, SAMPLE = null, SAMPLE_IMG = false;
 const LKEY = "campana-control-v1";
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "3.0.0-beta.1";
 // Fuera de Claude (app instalable) no existe window.claude: los datos viven en este dispositivo
 const STANDALONE = !window.claude?.use;
 let firstSnap = false, loadTimer = null, netWarn = false;
