@@ -18,7 +18,11 @@ Revisión del 20-11-2026. Lo que figura como «verificado» se ha comprobado eje
   - consulta sin conexión;
   - copias diarias cifradas fuera de Supabase.
 - **APK y EXE de pruebas** compilados en GitHub Actions, como artefactos, sin Releases. El EXE también se ha compilado y comprobado en este ordenador. Se instalan aparte de la 2.3.0.
-- **Producción:** preparada y **sin crear**. Necesita tu autorización: `docs/PRODUCCION_PLAN.md`.
+- **Producción ACTIVA (autorizada el 20-11-2026):**
+  - web **https://campana-control-app.pages.dev**;
+  - Supabase `campana-control` (`voxhvqysgzgpuvvsgecz`), limpio, con el superadministrador `manuel.varea` como única cuenta;
+  - se actualiza solo desde `produccion/v3`, con tu aprobación;
+  - detalle en `docs/PRODUCCION_PLAN.md`.
 - **Coste:** 0 €/mes.
 
 ## 2. Ramas y commits
