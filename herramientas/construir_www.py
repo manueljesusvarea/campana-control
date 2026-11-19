@@ -121,6 +121,8 @@ def version_sw(version_app):
         open(ruta, "w", encoding="utf-8", newline="\n").write(sw2)
     return nueva
 
+PROYECTO_PRUEBAS = "rvpftigkagrtkfdzaixf"   # proyecto Supabase de pruebas (público): nunca puede ser «produccion»
+
 def escribir_config():
     """Genera www/config-nube.js (modo con cuenta, versión 3.0).
     - supabase/config-app.local.json (ignorado por git): proyecto de PRUEBAS, solo en este ordenador.
@@ -144,7 +146,14 @@ def escribir_config():
             sys.exit(f"{origen}: la URL no parece de Supabase.")
         if not clave.startswith("sb_publishable_") or re.search(r"secret|service_role", clave, re.I):
             sys.exit(f"{origen}: solo se admite la clave pública sb_publishable_ (nunca una secreta).")
-        cfg = {"url": url, "clave": clave}
+        # Entorno: «produccion» solo si se pide expresamente (CC_ENTORNO=produccion) o con config-app.json (producción).
+        # Todo lo demás se marca «pruebas» y la app lo enseña con una etiqueta bien visible.
+        entorno = os.environ.get("CC_ENTORNO") or ("produccion" if origen == "config-app.json" else "pruebas")
+        if entorno not in ("pruebas", "produccion"):
+            sys.exit("CC_ENTORNO debe ser «pruebas» o «produccion».")
+        if entorno == "produccion" and PROYECTO_PRUEBAS in url:
+            sys.exit("Se ha pedido producción con el proyecto Supabase de PRUEBAS: no se construye nada.")
+        cfg = {"url": url, "clave": clave, "entorno": entorno}
     js = ("// Generado por herramientas/construir_www.py (" + origen + "). No editar a mano.\n"
           "window.CC_NUBE = " + (json.dumps(cfg) if cfg else "null") + ";\n")
     open(os.path.join(WWW, "config-nube.js"), "w", encoding="utf-8", newline="\n").write(js)

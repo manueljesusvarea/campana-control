@@ -1,0 +1,9 @@
+{
+  "name": "campana-control-respaldo",
+  "private": true,
+  "description": "Copia diaria cifrada de las campañas de Campaña Control 3.0, fuera de Supabase",
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "2.119.0"
+  }
+}

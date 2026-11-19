@@ -1,0 +1,97 @@
+# APK y EXE de PRUEBAS de la 3.0 (proyecto Supabase de pruebas). Solo se ejecuta con un «push» a la rama
+# compilar/v3-pruebas: nunca con main, nunca crea Releases ni publica nada; deja los archivos como artefactos de la
+# ejecución (14 días). No usa ningún secreto: el APK es «debug» (firma de desarrollo) y el EXE va sin firmar.
+#
+# Para no sustituir NUNCA la 2.3.0 instalada:
+#   · APK con otro identificador (es.campanacontrol.app.v3pruebas) y otro nombre («Campaña 3.0 PRUEBAS»): se instala
+#     al lado de la 2.3.0, con sus propios datos.
+#   · EXE con otro appId, otro nombre de programa, de acceso directo y de desinstalación, y otra carpeta de datos.
+# La configuración es la PÚBLICA del proyecto de pruebas (URL y clave sb_publishable_, las mismas que ya publica la
+# beta web). La app enseña la etiqueta «PRUEBAS».
+
+name: 3.0 pruebas (APK y EXE)
+
+on:
+  push:
+    branches: [compilar/v3-pruebas]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v3-pruebas
+  cancel-in-progress: true
+
+env:
+  CC_NUBE_URL: https://rvpftigkagrtkfdzaixf.supabase.co
+  CC_NUBE_CLAVE: sb_publishable_iWryusC-llnSxXjz1SFwXw_2ZInR8OO
+  CC_ENTORNO: pruebas
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - name: Generar www/ (configuración de pruebas)
+        run: python3 herramientas/construir_www.py && grep -q '"entorno": "pruebas"' www/config-nube.js
+      - name: Instalar Capacitor (sin ejecutar scripts de paquetes)
+        run: npm ci --ignore-scripts
+      - name: Copiar la app web al proyecto Android
+        run: npx cap sync android
+      - name: Identificador y nombre propios (no sustituye a la 2.3.0)
+        run: |
+          sed -i 's/applicationId "es.campanacontrol.app"/applicationId "es.campanacontrol.app.v3pruebas"/' android/app/build.gradle
+          sed -i 's#<string name="app_name">[^<]*</string>#<string name="app_name">CAMPAÑA CONTROL 3.0 PRUEBAS</string>#; s#<string name="title_activity_main">[^<]*</string>#<string name="title_activity_main">Campaña 3.0 PRUEBAS</string>#' android/app/src/main/res/values/strings.xml
+          grep -q 'es.campanacontrol.app.v3pruebas' android/app/build.gradle
+      - name: Compilar APK de pruebas (debug)
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - name: Nombre del archivo
+        run: |
+          VER=$(sed -n 's/.*const APP_VERSION = "\([^"]*\)".*/\1/p' claude-artifact/campana-control.html)
+          mkdir -p salida && cp android/app/build/outputs/apk/debug/app-debug.apk "salida/CampanaControl-3.0-PRUEBAS-$VER.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-3.0-pruebas
+          path: salida/*.apk
+          retention-days: 14
+
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Generar www/ (configuración de pruebas)
+        shell: bash
+        run: python herramientas/construir_www.py && grep -q '"entorno": "pruebas"' www/config-nube.js
+      - name: Instalar Electron y electron-builder
+        working-directory: windows
+        run: npm ci
+      - name: Compilar instalador de pruebas (sin firmar, separado de la 2.3.0)
+        working-directory: windows
+        shell: bash
+        run: >-
+          node construir.js "-c.appId=es.campanacontrol.app.v3pruebas" "-c.productName=Campaña Control 3.0 PRUEBAS"
+          "-c.extraMetadata.productName=Campaña Control 3.0 PRUEBAS" "-c.extraMetadata.name=campana-control-v3-pruebas"
+          "-c.nsis.shortcutName=Campaña 3.0 PRUEBAS" "-c.nsis.uninstallDisplayName=Campaña Control 3.0 PRUEBAS"
+          '-c.nsis.artifactName=CampanaControl-3.0-PRUEBAS-Setup-${version}.${ext}' "-c.directories.output=dist-v3"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exe-3.0-pruebas
+          path: windows/dist-v3/*.exe
+          retention-days: 14

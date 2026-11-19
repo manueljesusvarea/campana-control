@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "== 1/3 Pruebas de permisos (PostgreSQL local con PGlite, sin conectar a Supabase)"
-( cd supabase/pruebas && npm ci --no-audit --no-fund && npm test )
+( cd supabase/pruebas && npm ci --no-audit --no-fund && npm test && node instalacion.test.mjs )
 
 echo "== 2/3 Construcción de www/ con la configuración pública"
 if [ -z "${CC_NUBE_URL:-}" ] || [ -z "${CC_NUBE_CLAVE:-}" ]; then

@@ -1869,6 +1869,8 @@ const nSinRed = () => { if (NUBE.online && !NUBE.desdeCache) return false; toast
 
 async function nubeIniciar() {
   MODE = "cuenta";
+  // Entorno de pruebas: se marca bien a la vista para no confundirlo nunca con el de datos reales
+  if (window.CC_NUBE.entorno !== "produccion") { const b = document.querySelector(".brand"); if (b && !b.querySelector(".entorno")) b.insertAdjacentHTML("beforeend", `<span class="entorno" title="Datos de prueba: no uses datos reales aquí" style="margin-left:8px;padding:2px 7px;border-radius:6px;background:#a87f12;color:#fff;font:700 11px/1.4 var(--f-body,sans-serif);letter-spacing:.06em">PRUEBAS</span>`); }
   NUBE.sb = window.supabase.createClient(window.CC_NUBE.url, window.CC_NUBE.clave, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "campana-control-sesion" } });
   addEventListener("online", () => { NUBE.online = true; updSync(); if (NUBE.desdeCache) { nubeTrasSesion(); return; } if (NUBE.c && !NUBE.canal) nubeSuscribir(); nubeComprobar(); render(); });
   addEventListener("offline", () => { NUBE.online = false; updSync(); render(); });
