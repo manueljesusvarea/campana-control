@@ -609,7 +609,7 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       await t.pulsar('[data-act="nCrearUsuario"]'); let c; try { c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 20000, "contraseña temporal"); } catch (e) { throw new Error(e.message + ${aviso}); }
       const u = t.q("#credUsuario").innerText.trim(); await t.pulsar('[data-act="cerrar"]'); return { usuario: u, clave: c };`);
     const accionCuenta = (w, accion, usuario) => ev(w, `await t.ir("#usuarios"); NUBE.usuarios = null; render(); await t.esperar(() => t.q('[data-usuario="${usuario}"] [data-act="${accion}"]'), 15000, "cuenta en la lista");
-      t.q('[data-usuario="${usuario}"] [data-act="${accion}"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmación"); t.q("#cfOk").click();
+      t.q("#toast").textContent = ""; t.q('[data-usuario="${usuario}"] [data-act="${accion}"]').click(); await t.esperar(() => t.q("#cfOk"), 5000, "confirmación"); t.q("#cfOk").click();
       ${accion === "nRestablecer" ? `const c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 20000, "contraseña temporal"); await t.pulsar('[data-act="cerrar"]'); return c;`
         : `await t.esperar(() => /bloqueada|desbloqueada/i.test(t.q("#toast").textContent), 20000, "bloqueo"); return t.q("#toast").textContent;`}`);
 
@@ -717,16 +717,29 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     ok(totD && Math.abs(totD[9] - cmp.srvTotal) < 0.005 && totD[10] === 50 && !JSON.stringify(hd).includes("Dueño E2E Dos"), "Excel del dueño: " + JSON.stringify(totD));
     ok(!JSON.stringify(hj).includes("Importe") && !JSON.stringify(hj).includes("€") && !JSON.stringify(hj).includes("Trabajador E2E Uno"), "Excel del jefe con dinero o con otro equipo: " + JSON.stringify(hj).slice(0, 300));
 
+    // 5f0) Modelos de documento con cuenta
+    const modelo = await ev(movil, `await t.ir("#n-documentos"); NUBE.docAbierto = null; render(); await t.esperar(() => t.q('[data-act="nNuevoModelo"]'), 8000, "modelos");
+      await t.pulsar('[data-act="nNuevoModelo"]'); await t.esperar(() => t.q("#fmodelo"), 5000, "editor de modelo");
+      t.rellenar('#fmodelo [name="nombre"]', "Modelo E2E"); t.rellenar('#fmodelo [name="asesoria"]', "Asesoría E2E"); t.rellenar('#fmodelo [name="titulo"]', "Contrato de {{finca}}");
+      t.q('#fmodelo [name="cuerpo"]').value = "Entre {{empresa}} y {{dueno}}. Precio pactado: {{precio}}."; t.q('#fmodelo [name="campos"]').value = "precio | Precio pactado | 12 €/h";
+      await t.pulsar('[data-act="nGuardarModelo"]'); await t.esperar(() => NUBE.d.plantillas.some(p => p.nombre === "Modelo E2E"), 15000, "modelo guardado");
+      const id = NUBE.d.plantillas.find(p => p.nombre === "Modelo E2E").id; NUBE.modeloAbierto = null; render();
+      t.rellenar('#fndoc [name="dueno"]', ${JSON.stringify(fichas.d)}); t.rellenar('#fndoc [name="modelo"]', id); await t.pulsar('[data-act="nCrearDoc"]');
+      await t.esperar(() => NUBE.d.docs.some(x => x.plantilla_ref === id), 15000, "documento con el modelo");
+      NUBE.docAbierto = null; NUBE.modeloAbierto = id; render(); await t.pulsar('[data-act="nBorrarModelo"]'); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar"); t.q("#cfOk").click();
+      await t.esperar(() => /usan este modelo/.test(t.q("#toast").textContent), 15000, "no se borra en uso");
+      NUBE.modeloAbierto = null; await nubeCargar(); render(); return { sigue: NUBE.d.plantillas.some(p => p.id === id), campos: NUBE.d.plantillas.find(p => p.id === id).campos };`);
+    ok(modelo.sigue && modelo.campos[0]?.clave === "precio", "modelos: " + JSON.stringify(modelo));
     // 5f) Documentos y fotos privadas por rol: el dueño ve la suya; el lector la ve; trabajador y jefe no pueden leerla
     const foto = await ev(movil, `await t.ir("#n-documentos"); NUBE.docAbierto = null; render(); await t.esperar(() => t.q("#fndoc"), 8000, "documentos");
-      t.rellenar('#fndoc [name="dueno"]', ${JSON.stringify(fichas.d)}); await t.pulsar('[data-act="nCrearDoc"]'); await t.esperar(() => NUBE.docAbierto && NUBE.d.docs.length === 1, 15000, "crear documento");
+      t.rellenar('#fndoc [name="dueno"]', ${JSON.stringify(fichas.d)}); t.rellenar('#fndoc [name="modelo"]', "gen-riesgos"); const k = NUBE.d.docs.length; await t.pulsar('[data-act="nCrearDoc"]'); await t.esperar(() => NUBE.docAbierto && NUBE.d.docs.length === k + 1, 15000, "crear documento");
       const f = new File([await new Promise(r => ${JPEG("PARTE EN PAPEL", 1200, 900)}.toBlob(r, "image/jpeg", .9))], "papel.jpg", { type: "image/jpeg" });
-      await nSubirFoto(NUBE.docAbierto, f); return NUBE.d.fotos[0]?.ruta;`);
+      await nSubirFoto(NUBE.docAbierto, f); return NUBE.d.fotos.find(x => x.documento_id === NUBE.docAbierto)?.ruta;`);
     ok(foto, "no se subió la foto del documento");
     const leer = w => ev(w, `const r = await NUBE.sb.storage.from("fotos").download(${JSON.stringify(foto)}); const fl = await NUBE.sb.from("fotos").select("id"); const dc = await NUBE.sb.from("documentos").select("id");
       return { foto: !r.error && r.data?.size > 1000, filas: (fl.data || []).length, docs: (dc.data || []).length };`);
     const vista = { dueno: await leer(disp.dueno), lector: await leer(disp.lector), trabajador: await leer(disp.trab1), jefe: await leer(disp.jefe) };
-    ok(vista.dueno.foto && vista.dueno.docs === 1 && vista.lector.foto && !vista.trabajador.foto && !vista.trabajador.filas && !vista.jefe.foto && !vista.jefe.docs,
+    ok(vista.dueno.foto && vista.dueno.docs === 2 && vista.lector.foto && !vista.trabajador.foto && !vista.trabajador.filas && !vista.jefe.foto && !vista.jefe.docs,
       "acceso a fotos por rol: " + JSON.stringify(vista));
     const subeDueno = await ev(disp.dueno, `const r = await NUBE.sb.storage.from("fotos").upload(NUBE.c.campana_id + "/intruso.jpg", new Blob(["x"], { type: "image/jpeg" })); const d = await NUBE.sb.storage.from("fotos").remove([${JSON.stringify(foto)}]);
       const sigue = await NUBE.sb.storage.from("fotos").download(${JSON.stringify(foto)}); return { subir: !r.error, borrar: !sigue.error && !!sigue.data };`);
@@ -743,7 +756,30 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
     // · Aviso en tiempo real perdido (canal caído): la comprobación de la huella trae el cambio igualmente
     await ev(disp.lector, `nubeDesuscribir(); return true;`);
     await pagar("t:" + fichas.t2, "7", "trabajador");
-    const perdido = await ev(disp.lector, `await nubeComprobar(); await t.esperar(() => NUBE.d.pagos.some(p => p.importe_cent === 700), 15000, "la huella trae el pago"); return NUBE.d.pagos.length;`);
+    const perdido = await ev(disp.lector, `await nubeComprobar(); try { await t.esperar(() => NUBE.d.pagos.some(p => p.importe_cent === 700), 15000, "la huella trae el pago"); }
+      catch (e) { const h = await NUBE.sb.rpc("huella_campana", { p_campana: NUBE.c.campana_id }); throw new Error(e.message + " · " + JSON.stringify({ online: NUBE.online, vis: document.visibilityState, comprobando: nComprobando, cache: NUBE.desdeCache, huellaD: NUBE.d.huella, huellaS: h.data, err: h.error?.message, pagos: NUBE.d.pagos.map(x => x.importe_cent) })); }
+      return NUBE.d.pagos.length;`);
+    // · Corregir un pago (7 → 8 €) sin borrarlo: el lector lo ve y el historial guarda antes y después
+    const correg = await ev(movil, `await t.ir("#n-pagos"); render(); const p = NUBE.d.pagos.find(x => x.importe_cent === 700);
+      t.q('[data-act="nEditarPago"][data-id="' + p.id + '"]').click(); await t.esperar(() => t.q("#fepago"), 5000, "formulario"); t.rellenar('#fepago [name="importe"]', "8");
+      await t.pulsar('[data-act="nGuardarPagoEd"]'); await t.esperar(() => t.q("#cfOk"), 5000, "confirmar"); t.q("#cfOk").click();
+      await t.esperar(() => NUBE.d.pagos.some(x => x.id === p.id && x.importe_cent === 800), 15000, "pago corregido");
+      t.q('[data-act="nHistPago"][data-id="' + p.id + '"]').click(); await t.esperar(() => /Corregido/.test(document.querySelector("#modal")?.innerText || ""), 15000, "historial");
+      const h = document.querySelector("#modal").innerText; closeModal(); return { id: p.id, historial: /Anotado/.test(h) && /Corregido/.test(h) && /7,00/.test(h) && /8,00/.test(h) };`);
+    const vePago = await ev(disp.lector, `await nubeComprobar(); await t.esperar(() => NUBE.d.pagos.some(x => x.id === ${JSON.stringify(correg.id)} && x.importe_cent === 800), 15000, "el lector ve la corrección"); return true;`);
+    ok(correg.historial && vePago, "corrección de pago: " + JSON.stringify(correg));
+    // · Consulta sin conexión al reabrir la app: copia privada del dispositivo, con aviso y sin poder guardar
+    const dbgC = disp.lector.webContents.debugger; dbgC.attach("1.3"); await dbgC.sendCommand("Network.enable");
+    const redC = on => dbgC.sendCommand("Network.emulateNetworkConditions", { offline: !on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+    let cache;
+    try {
+      await redC(false);
+      await disp.lector.webContents.reload(); await new Promise(r => disp.lector.webContents.once("did-finish-load", r)); await disp.lector.webContents.executeJavaScript(AYUDAS + "; true");
+      cache = await ev(disp.lector, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && NUBE.desdeCache && NUBE.d, 20000, "datos de la copia del dispositivo"); await t.ir("#n-inicio"); render();
+        return { pagos: NUBE.d.pagos.length, aviso: /Ves los datos guardados en este dispositivo/.test(t.texto()), bloqueaGuardar: nSinRed(), correccion: NUBE.d.pagos.some(x => x.importe_cent === 800) };`);
+    } finally { await redC(true); dbgC.detach(); }
+    const vuelta = await ev(disp.lector, `await t.esperar(() => !NUBE.desdeCache && NUBE.d, 20000, "vuelve a la nube"); return true;`);
+    ok(cache.pagos > 0 && cache.aviso && cache.bloqueaGuardar && cache.correccion && vuelta, "consulta sin conexión: " + JSON.stringify(cache));
     // · Sin conexión: se conserva lo que había, se avisa y no deja guardar; al volver la conexión se pone al día
     const dbg = disp.lector.webContents.debugger; dbg.attach("1.3"); await dbg.sendCommand("Network.enable");
     const red = on => dbg.sendCommand("Network.emulateNetworkConditions", { offline: !on, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -768,8 +804,9 @@ pruebaRed("nube-sesiones", "3.0 real: superadministrador → creador → cuentas
       await t.esperar(() => t.q("#fentrar"), 15000, "pantalla de entrar tras salir");
       const ls = Object.keys(localStorage).map(k => k + "=" + localStorage.getItem(k)).join(" | ");
       let cache = ""; for (const n of await caches.keys()) for (const r of await (await caches.open(n)).keys()) cache += r.url + " | ";
-      return { sesion: !!NUBE.sesion, datos: !!NUBE.d || NUBE.campanas.length > 0, ls: /Trabajador E2E|${nombreCamp}|access_token|refresh_token/.test(ls), cache: /supabase\\.co/.test(cache), texto: /Trabajador E2E/.test(document.body.innerText) };`);
-    ok(!salida.sesion && !salida.datos && !salida.ls && !salida.cache && !salida.texto, "tras cerrar sesión queda información: " + JSON.stringify(salida));
+      await t.dormir(500); const bases = indexedDB.databases ? (await indexedDB.databases()).map(x => x.name) : [];
+      return { cacheNube: bases.includes("campana-control-nube"), sesion: !!NUBE.sesion, datos: !!NUBE.d || NUBE.campanas.length > 0, ls: /Trabajador E2E|${nombreCamp}|access_token|refresh_token/.test(ls), cache: /supabase\\.co/.test(cache), texto: /Trabajador E2E/.test(document.body.innerText) };`);
+    ok(!salida.cacheNube && !salida.sesion && !salida.datos && !salida.ls && !salida.cache && !salida.texto, "tras cerrar sesión queda información: " + JSON.stringify(salida));
 
     // 6) El superadministrador bloquea al trabajador: al volver a abrir la app no ve nada
     const bl = await accionCuenta(pcSa, "nBloquear", cred.trab1.usuario);
@@ -857,14 +894,23 @@ pruebaRed("nube-migracion", "3.0 real: importar copia 2.3.0 (mismos importes y f
     const n1 = descargas.length;
     await ev(w, `await t.ir("#copias"); render(); await t.esperar(() => t.q("#cpCamp"), 8000, "copias"); t.rellenar("#cpCamp", ${JSON.stringify(C1)}); t.rellenar("#cpFotos", "si"); await t.pulsar('[data-act="nExportar"]'); return true;`);
     const copia3 = JSON.parse(fs.readFileSync((await esperarDescarga(w.__perfil, n1, 30000)).ruta, "utf8"));
-    ok(copia3.tipo === "copia-campana-3" && copia3.fotos.length === 1 && copia3.integridad.sha256.length === 64 && !/password|clave_temporal|sb_secret/i.test(JSON.stringify(copia3)), "copia 3.0: " + JSON.stringify(copia3.integridad).slice(0, 200));
+    ok(/^[0-9a-f]{64}$/.test(copia3.sello || "") && copia3.tipo === "copia-campana-3" && copia3.fotos.length === 1 && copia3.integridad.sha256.length === 64 && !/password|clave_temporal|sb_secret/i.test(JSON.stringify(copia3)), "copia 3.0: " + JSON.stringify(copia3.integridad).slice(0, 200));
     // Una copia manipulada se rechaza
     const mala = JSON.parse(JSON.stringify(copia3)); mala.datos.pagos[0].importe_cent += 100;
     const manip = await ev(w, `await nImpLeer(new File([${JSON.stringify(JSON.stringify(mala))}], "mala.json")); return NUBE.imp.error || "";`);
     ok(/dañada o se ha modificado/.test(manip), "aceptó una copia manipulada: " + manip);
+    // Manipulación «a propósito»: además se recalcula la huella. La huella ya no la delata; el sello sí, y no deja importar sin confirmarlo
+    const crypto2 = require("crypto"); mala.integridad.sha256 = crypto2.createHash("sha256").update(JSON.stringify(mala.datos)).digest("hex");
+    const manip2 = await ev(w, `await t.ir("#copias"); render(); await nImpLeer(new File([${JSON.stringify(JSON.stringify(mala))}], "mala2.json")); NUBE.imp.destino = ${JSON.stringify(C1)}; render();
+      if (NUBE.imp.error) return { error: NUBE.imp.error };
+      await t.pulsar('[data-act="nImpRevisar"]'); await t.esperar(() => NUBE.imp.simulacion || NUBE.imp.resultado, 20000, "simulación");
+      const aviso = /No se puede comprobar el sello/.test(t.texto()); if (t.q('[data-act="nImpConfirmar"]')) await t.pulsar('[data-act="nImpConfirmar"]');
+      await t.dormir(300); return { sello: NUBE.imp.sello, aviso, confirmacion: !!t.q("#cfOk"), toast: t.q("#toast").textContent };`);
+    ok(manip2.sello === false && manip2.aviso && !manip2.confirmacion, "una copia con la huella recalculada pasó sin aviso: " + JSON.stringify(manip2));
+    await ev(w, `NUBE.imp = null; render(); return true;`);
     const C2 = await crearCamp("Restauración E2E " + run);
     const res = await importar(JSON.stringify(copia3), "copia3.json", C2);
-    ok(res.coincide && res.sim.partes === 2 && res.fotos === 1 && res.docs === 1, "restauración: " + JSON.stringify(res));
+    ok(res.coincide && res.sim.partes === 2 && res.fotos === 1 && res.docs === 1 && /Cuentas autorizadas/.test(res.resultado), "restauración: " + JSON.stringify(res));
     // 4) Documento restaurado: foto legible (privada, con sesión) y PDF del documento con la foto
     const n2 = descargas.length;
     const docInfo = await ev(w, `await t.ir("#n-documentos"); NUBE.docAbierto = NUBE.d.docs[0].id; render(); nAfter.documentos();

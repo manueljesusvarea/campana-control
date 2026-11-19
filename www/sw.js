@@ -3,7 +3,7 @@
 // publicado, cambia este archivo y los dispositivos descargan la versión nueva. No la edites a mano.
 // Si un archivo de APP no existe, el service worker no se instala: construir_www.py lo comprueba.
 const PREFIJO = "campana-control:" + self.registration.scope + ":";
-const VERSION = PREFIJO + "3.0.0-beta.1-dad3746811";
+const VERSION = PREFIJO + "3.0.0-beta.1-e49aa8bcde";
 const APP = ["./", "./index.html", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png", "./icons/apple-touch-icon.png", "./icons/favicon.png",
   // Librerías de PDF y Excel (antes desde cdnjs)
   "./vendor/jspdf/2.5.1/jspdf.umd.min.js", "./vendor/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js", "./vendor/xlsx/0.18.5/xlsx.full.min.js",

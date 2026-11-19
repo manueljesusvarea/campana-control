@@ -1250,6 +1250,42 @@ const A = {
   },
   infPdf() { return enNube(() => A.infPdf0()); },
   nInfRol(el) { return informeRol(el.dataset.k, el.dataset.f); },
+  nEditarPago(el) { const p = NUBE.d.pagos.find(x => x.id === el.dataset.id); if (p) nFormPago(p); },
+  nHistPago(el) { nHistorialPago(el.dataset.id); },
+  nGuardarPagoEd(el) {
+    const p = NUBE.d.pagos.find(x => x.id === el.dataset.id); if (!p) return; const f = leer("#fepago"), imp = aCent(f.importe);
+    if (!imp || imp <= 0) return toast("Escribe el importe"); if (!f.fecha) return toast("Elige el día");
+    const cambios = { importe_cent: imp, fecha: f.fecha, hora: f.hora || null, forma: f.forma, nota: f.nota || null };
+    if (imp === p.importe_cent && f.fecha === p.fecha && (f.hora || null) === (horaCorta(p.hora) || null) && f.forma === p.forma && (f.nota || null) === (p.nota || null)) { closeModal(); return; }
+    const dif = imp - p.importe_cent;
+    confirmar(`¿Guardar la corrección? ${eurosC(p.importe_cent)} → ${eurosC(imp)}.${dif ? ` Lo pendiente de ${nNomPersona(p) || "esa persona"} ${dif > 0 ? "baja" : "sube"} ${eurosC(Math.abs(dif))}.` : ""} El cambio queda en el historial.`, async () => {
+      if (nSinRed()) return;
+      try { await nq(NUBE.sb.from("pagos").update({ ...cambios, version: p.version + 1 }).eq("id", p.id).select()); closeModal(); await nubeCargar(); render(); toast("Pago corregido"); }
+      catch (e) { toast(nubeMsg(e)); if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") { closeModal(); await nubeCargar(); render(); } }
+    }, "Guardar");
+  },
+  // Modelos de documento
+  nNuevoModelo(el) { NUBE.modeloAbierto = el.dataset.k || "nuevo"; render(); },
+  nAbrirModelo(el) { NUBE.modeloAbierto = el.dataset.id; render(); },
+  nCerrarModelo() { NUBE.modeloAbierto = null; render(); },
+  async nGuardarModelo(el) {
+    const id = el.dataset.id, { f, errores } = nLeerModelo();
+    if (!f.nombre) return toast("Pon un nombre al modelo"); if (errores.length) return toast("Claves no válidas (solo minúsculas, números y _): " + errores.join(", "));
+    if (nSinRed()) return;
+    try {
+      if (id.length === 36) { const m = NUBE.d.plantillas.find(x => x.id === id); await nq(NUBE.sb.from("plantillas").update({ ...f, version: m.version + 1 }).eq("id", id).select()); }
+      else { const r = await nq(NUBE.sb.from("plantillas").insert({ ...f, campana_id: NUBE.c.campana_id }).select("id").single()); NUBE.modeloAbierto = r.id; }
+      await nubeCargar(); render(); toast("Modelo guardado");
+    } catch (e) { toast(nubeMsg(e)); if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") { await nubeCargar(); render(); } }
+  },
+  nBorrarModelo(el) {
+    const id = el.dataset.id;
+    confirmar("¿Borrar este modelo? Los documentos ya hechos con él no se pueden quedar sin modelo: si alguno lo usa, no se borrará.", async () => {
+      if (nSinRed()) return;
+      try { await nq(NUBE.sb.from("plantillas").delete().eq("id", id).select()); NUBE.modeloAbierto = null; await nubeCargar(); render(); toast("Modelo borrado"); }
+      catch (e) { toast(/MODELO:/.test(e?.message) ? "Hay documentos que usan este modelo: no se puede borrar." : nubeMsg(e)); }
+    }, "Borrar");
+  },
   // Documentos y fotos (3.0)
   async nCrearDoc() {
     const f = leer("#fndoc"), d = NUBE.d, pl = plantillaNube(f.modelo); if (!f.dueno || !pl) return toast("Elige dueño y modelo"); if (nSinRed()) return;
@@ -1317,11 +1353,11 @@ const A = {
     const id = $("#cpCamp")?.value, conFotos = $("#cpFotos")?.value === "si"; if (!id || nSinRed()) return;
     try {
       toast("Preparando la copia…");
-      const datos = await nq(NUBE.sb.rpc("exportar_campana", { p_campana: id })), fotos = [];
+      const sellada = await nq(NUBE.sb.rpc("copia_campana", { p_campana: id })), datos = sellada.datos, fotos = [];
       if (conFotos) for (const f of datos.fotos) fotos.push({ documento: f.documento, sha256: f.sha256, data: await blobToData(await nFotoBlob(f.ruta)) });
       const nombre = NUBE.campanas.find(c => c.campana_id === id)?.nombre || "campana";
       const cuerpo = JSON.stringify(datos);
-      const copia = { app: "campana-control", tipo: "copia-campana-3", version: APP_VERSION, fecha: new Date().toISOString(), campana: nombre,
+      const copia = { app: "campana-control", tipo: "copia-campana-3", version: APP_VERSION, fecha: new Date().toISOString(), campana: nombre, sello: sellada.sello, emisor: sellada.emisor,
         integridad: { sha256: await sha256Hex(new TextEncoder().encode(cuerpo)), fotos: datos.fotos.length,
           recuentos: Object.fromEntries(["trabajadores", "duenos", "maquinas", "partes", "pagos", "plantillas", "documentos"].map(k => [k, (datos[k] || []).length])),
           totales: totalesSN(snDesdeDatos(datos, nombre), datos.trabajadores.map(t => t.o), datos.duenos.map(d => d.o)) }, datos, fotos };
@@ -1336,6 +1372,7 @@ const A = {
   },
   nImpConfirmar() {
     const w = NUBE.imp; if (!w?.simulacion) return;
+    if (w.tipo === "3.0" && !w.sello && !$("#impConfirmoSello")?.checked) return toast("Marca que sabes de dónde viene la copia (su sello no se puede comprobar).");
     const destino = nGestionables().find(c => c.campana_id === w.destino)?.nombre || "";
     confirmar(`¿Importar en «${destino}»? Se añadirán ${w.simulacion.partes.nuevos} parte(s) y ${w.simulacion.pagos.nuevos} pago(s). No se borra ni se cambia nada de lo que ya hay.`, async () => {
       if (nSinRed()) return;
@@ -1343,7 +1380,13 @@ const A = {
         toast("Importando…");
         const r = await nImpRpc(false); w.hecho = true;
         const fo = await nImpSubirFotos(r.documentos_ids || {});
-        w.resultado = `Importado: ${r.trabajadores.nuevos} trabajador(es), ${r.duenos.nuevos} dueño(s), ${r.partes.nuevos} parte(s) con ${r.partes.filas} jornada(s), ${r.pagos.nuevos} pago(s) y ${r.documentos.nuevos} documento(s). ${fo}`;
+        let cu = "";
+        if (w.miembros?.length) {
+          if (NUBE.superadmin) { try { const m = await nq(NUBE.sb.rpc("restaurar_miembros", { p_campana: w.destino, p_miembros: w.miembros }));
+            cu = ` Cuentas autorizadas: ${m.vinculadas} con acceso de nuevo${m.ya ? `, ${m.ya} ya lo tenían` : ""}${m.no_existen ? `, ${m.no_existen} no existen en este sistema (hay que darlas de alta)` : ""}${m.sin_ficha ? `, ${m.sin_ficha} sin su ficha` : ""}.`; } catch (e) { cu = " No se pudo volver a dar acceso a las cuentas: " + nubeMsg(e); } }
+          else cu = ` La copia tiene ${w.miembros.length} cuenta(s) autorizada(s) (${w.miembros.map(m => m.usuario).join(", ")}): pide al superadministrador que restaure la copia para devolverles el acceso, o dales de alta desde «Gestión de usuarios».`;
+        }
+        w.resultado = `Importado: ${r.trabajadores.nuevos} trabajador(es), ${r.duenos.nuevos} dueño(s), ${r.partes.nuevos} parte(s) con ${r.partes.filas} jornada(s), ${r.pagos.nuevos} pago(s) y ${r.documentos.nuevos} documento(s). ${fo}${cu}`;
         await nImpComprobar();
       } catch (e) { w.resultado = "No se ha importado nada: " + String(e?.message || e).replace(/^(IMPORTAR|PERMISO): /, ""); }
       render();
@@ -1836,30 +1879,37 @@ function nubeMsg(e) {
   if (/^PERMISO|row-level security|permission denied/i.test(m) || code === "42501") return "No tienes permiso para hacer esto.";
   return m.replace(/^[A-ZÁÉÍÓÚ]+: /, "") || "Algo ha fallado.";
 }
-const nSinRed = () => { if (NUBE.online) return false; toast("Sin conexión: no se pueden guardar cambios ahora."); return true; };
+const nSinRed = () => { if (NUBE.online && !NUBE.desdeCache) return false; toast("Sin conexión: no se pueden guardar cambios ahora."); return true; };
 
 async function nubeIniciar() {
   MODE = "cuenta";
   NUBE.sb = window.supabase.createClient(window.CC_NUBE.url, window.CC_NUBE.clave, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "campana-control-sesion" } });
-  addEventListener("online", () => { NUBE.online = true; updSync(); if (NUBE.c && !NUBE.canal) nubeSuscribir(); nubeComprobar(); render(); });
+  addEventListener("online", () => { NUBE.online = true; updSync(); if (NUBE.desdeCache) { nubeTrasSesion(); return; } if (NUBE.c && !NUBE.canal) nubeSuscribir(); nubeComprobar(); render(); });
   addEventListener("offline", () => { NUBE.online = false; updSync(); render(); });
   NUBE.sb.auth.onAuthStateChange((ev, s) => { const antes = NUBE.sesion?.user?.id || null; NUBE.sesion = s; if ((s?.user?.id || null) !== antes) setTimeout(nubeTrasSesion, 0); });
   NUBE.sesion = (await NUBE.sb.auth.getSession()).data.session;
   await nubeTrasSesion();
 }
-async function nubeTrasSesion() {
-  nubeDesuscribir(); nLiberarFotos(); Object.assign(NUBE, { imp: null, docAbierto: null, limpieza: null, c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null, permisos: null, usuarios: null, fichas: null, altaForm: null });
+async function nubeTrasSesion(reintento = false) {
+  nubeDesuscribir(); nLiberarFotos(); if (!NUBE.sesion) borrarCacheNube(); Object.assign(NUBE, { imp: null, docAbierto: null, modeloAbierto: null, desdeCache: null, limpieza: null, c: null, d: null, roles: [], campanas: [], perfil: null, superadmin: false, cuentas: {}, global: null, borrador: null, permisos: null, usuarios: null, fichas: null, altaForm: null });
   if (NUBE.sesion) {
     try {
       const uid = NUBE.sesion.user.id;
       NUBE.perfil = await nq(NUBE.sb.from("perfiles").select("id, nombre, usuario, activo, bloqueado, debe_cambiar_clave, puede_crear_campanas").eq("id", uid).maybeSingle());
-      if (NUBE.perfil && (NUBE.perfil.bloqueado || NUBE.perfil.debe_cambiar_clave)) return render();   // sin acceso hasta resolverlo
+      if (NUBE.perfil && (NUBE.perfil.bloqueado || NUBE.perfil.debe_cambiar_clave)) { borrarCacheNube(); return render(); }   // sin acceso hasta resolverlo
       NUBE.superadmin = (await nq(NUBE.sb.from("superadmin").select("user_id").eq("user_id", uid))).length > 0;
       NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas"));
       let pref = null; try { pref = localStorage.getItem(PREF_CAMP); } catch (e) { }
       const elegida = NUBE.campanas.find(c => c.campana_id === pref) || (NUBE.campanas.length === 1 ? NUBE.campanas[0] : null);
       if (elegida) await nubeElegir(elegida.campana_id, true);
-    } catch (e) { toast(nubeMsg(e)); }
+    } catch (e) {
+      // Sin conexión: se enseña la copia privada de este dispositivo (si la hay y no ha caducado)
+      if (!(esFalloRed(e) && await nubeDesdeCache())) {
+        toast(nubeMsg(e)); NUBE.c = null; NUBE.d = null;
+        // Si los permisos cambiaron mientras se cargaba (cuenta bloqueada, acceso retirado), se vuelve a comprobar todo una vez
+        if (!reintento && /PERMISO|permission|42501/i.test(String(e?.message || e) + (e?.code || ""))) return setTimeout(() => nubeTrasSesion(true), 800);
+      }
+    }
   }
   render();
 }
@@ -1896,7 +1946,7 @@ async function nubeCargarUna() {
       sel("partes_filas", "parte_id, trabajador_id, tipo, horas, nota, fecha"),
       sel("partes_maquinas", "parte_id, maquina_id, cantidad"),
       sel("maquinas", "id, nombre, precio_cent, unidad, activa", ["orden"]),
-      sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota", ["fecha", false]),
+      sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota, version", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
     d.plantillas = await sel("plantillas", "id, nombre, asesoria, titulo, cuerpo, campos, version", ["nombre"]);
@@ -1912,7 +1962,7 @@ async function nubeCargarUna() {
     nq(sb.from("fotos").select("id, documento_id, ruta, bytes, sha256").eq("campana_id", c).order("creado_en"))]);
   try { d.huella = await nq(sb.rpc("huella_campana", { p_campana: c })); } catch (e) { d.huella = null; }
   if (n !== nCargaN || NUBE.c?.campana_id !== c) { try { await NUBE.cargando; } catch (e) { } return; }   // hay otra carga más reciente (o otra campaña): se espera a esa
-  NUBE.d = d; NUBE.cuentas = {};
+  NUBE.d = d; NUBE.cuentas = {}; NUBE.desdeCache = null; guardarCacheNube();
 }
 // Tiempo real: solo se avisa de cambios en esta campaña (Realtime respeta RLS) y se recarga una vez, agrupando avisos
 function nubeSuscribir() {
@@ -2062,6 +2112,7 @@ const plantillaNube = ref => PLANTILLAS_GEN[ref] ? { id: ref, ...PLANTILLAS_GEN[
 const nDuenosVisibles = () => NUBE.d.duenos.length ? NUBE.d.duenos : (NUBE.d.datosDueno ? [NUBE.d.datosDueno.dueno] : []);
 function vNDocumentos() {
   const d = NUBE.d, g = nGestiona(), ab = NUBE.docAbierto && (d.docs || []).find(x => x.id === NUBE.docAbierto);
+  if (g && NUBE.modeloAbierto) return vNModelo(NUBE.modeloAbierto);
   if (ab) return vNDocumento(ab);
   const modelos = [...Object.entries(PLANTILLAS_GEN).map(([id, p]) => ({ id, nombre: p.nombre })), ...(d.plantillas || []).map(p => ({ id: p.id, nombre: p.nombre }))];
   const duenos = nDuenosVisibles();
@@ -2072,6 +2123,9 @@ function vNDocumentos() {
    ${(d.docs || []).length ? `<div class="list">${d.docs.map(x => { const nf = d.fotos.filter(f => f.documento_id === x.id).length; const du = duenos.find(y => y.id === x.dueno_id);
       return `<button class="li" data-act="nAbrirDoc" data-id="${x.id}"><div class="grow"><div class="t">${esc(x.nombre || plantillaNube(x.plantilla_ref)?.nombre || "Documento")}</div><div class="muted small">${esc(du?.nombre || "")}${x.fecha ? " · " + fFecha(x.fecha) : ""} · ${nf} ${nf === 1 ? "foto" : "fotos"}</div></div></button>`; }).join("")}</div>`
     : `<div class="empty"><span>No hay documentos.</span></div>`}
+   ${g ? `<section class="card stack"><h2>Modelos de documento</h2><div class="hint">Los modelos incluidos no se cambian; puedes copiarlos y adaptar la copia, o crear uno nuevo.</div>
+     <div class="list">${(d.plantillas || []).map(p => `<button class="li" data-act="nAbrirModelo" data-id="${p.id}"><div class="grow"><div class="t">${esc(p.nombre)}</div><div class="muted small">${esc(p.asesoria || "")} · usado en ${d.docs.filter(x => x.plantilla_ref === p.id).length} documento(s)</div></div></button>`).join("") || `<span class="muted small">Aún no hay modelos propios.</span>`}</div>
+     <div class="row"><button class="btn sm" data-act="nNuevoModelo">${ic("mas")}Nuevo modelo</button>${Object.entries(PLANTILLAS_GEN).map(([k, p]) => `<button class="btn sm" data-act="nNuevoModelo" data-k="gen:${k}">Copiar «${esc(p.nombre)}»</button>`).join("")}</div></section>` : ""}
    ${g ? `<section class="card stack"><h2>Fotos en la nube</h2><div class="hint">Son privadas: las ven quien gestiona la campaña, sus administradores y el dueño de cada documento. Ocupan ${fN(d.fotos.reduce((s, f) => s + f.bytes, 0) / 1048576, 2)} MB (el plan gratuito permite 1 GB).</div>
      <button class="btn sm" data-act="nRevisarFotos" style="align-self:flex-start">Revisar fotos sin usar</button></section>` : ""}</div>`;
 }
@@ -2230,6 +2284,9 @@ function vNImport(w, cs) {
    ${w.tipo === "2.3.0" ? `<label class="f"><span>Campaña de la copia</span><select id="impFuente">${w.fuentes.map(f => `<option value="${esc(f.id)}" ${f.id === w.fuente ? "selected" : ""}>${esc(f.nombre)} · ${f.partes} partes</option>`).join("")}</select></label>` : ""}
    <label class="f"><span>Importar en la campaña</span><select id="impDestino">${cs.map(c => `<option value="${c.campana_id}" ${c.campana_id === w.destino ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></label>
    <div class="hint">Recomendado: crea antes una campaña vacía para la importación. Si la campaña de destino ya tiene partes, sus horas por día, precios e IVA deben ser los mismos que los de la copia.</div>
+   ${w.tipo === "3.0" ? (w.sello ? `<div class="muted small"><b>Sello comprobado:</b> la copia la hizo este sistema y no se ha cambiado.</div>`
+      : `<div class="banner"><b>No se puede comprobar el sello</b> (copia de otro sistema, antigua o modificada). La huella solo detecta archivos dañados, no cambios hechos a propósito.
+         <label class="row" style="margin-top:6px"><input type="checkbox" id="impConfirmoSello"> Sé de dónde viene esta copia y quiero importarla</label></div>`) : ""}
    ${w.avisos?.length ? `<div class="banner">${w.avisos.map(esc).join("<br>")}</div>` : ""}
    ${t ? `<div class="kpis"><div class="kpi"><span class="lbl">Partes</span>${nCifra(w.datos.partes.length)}</div><div class="kpi"><span class="lbl">Horas</span>${nCifra(fN(sumaTot(t, "trabajadores", "horas")))}</div><div class="kpi"><span class="lbl">Ganado trabajadores</span>${nCifra(eur(sumaTot(t, "trabajadores", "ganado")))}</div><div class="kpi"><span class="lbl">Entregado</span>${nCifra(eur(sumaTot(t, "trabajadores", "entregado")))}</div><div class="kpi"><span class="lbl">Cuentas dueños</span>${nCifra(eur(sumaTot(t, "duenos", "total")))}</div><div class="kpi"><span class="lbl">Pagado por dueños</span>${nCifra(eur(sumaTot(t, "duenos", "pagado")))}</div><div class="kpi"><span class="lbl">Fotos</span>${nCifra(w.fotos.length)}</div></div>
      <div class="muted small">${w.convOk ? "Importes comprobados: el paso al formato nuevo da exactamente las mismas cifras que la copia." : `<b>Atención:</b> ${esc(w.convDif || "")}`}</div>` : ""}
@@ -2255,7 +2312,8 @@ async function nImpLeer(file) {
       const h = await sha256Hex(new TextEncoder().encode(JSON.stringify(j.datos)));
       if (h !== j.integridad?.sha256) throw new Error("La copia está dañada o se ha modificado: su huella no coincide. No se importa.");
       for (const f of j.fotos || []) if (f.sha256 && await sha256Hex(await dataABlob(f.data).arrayBuffer()) !== f.sha256) throw new Error("Una foto de la copia está dañada (huella distinta). No se importa.");
-      Object.assign(w, { tipo: "3.0", integridad: true, datos: j.datos, campanaNombre: j.campana, fotos: (j.fotos || []).map(f => ({ documento: f.documento, data: f.data, sha256: f.sha256 })),
+      let sello = false; try { sello = !!j.sello && (await NUBE.sb.rpc("verificar_sello", { p_datos: j.datos, p_sello: j.sello })).data === true; } catch (e) { }
+      Object.assign(w, { tipo: "3.0", integridad: true, sello, miembros: j.datos.miembros || [], datos: j.datos, campanaNombre: j.campana, fotos: (j.fotos || []).map(f => ({ documento: f.documento, data: f.data, sha256: f.sha256 })),
         avisos: (j.integridad.fotos || 0) > (j.fotos || []).length ? [`La copia se hizo sin ${(j.integridad.fotos || 0) - (j.fotos || []).length} foto(s).`] : [] });
       nImpTotales(j.integridad?.totales);
     } else if (j.app === "campana-control" && j.S && j.S.campanas) {
@@ -2318,6 +2376,96 @@ async function nImpSubirFotos(mapa) {
   return w.fotos.length ? `Fotos: ${subidas} subida(s)${ya ? `, ${ya} ya estaban` : ""}${fallos ? `, ${fallos} sin subir (pulsa «Reintentar»)` : ""}.` : "";
 }
 
+/* ---------- Pagos: corregir sin borrar, con historial (000013) ----------
+   Se corrigen importe, día, hora, forma y nota. Tipo y persona no (la base de datos lo impide) para no mover un saldo
+   a otra persona por error. Control de versión: si otra persona lo cambió antes, no se pisa. El historial sale de la
+   auditoría (quién, cuándo, antes y después), que solo leen quienes consultan la campaña. */
+const nNomPersona = p => p.tipo === "trabajador" ? (NUBE.d.trab.find(t => t.id === p.trabajador_id)?.nombre) : (NUBE.d.duenos.find(x => x.id === p.dueno_id)?.nombre);
+function nFormPago(p) {
+  openModal(`<div class="mh"><h2>Corregir pago</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+   <div class="stack" id="fepago" data-id="${p.id}"><div class="muted small">${esc(nNomPersona(p) || "")} · ${p.tipo === "trabajador" ? "entrega al trabajador" : "pago del dueño"} (para cambiar la persona, bórralo y anótalo de nuevo)</div>
+    <div class="grid2"><label class="f"><span>Importe (€)</span><input name="importe" inputmode="decimal" value="${fN(p.importe_cent / 100, 2)}"></label><label class="f"><span>Día</span><input type="date" name="fecha" value="${p.fecha}"></label>
+     <label class="f"><span>Hora</span><input type="time" name="hora" value="${horaCorta(p.hora)}"></label><label class="f"><span>Forma</span><select name="forma">${FORMAS.map(([k, n]) => `<option value="${k}" ${k === p.forma ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+     <label class="f"><span>Nota</span><input name="nota" value="${esc(p.nota || "")}"></label></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nGuardarPagoEd" data-id="${p.id}">Guardar corrección</button></div></div>`);
+}
+async function nHistorialPago(id) {
+  try {
+    const h = await nq(NUBE.sb.from("auditoria").select("accion, user_id, en, antes, despues").eq("tabla", "pagos").eq("fila_id", id).order("id"));
+    const quien = u => NUBE.d.nombres[u] || (u === NUBE.sesion.user.id ? "tú" : "otra cuenta");
+    const desc = x => x ? `${eurosC(x.importe_cent)} · ${fFecha(x.fecha)}${x.hora ? " " + horaCorta(x.hora) : ""} · ${formaTxt(x.forma)}${x.nota ? " · " + esc(x.nota) : ""}` : "";
+    openModal(`<div class="mh"><h2>Historial del pago</h2><button class="iconbtn" data-act="cerrar" aria-label="Cerrar">${ic("x")}</button></div>
+     <div class="list">${h.map(x => `<div class="mrow"><div class="grow"><b>${x.accion === "insert" ? "Anotado" : x.accion === "update" ? "Corregido" : "Borrado"}</b> por ${esc(quien(x.user_id))} · ${new Date(x.en).toLocaleString("es-ES")}
+       <div class="muted small">${x.accion === "update" ? `Antes: ${desc(x.antes)}<br>Ahora: ${desc(x.despues)}` : desc(x.despues || x.antes)}</div></div></div>`).join("") || `<div class="empty"><span>Sin historial.</span></div>`}</div>`);
+  } catch (e) { toast(nubeMsg(e)); }
+}
+
+/* ---------- Modelos de documento con cuenta (000013) ----------
+   Crear, editar, copiar un modelo incluido y borrar: solo quien gestiona (lo aplica la base de datos). Un modelo que
+   usa algún documento no se puede borrar. Los cambios quedan en la auditoría. */
+const CLAVE_CAMPO = /^[a-z0-9_]{1,40}$/;
+function vNModelo(id) {
+  const m = id === "nuevo" ? { nombre: "", asesoria: "", titulo: "", cuerpo: "", campos: [] } : id.startsWith("gen:") ? { ...PLANTILLAS_GEN[id.slice(4)], nombre: PLANTILLAS_GEN[id.slice(4)].nombre + " (copia)" } : NUBE.d.plantillas.find(p => p.id === id);
+  if (!m) return `<div class="empty"><span>No existe ese modelo.</span></div>`;
+  const usos = id.length === 36 ? NUBE.d.docs.filter(x => x.plantilla_ref === id).length : 0;
+  return `<div class="stack" id="fmodelo" data-id="${esc(id)}"><div class="row between"><div><div class="lbl">Modelo de documento</div><h1>${esc(m.nombre || "Nuevo modelo")}</h1></div><button class="btn sm" data-act="nCerrarModelo">Volver</button></div>
+   <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="${esc(m.nombre || "")}"></label><label class="f"><span>Asesoría</span><input name="asesoria" value="${esc(m.asesoria || "")}"></label></div>
+   <label class="f"><span>Título</span><input name="titulo" value="${esc(m.titulo || "")}"></label>
+   <label class="f"><span>Texto (los huecos van entre llaves: {{dueno}}, {{finca}}…)</span><textarea name="cuerpo" rows="12">${esc(m.cuerpo || "")}</textarea></label>
+   <div class="hint">Datos automáticos: ${PH_BASE.map(([k, t]) => `<code>{{${k}}}</code> ${esc(t)}`).join(" · ")}</div>
+   <label class="f"><span>Datos a rellenar en cada documento (uno por línea: clave | etiqueta | valor por defecto)</span><textarea name="campos" rows="5">${esc((m.campos || []).map(c => [c.clave, c.etiqueta || "", c.valor || ""].join(" | ")).join("\n"))}</textarea></label>
+   <div class="row between">${id.length === 36 ? `<button class="btn danger" data-act="nBorrarModelo" data-id="${id}" ${usos ? `title="Lo usan ${usos} documento(s)"` : ""}>Borrar</button>` : "<span></span>"}<button class="btn pri" data-act="nGuardarModelo" data-id="${esc(id)}">Guardar modelo</button></div></div>`;
+}
+function nLeerModelo() {
+  const f = leer("#fmodelo"), campos = [], errores = [];
+  for (const l of String($('#fmodelo [name="campos"]').value || "").split("\n").map(x => x.trim()).filter(Boolean)) {
+    const [clave, etiqueta = "", valor = ""] = l.split("|").map(x => x.trim());
+    if (!CLAVE_CAMPO.test(clave || "")) errores.push(`«${clave}»`); else campos.push({ clave, etiqueta: etiqueta || clave, valor });
+  }
+  return { f: { nombre: f.nombre, asesoria: f.asesoria || null, titulo: f.titulo || null, cuerpo: $('#fmodelo [name="cuerpo"]').value, campos }, errores };
+}
+
+/* ---------- Consulta sin conexión: caché privada en este dispositivo ----------
+   Tras cada carga correcta se guarda una copia de lo que el usuario puede ver (solo lo suyo), cifrada con AES-GCM y una
+   clave no exportable creada en este navegador (IndexedDB). Sin conexión se enseña esa copia con un aviso de la fecha y
+   no se deja guardar nada. Caduca a los 7 días. Al cerrar sesión se borran todas las copias del dispositivo.
+   Límite honesto: protege frente a quien copie los archivos del navegador, no frente a quien use el dispositivo con la
+   sesión abierta; y una cuenta bloqueada mientras el móvil está sin cobertura sigue viendo su copia hasta que vuelva la
+   conexión (como mucho 7 días). */
+const CACHE_DIAS = 7, CACHE_DB = "campana-control-nube";
+function cacheDb() { return new Promise((res, rej) => { const r = indexedDB.open(CACHE_DB, 1); r.onupgradeneeded = () => { r.result.createObjectStore("claves"); r.result.createObjectStore("datos"); }; r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function cacheTx(st, modo, fn) { const db = await cacheDb(); try { return await new Promise((res, rej) => { const t = db.transaction(st, modo), s = t.objectStore(st), q = fn(s); t.oncomplete = () => res(q?.result); t.onerror = () => rej(t.error); }); } finally { db.close(); } }
+async function cacheClave(uid) {
+  let k = await cacheTx("claves", "readonly", s => s.get(uid));
+  if (!k) { k = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]); await cacheTx("claves", "readwrite", s => s.put(k, uid)); }
+  return k;
+}
+async function guardarCacheNube() {
+  try {
+    if (!window.indexedDB || !crypto?.subtle || !NUBE.sesion || !NUBE.d) return; const uid = NUBE.sesion.user.id;
+    const datos = { t: Date.now(), perfil: NUBE.perfil, superadmin: NUBE.superadmin, campanas: NUBE.campanas, c: NUBE.c, roles: NUBE.roles, permisos: NUBE.permisos, d: NUBE.d };
+    const iv = crypto.getRandomValues(new Uint8Array(12)), k = await cacheClave(uid);
+    const cif = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, new TextEncoder().encode(JSON.stringify(datos)));
+    await cacheTx("datos", "readwrite", s => s.put({ iv, cif, t: datos.t }, uid));
+  } catch (e) { }
+}
+async function leerCacheNube(uid) {
+  try {
+    const r = await cacheTx("datos", "readonly", s => s.get(uid)); if (!r) return null;
+    if (Date.now() - r.t > CACHE_DIAS * 864e5) { await borrarCacheNube(); return null; }
+    const k = await cacheTx("claves", "readonly", s => s.get(uid)); if (!k) return null;
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: r.iv }, k, r.cif)));
+  } catch (e) { return null; }
+}
+async function borrarCacheNube() { try { if (window.indexedDB) await new Promise(r => { const q = indexedDB.deleteDatabase(CACHE_DB); q.onsuccess = q.onerror = q.onblocked = () => r(); }); } catch (e) { } }
+const esFalloRed = e => !navigator.onLine || /Failed to fetch|NetworkError|Load failed|fetch/i.test(String(e?.message || e));
+async function nubeDesdeCache() {
+  const c = NUBE.sesion && await leerCacheNube(NUBE.sesion.user.id); if (!c) return false;
+  Object.assign(NUBE, { perfil: c.perfil, superadmin: c.superadmin, campanas: c.campanas, c: c.c, roles: c.roles, permisos: c.permisos, d: c.d, desdeCache: c.t });
+  return true;
+}
+const avisoCache = () => NUBE.desdeCache ? `<div class="banner" style="margin-bottom:12px"><b>Sin conexión.</b> Ves los datos guardados en este dispositivo el ${new Date(NUBE.desdeCache).toLocaleString("es-ES", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}: pueden no estar al día. No se puede guardar nada hasta que vuelva la conexión.</div>` : "";
+
 function nubeVistas() {
   if (!NUBE.c) return [];
   const v = [];
@@ -2346,7 +2494,7 @@ function nubeRender() {
   if (!NUBE.sesion) { nubeNav([]); v.innerHTML = vEntrar(); return; }
   if (NUBE.perfil?.bloqueado) { nubeNav([]); v.innerHTML = vBloqueada(); return; }
   if (NUBE.nuevaClave || NUBE.perfil?.debe_cambiar_clave) { nubeNav([]); v.innerHTML = vNuevaClave(); return; }
-  const aviso = NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
+  const aviso = NUBE.desdeCache ? avisoCache() : NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
   if (r === "usuarios" && nPuedeUsuarios()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vUsuarios(); nAfter.usuarios(); return; }
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
   if (r === "copias" && nPuedeCopias()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCopias(); nAfter.copias(); return; }
@@ -2551,7 +2699,7 @@ function vNPagos() {
    <label class="f"><span>Importe (€)</span><input name="importe" inputmode="decimal" placeholder="Ej. 50"></label><label class="f"><span>Día</span><input type="date" name="fecha" value="${hoy()}"></label>
    <label class="f"><span>Forma</span><select name="forma">${FORMAS.map(([k, n]) => `<option value="${k}">${n}</option>`).join("")}</select></label><label class="f"><span>Nota</span><input name="nota"></label></div>
    <div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nGuardarPago">Guardar</button></div></section>
-  <section class="stack"><h2>Últimos movimientos</h2>${d.pagos.length ? `<div class="list">${d.pagos.slice(0, 50).map(p => `<div class="pago"><div class="grow"><b>${esc(nom(p) || "—")}</b><div class="muted small">${fFecha(p.fecha)} · ${p.tipo === "trabajador" ? "entrega" : "pago del dueño"} · ${esc(formaTxt(p.forma))}${p.nota ? " · " + esc(p.nota) : ""}</div></div><span class="imp">${eurosC(p.importe_cent)}</span><button class="btn ghost sm danger" data-act="nBorrarPago" data-id="${p.id}">Borrar</button></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay pagos.</span></div>`}</section></div>`;
+  <section class="stack"><h2>Últimos movimientos</h2>${d.pagos.length ? `<div class="list">${d.pagos.slice(0, 50).map(p => `<div class="pago"><div class="grow"><b>${esc(nom(p) || "—")}</b><div class="muted small">${fFecha(p.fecha)} · ${p.tipo === "trabajador" ? "entrega" : "pago del dueño"} · ${esc(formaTxt(p.forma))}${p.nota ? " · " + esc(p.nota) : ""}</div></div><span class="imp">${eurosC(p.importe_cent)}</span><button class="btn ghost sm" data-act="nEditarPago" data-id="${p.id}">Corregir</button><button class="btn ghost sm" data-act="nHistPago" data-id="${p.id}">Historial</button><button class="btn ghost sm danger" data-act="nBorrarPago" data-id="${p.id}">Borrar</button></div>`).join("")}</div>` : `<div class="empty"><span>Aún no hay pagos.</span></div>`}</section></div>`;
 }
 
 /* ---------- Personas: fichas, cuentas vinculadas, invitaciones y equipos ---------- */

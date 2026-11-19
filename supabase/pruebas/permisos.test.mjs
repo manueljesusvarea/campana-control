@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const db = new PGlite();
+const { pgcrypto } = await import("@electric-sql/pglite/contrib/pgcrypto");
+const db = new PGlite({ extensions: { pgcrypto } });   // pgcrypto: como en Supabase (esquema «extensions»)
 const resultados = [];
 const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
 
@@ -517,6 +518,68 @@ await prueba("Copia de campaña 3.0 (000010): exportar solo quien gestiona; rest
   ok(a.t === b.t && a.t === "31680", "importes distintos tras restaurar: " + JSON.stringify([a, b]));
   ok(JSON.stringify(await recuento(R)) === JSON.stringify(await recuento(A.importada)), "recuentos distintos tras restaurar");
   return "6 roles sin permiso rechazados · restaurada en otra campaña: mismos recuentos y cuenta 316,80 €";
+});
+
+/* ---------- 000013: editar pagos con historial; modelos de documento ---------- */
+await prueba("Pagos (000013): se corrigen sin borrarlos, queda el historial y no se puede cambiar la persona", async () => {
+  const g = await como(U.creadorA, ({ uno }) => uno("insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 1500, '2026-11-16') returning id, version", [A.c, A.t2]));
+  await como(U.creadorA, ({ uno }) => uno("update pagos set importe_cent = 1800, forma = 'bizum', version = $2 where id = $1 returning id", [g.id, g.version + 1]));
+  ok(/no se puede cambiar el tipo ni la persona/.test(await falla(U.creadorA, ({ uno }) => uno("update pagos set trabajador_id = $2, version = 3 where id = $1 returning id", [g.id, A.t1]))), "se cambió la persona");
+  ok(/CONFLICTO/.test(await falla(U.creadorA, ({ uno }) => uno("update pagos set importe_cent = 1 where id = $1 returning id", [g.id]))), "una edición sin versión no dio conflicto");
+  ok((await como(U.adminA, ({ q }) => q("update pagos set importe_cent = 1 where id = $1 returning id", [g.id]))).length === 0, "el administrador lector cambió un pago");
+  const h = await como(U.adminA, ({ q }) => q("select accion, antes ->> 'importe_cent' as antes, despues ->> 'importe_cent' as despues, user_id from auditoria where tabla = 'pagos' and fila_id = $1 order by id", [g.id]));
+  ok(h.length === 2 && h[1].accion === "update" && h[1].antes === "1500" && h[1].despues === "1800" && h[1].user_id === U.creadorA, "historial: " + JSON.stringify(h));
+  ok((await como(U.trab2, ({ q }) => q("select * from auditoria"))).length === 0, "un trabajador lee la auditoría");
+  return "importe 15 → 18 € con historial (quién, antes y después) · persona fija · conflicto de versión · lector sin cambios · trabajador sin auditoría";
+});
+await prueba("Modelos (000013): solo quien gestiona los crea, edita y borra; no se borra uno en uso; quedan en la auditoría", async () => {
+  const campos = JSON.stringify([{ clave: "extra", etiqueta: "Extra", valor: "" }]);
+  const m = await como(U.creadorA, ({ uno }) => uno("insert into plantillas (campana_id, nombre, asesoria, titulo, cuerpo, campos) values ($1, 'Modelo propio', 'Asesoría X', 'Título', 'Cuerpo {{dueno}} {{extra}}', $2) returning id, version", [A.c, campos]));
+  await como(U.creadorA, ({ uno }) => uno("update plantillas set cuerpo = 'Cuerpo nuevo {{dueno}}', version = $2 where id = $1 returning id", [m.id, m.version + 1]));
+  for (const u of [U.adminA, U.trab1, U.dueno1, U.creadorB]) {
+    let n = 0; try { n = (await como(u, ({ q }) => q("update plantillas set nombre = 'x', version = 3 where id = $1 returning id", [m.id]))).length; } catch (e) { n = 0; }
+    ok(n === 0, "otro rol cambió el modelo");
+  }
+  await falla(U.adminA, ({ uno }) => uno("insert into plantillas (campana_id, nombre) values ($1, 'del admin') returning id", [A.c]));
+  await como(U.creadorA, ({ uno }) => uno("insert into documentos (campana_id, dueno_id, plantilla_ref, nombre) values ($1, $2, $3, 'Doc con modelo propio') returning id", [A.c, A.d1, m.id]));
+  ok(/hay documentos que usan este modelo/.test(await falla(U.creadorA, ({ q }) => q("delete from plantillas where id = $1", [m.id]))), "se borró un modelo en uso");
+  const h = await como(U.adminA, ({ q }) => q("select accion from auditoria where tabla = 'plantillas' and fila_id = $1 order by id", [m.id]));
+  ok(h.map(x => x.accion).join() === "insert,update", "auditoría de modelos: " + JSON.stringify(h));
+  return "creado y editado por el creador · admin, trabajador, dueño y otro creador sin cambios · en uso no se borra · auditado";
+});
+
+/* ---------- 000014: copias selladas y restauración completa con cuentas autorizadas ---------- */
+await prueba("Copia sellada (000014): solo quien gestiona; el sello detecta una manipulación aunque se recalcule la huella", async () => {
+  for (const u of [U.adminA, U.trab1, U.dueno1, U.creadorB, U.intruso]) await falla(u, ({ uno }) => uno("select public.copia_campana($1)", [A.c]));
+  await db.query("update public.perfiles set usuario = 'admin.copia' where id = $1", [U.adminA]);
+  await db.query("update public.perfiles set usuario = 'dueno.copia' where id = $1", [U.dueno1]);
+  const c = (await como(U.creadorA, ({ uno }) => uno("select public.copia_campana($1) as r", [A.c]))).r;
+  ok(/^[0-9a-f]{64}$/.test(c.sello) && c.datos.miembros.some(m => m.usuario === "admin.copia") && !/password|contrase|token|sb_secret|service_role|encrypted/i.test(JSON.stringify(c.datos)), "copia: " + JSON.stringify(c.datos.miembros));
+  const verif = async d => (await como(U.trab1, ({ uno }) => uno("select public.verificar_sello($1, $2) as v", [JSON.stringify(d), c.sello]))).v;
+  ok(await verif(JSON.parse(JSON.stringify(c.datos))) === true, "el sello no se reconoce tras leer y escribir el archivo");
+  const mala = JSON.parse(JSON.stringify(c.datos)); mala.pagos[0].importe_cent += 100;
+  ok(await verif(mala) === false, "el sello no detectó un importe cambiado");
+  let anon = null; try { anon = (await como(null, ({ uno }) => uno("select public.verificar_sello($1, $2) as v", [JSON.stringify(c.datos), c.sello]))).v; } catch (e) { anon = "rechazado"; }
+  ok(anon !== true, "un anónimo comprobó sellos");
+  let clave = []; try { clave = await como(U.creadorA, ({ q }) => q("select * from cc_priv.sello")); } catch (e) { clave = []; }
+  ok(clave.length === 0, "la clave del sello es legible");
+  A.copiaSellada = c;
+  return "5 roles sin permiso rechazados · sello válido tras leer/escribir · importe cambiado detectado · anónimo y clave rechazados · sin datos de acceso";
+});
+await prueba("Restauración completa aislada (000014): jornadas, pagos, documentos, cuentas autorizadas y relaciones iguales", async () => {
+  const c = A.copiaSellada, R = (await como(U.super, ({ uno }) => uno("select public.crear_campana('Restauración completa', 2026) as id"))).id;
+  const s = JSON.stringify(c.datos), r = (await como(U.super, ({ uno }) => uno("select public.importar_campana($1, $2, $3) as r", [R, huella(s), s]))).r;
+  ok(r.partes.nuevos === c.datos.partes.length && r.pagos.nuevos === c.datos.pagos.length && r.documentos.nuevos === c.datos.documentos.length, "importación: " + JSON.stringify(r));
+  await falla(U.creadorA, ({ uno }) => uno("select public.restaurar_miembros($1, $2)", [R, JSON.stringify(c.datos.miembros)]));
+  const m = (await como(U.super, ({ uno }) => uno("select public.restaurar_miembros($1, $2) as r", [R, JSON.stringify(c.datos.miembros)]))).r;
+  ok(m.vinculadas >= 2 && m.no_existen === 0, "cuentas: " + JSON.stringify(m));
+  const k1 = (await como(U.dueno1, ({ uno }) => uno("select public.cuenta_dueno($1) as r", [A.c]))).r, k2 = (await como(U.dueno1, ({ uno }) => uno("select public.cuenta_dueno($1) as r", [R]))).r;
+  ok(k1.total_cent === k2.total_cent && k1.pagado_cent === k2.pagado_cent && +k1.horas === +k2.horas, "cuenta del dueño distinta: " + JSON.stringify([k1.total_cent, k2.total_cent]));
+  const cuenta = camp => como(U.adminA, ({ uno }) => uno(`select (select count(*) from partes_filas where campana_id = $1)::int as filas, (select coalesce(sum(importe_cent),0) from pagos where campana_id = $1)::text as pagos,
+    (select count(*) from documentos where campana_id = $1)::int as docs, (select count(*) from partes_maquinas where campana_id = $1)::int as maq, (select coalesce(sum(kilos),0) from partes where campana_id = $1)::text as kilos`, [camp]));
+  const [a, b] = [await cuenta(A.c), await cuenta(R)];
+  ok(JSON.stringify(a) === JSON.stringify(b), "restauración distinta: " + JSON.stringify({ a, b }));
+  return `campaña nueva: ${b.filas} jornadas, ${b.maq} maquinaria, kilos ${b.kilos}, pagos ${b.pagos} céntimos y ${b.docs} documentos iguales · ${m.vinculadas} cuentas con su rol y ficha · solo el superadministrador vincula`;
 });
 
 /* ---------- Resumen ---------- */
