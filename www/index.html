@@ -1939,6 +1939,9 @@ async function nubeCargarUna() {
   if (!fila) throw new Error("PERMISO: ya no tienes acceso a esta campaña");
   if (n0 === nCargaN + 1 && NUBE.c?.campana_id === c0) { NUBE.campanas = camps; NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.permisos = perm; }
   const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { docs: [], fotos: [], plantillas: [], campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
+  // La huella se pide ANTES que los datos: si algo cambia mientras se carga, la huella guardada es la anterior y la
+  // siguiente comprobación lo detecta (pedida al final, los datos podían quedar viejos con una huella ya nueva)
+  try { d.huella = await nq(sb.rpc("huella_campana", { p_campana: c })); } catch (e) { d.huella = null; }
   d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia, hora_inicio, empresa, activa, version").eq("id", c).single());
   if (nConsulta()) {
     const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
@@ -1964,7 +1967,6 @@ async function nubeCargarUna() {
   if (nConsulta() || NUBE.roles.includes("dueno")) [d.docs, d.fotos] = await Promise.all([   // la RLS deja al dueño solo los suyos
     nq(sb.from("documentos").select("id, dueno_id, plantilla_ref, nombre, fecha, desde, hasta, campos, trabajadores, version").eq("campana_id", c).order("creado_en")),
     nq(sb.from("fotos").select("id, documento_id, ruta, bytes, sha256").eq("campana_id", c).order("creado_en"))]);
-  try { d.huella = await nq(sb.rpc("huella_campana", { p_campana: c })); } catch (e) { d.huella = null; }
   if (n !== nCargaN || NUBE.c?.campana_id !== c) { try { await NUBE.cargando; } catch (e) { } return; }   // hay otra carga más reciente (o otra campaña): se espera a esa
   NUBE.d = d; NUBE.cuentas = {}; NUBE.desdeCache = null; guardarCacheNube();
 }
