@@ -638,6 +638,22 @@ await prueba("Cuenta de copias (000015): lee campañas, copias selladas y fotos;
   return `${camps.length} campañas y copia sellada legibles · 6 tablas sin lectura directa · 9 escrituras rechazadas · no puede ser superadministrador, miembro ni creador · bloqueada pierde el acceso`;
 });
 
+/* ---------- 000017: cuentas para la copia completa, solo «respaldo_lectura» ---------- */
+await prueba("Copia completa (000017): solo el usuario de base de datos de copias lee las cuentas; la app no", async () => {
+  for (const u of [U.super, U.creadorA, U.trab1, null]) await falla(u, ({ q }) => q("select * from cc_priv.respaldo_cuentas()"));
+  const total = (await db.query("select count(*)::int as n from auth.users")).rows[0].n;
+  const filas = await db.transaction(async tx => {
+    await tx.exec("set local role respaldo_lectura");
+    return (await tx.query("select r from cc_priv.respaldo_cuentas() r")).rows;
+  });
+  ok(filas.length === total && total > 0, `devuelve ${filas.length} de ${total} cuentas`);
+  ok(filas.every(f => f.r.id && "email" in f.r), "faltan columnas de la cuenta");
+  let escribe = true;
+  try { await db.transaction(async tx => { await tx.exec("set local role respaldo_lectura"); await tx.query("update public.pagos set importe_cent = 1"); }); } catch (e) { escribe = false; }
+  ok(!escribe, "respaldo_lectura pudo escribir en pagos");
+  return `${filas.length} cuentas completas legibles solo por respaldo_lectura · superadministrador, creador, trabajador y anónimo rechazados · no escribe`;
+});
+
 /* ---------- Resumen ---------- */
 const fallos = resultados.filter(r => !r.ok).length;
 console.log(`\n${resultados.length - fallos} correctas, ${fallos} con fallos`);
