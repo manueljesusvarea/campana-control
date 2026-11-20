@@ -1972,7 +1972,8 @@ async function nubeCargarUna() {
 function nubeSuscribir() {
   nubeDesuscribir(); const c = NUBE.c.campana_id;
   NUBE.canal = NUBE.sb.channel("campana-" + c);
-  for (const t of ["partes", "partes_filas", "pagos", "miembros"]) NUBE.canal.on("postgres_changes", { event: "*", schema: "public", table: t, filter: "campana_id=eq." + c }, () => nubeRecargar());
+  for (const t of ["partes", "partes_filas", "pagos", "miembros", "campanas_economia", "trabajadores", "duenos", "maquinas"]) NUBE.canal.on("postgres_changes", { event: "*", schema: "public", table: t, filter: "campana_id=eq." + c }, () => nubeRecargar());
+  NUBE.canal.on("postgres_changes", { event: "*", schema: "public", table: "campanas", filter: "id=eq." + c }, () => nubeRecargar());   // configuración, archivar (000019)
   // Al (re)conectar el canal se recarga: así no se pierden los cambios hechos mientras el móvil estaba
   // suspendido o sin cobertura. Si el canal falla, se vuelve a suscribir pasados unos segundos.
   const canal = NUBE.canal; let conectado = false;
@@ -2503,7 +2504,7 @@ function nubeRender() {
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
   if (r === "copias" && nPuedeCopias()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCopias(); nAfter.copias(); return; }
   if (r === "global" && NUBE.superadmin) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNGlobal(); nAfter.global(); return; }
-  if (!NUBE.c || r === "campanas") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCampanas(); return; }
+  if (!NUBE.c || r === "campanas") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCampanas(); nRefrescarCampanas(); return; }
   if (!NUBE.d) { v.innerHTML = `<div class="empty"><b>Cargando la campaña…</b></div>`; return; }
   const vistas = nubeVistas(), k = r.startsWith("n-") ? r.slice(2) : vistas[0]?.[0];
   nubeNav(vistas, k);
@@ -2598,6 +2599,17 @@ function nMostrarClave(titulo, nombre, usuario, clave) {
    <div class="card stack" style="gap:6px"><div>Usuario: <b id="credUsuario" style="user-select:all">${esc(usuario)}</b></div><div>Contraseña temporal: <b id="codigoInv" style="font-family:var(--f-display);font-size:24px;letter-spacing:.06em;user-select:all">${esc(clave)}</b></div></div>
    <div class="row" style="justify-content:flex-end"><button class="btn" data-act="nCopiarCodigo">Copiar contraseña</button><button class="btn pri" data-act="cerrar">Hecho</button></div></div>`);
 }
+// Al abrir «Tus campañas» se pide la lista otra vez: las creadas, archivadas o eliminadas por otra persona aparecen
+// sin recargar la app (como mucho una petición cada 3 s)
+let nCampsT = 0;
+function nRefrescarCampanas() {
+  if (!NUBE.sb || !NUBE.sesion || !NUBE.online || Date.now() - nCampsT < 3000) return; nCampsT = Date.now();
+  NUBE.sb.rpc("mis_campanas").then(r => {
+    if (r.error || !Array.isArray(r.data)) return;
+    const antes = JSON.stringify(NUBE.campanas); NUBE.campanas = r.data;
+    if (antes !== JSON.stringify(r.data) && (!NUBE.c || location.hash === "#campanas") && !editing()) render();
+  }, () => {});
+}
 function vNCampanas() {
   const p = NUBE.perfil, puede = NUBE.superadmin || p?.puede_crear_campanas, y = new Date().getFullYear();
   return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || usuarioDe(NUBE.sesion.user.email))}</div><h1>Tus campañas</h1></div><div class="row">${nPuedeUsuarios() ? `<a class="btn" href="#usuarios">${ic("trabajadores")}Gestión de usuarios</a>` : ""}${nPuedeCopias() ? `<a class="btn" href="#copias">Copias e importación</a>` : ""}${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div></div>
@@ -2652,9 +2664,13 @@ function nGuardarConImpacto(cambios, guardar) {
      <p class="small" style="margin:8px 0 0">Los <b>${i.pagos}</b> pagos y entregas ya registrados <b>no cambian</b>: cambia lo que queda pendiente. El cambio queda registrado en la auditoría con el valor anterior.</p>`,
     guardar, "Sí, guardar");
 }
-async function nGuardarFila(tabla, campoId, id, version, datos) {
-  const r = await nq(NUBE.sb.from(tabla).update({ ...datos, version: version + 1 }).eq(campoId, id).select(campoId));
+// Guarda con control de versión y deja al momento en pantalla lo que ha guardado el servidor (versión nueva incluida):
+// así un segundo cambio seguido no choca con la versión anterior mientras llega la recarga
+async function nGuardarFila(tabla, campoId, id, version, datos, local) {
+  const r = await nq(NUBE.sb.from(tabla).update({ ...datos, version: version + 1 }).eq(campoId, id).select("*"));
   if (!r.length) throw new Error("PERMISO: no se ha podido guardar");
+  if (local) Object.assign(local, r[0]);
+  return r[0];
 }
 async function nTrasGuardar(msg) { await nubeCargar(); toast(msg); render(); }
 function nErrorGuardar(e) { toast(nubeMsg(e)); if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") nubeCargar().then(render, () => {}); }
@@ -2994,8 +3010,8 @@ Object.assign(A, {
     if (!cambiaC && !cambiaE) return toast("No hay cambios");
     nGuardarConImpacto({ campana: { horas_dia: horas }, eco }, async () => {
       try {
-        if (cambiaC) await nGuardarFila("campanas", "id", c.id, c.version, camp);
-        if (cambiaE) await nGuardarFila("campanas_economia", "campana_id", c.id, e.version, eco);
+        if (cambiaC) await nGuardarFila("campanas", "id", c.id, NUBE.d.campana.version, camp, NUBE.d.campana);
+        if (cambiaE) await nGuardarFila("campanas_economia", "campana_id", c.id, NUBE.d.eco.version, eco, NUBE.d.eco);
         await nTrasGuardar("Configuración guardada");
       } catch (er) { nErrorGuardar(er); }
     });
@@ -3008,7 +3024,7 @@ Object.assign(A, {
     const datos = { nombre, precio_cent: precio, unidad: v("unidad").value, activa: v("activa").checked };
     if (Object.keys(datos).every(k => datos[k] === m[k])) return toast("No hay cambios");
     nGuardarConImpacto({ maq: { [m.id]: precio } }, async () => {
-      try { await nGuardarFila("maquinas", "id", m.id, m.version, datos); await nTrasGuardar("Máquina guardada"); } catch (er) { nErrorGuardar(er); }
+      try { const m1 = NUBE.d.maq.find(x => x.id === m.id) || m; await nGuardarFila("maquinas", "id", m.id, m1.version, datos, m1); await nTrasGuardar("Máquina guardada"); } catch (er) { nErrorGuardar(er); }
     });
   },
   async nAltaMaq() {
@@ -3030,7 +3046,7 @@ Object.assign(A, {
     if (Object.keys(datos).every(k => (datos[k] ?? null) === (x[k] ?? null))) { closeModal(); return toast("No hay cambios"); }
     closeModal();
     nGuardarConImpacto(t ? { trab: { [x.id]: precio } } : { dueno: { [x.id]: precio } }, async () => {
-      try { await nGuardarFila(t ? "trabajadores" : "duenos", "id", x.id, x.version, datos); await nTrasGuardar(t ? "Trabajador guardado" : "Dueño guardado"); } catch (er) { nErrorGuardar(er); }
+      try { const x1 = (t ? NUBE.d.trab : NUBE.d.duenos).find(y => y.id === x.id) || x; await nGuardarFila(t ? "trabajadores" : "duenos", "id", x.id, x1.version, datos, x1); await nTrasGuardar(t ? "Trabajador guardado" : "Dueño guardado"); } catch (er) { nErrorGuardar(er); }
     });
   },
   nArchivar(el) {
@@ -3040,7 +3056,7 @@ Object.assign(A, {
         : `<p style="margin:0">«${esc(c.nombre)}» quedará en <b>solo lectura</b> para todos: nadie podrá cambiar partes, pagos, personas ni precios. No se borra nada y se puede seguir consultando, exportando e imprimiendo. Se puede restaurar cuando quieras.</p>`,
       async () => {
         if (nSinRed()) return;
-        try { await nGuardarFila("campanas", "id", c.id, c.version, { activa: restaurar }); await nTrasGuardar(restaurar ? "Campaña restaurada" : "Campaña archivada"); } catch (er) { nErrorGuardar(er); }
+        try { const c1 = NUBE.d.campana; await nGuardarFila("campanas", "id", c1.id, c1.version, { activa: restaurar }, c1); if (NUBE.c) NUBE.c.activa = restaurar; await nTrasGuardar(restaurar ? "Campaña restaurada" : "Campaña archivada"); } catch (er) { nErrorGuardar(er); }
       }, restaurar ? "Sí, restaurar" : "Sí, archivar");
   },
   async nEliminarCampana() {

@@ -1,5 +1,5 @@
 -- CAMPAÑA CONTROL 3.0 · Instalación completa para un proyecto Supabase NUEVO y vacío (producción).
--- Generado por supabase/pruebas/instalacion.test.mjs a partir de supabase/migrations/ (18 migraciones). No editar a mano.
+-- Generado por supabase/pruebas/instalacion.test.mjs a partir de supabase/migrations/ (19 migraciones). No editar a mano.
 -- Contiene solo el esquema, permisos y funciones: ningún dato, cuenta ni contraseña.
 begin;
 
@@ -2281,5 +2281,25 @@ $$;
 revoke all on function public.mis_campanas(), public.resumen_campana(uuid), public.eliminar_campana(uuid, text) from public, anon;
 grant execute on function public.mis_campanas(), public.resumen_campana(uuid), public.eliminar_campana(uuid, text) to authenticated;
 revoke all on function cc_priv.campana_abierta(), cc_priv.campana_archivada() from public, anon, authenticated;
+
+
+-- ===== 20261121000019_tiempo_real_configuracion.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000019: tiempo real también para la configuración de la campaña
+--
+-- Con 000018 la configuración, los precios, las personas y la maquinaria se cambian desde la app. Hasta ahora solo
+-- partes, jornadas, pagos y miembros avisaban al momento; el resto se notaba en la comprobación periódica (huella,
+-- cada 45 s). Se añaden a la publicación de Supabase Realtime (que respeta la RLS: cada cual solo recibe avisos de
+-- lo que puede leer). No cambia datos ni permisos.
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['campanas', 'campanas_economia', 'trabajadores', 'duenos', 'maquinas'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
 
 commit;
