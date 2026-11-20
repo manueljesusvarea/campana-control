@@ -159,3 +159,35 @@ Sustituye al alta por invitación (000004) y a la confirmación del correo (0000
 | Sello de las copias (`cc_priv.sello`) | Nadie lo lee. Solo lo usan las funciones del servidor | Tabla en un esquema que no expone la API, con RLS y sin permisos para `anon` ni `authenticated` (comprobado en el proyecto real). Una copia manipulada se detecta aunque se recalcule su huella |
 | `restaurar_miembros()` | Solo el superadministrador | Vuelve a dar acceso a cuentas que ya existen, con su rol y su ficha. No crea cuentas ni contraseñas |
 | Registros de acceso | Superadministrador y propietario | Cambios de datos: tabla `auditoria`, que nadie puede borrar ni falsear. Inicios de sesión: panel de Supabase → Authentication → Logs (en el plan Free se guardan poco tiempo, aproximadamente un día) |
+
+## Administrar campañas: configuración, precios, archivar y eliminar (21-11-2026, migraciones 000018-000019)
+
+**Qué fallaba:** la base de datos ya dejaba al superadministrador y al creador cambiar la configuración, los precios,
+las personas y la maquinaria (`cc_priv.gestiona`), pero la app con cuenta no tenía ninguna pantalla para hacerlo.
+«Archivar» no existía de verdad (la columna `activa` no impedía nada) y eliminar una campaña con datos chocaba con las
+relaciones protegidas y dejaba sus fotos en Storage.
+
+| Acción | Superadministrador | Creador (su campaña) | Creador (ajena) | Administrador | Jefe, trabajador, dueño |
+|---|---|---|---|---|---|
+| Configuración, €/h, IVA, horas, empresa | sí (aunque no sea miembro) | sí | no | no | no |
+| Precio propio de trabajador o dueño, maquinaria | sí | sí | no | no | no |
+| Jornadas y pagos | sí | sí | no | solo con «edición» | no |
+| Archivar y restaurar | sí | sí | no | no | no |
+| Eliminar definitivamente | sí: archivada + nombre exacto | no | no | no | no |
+
+- **Dónde:** Ajustes (engranaje) → «Configuración de la campaña», «Maquinaria y precios», «Archivar o eliminar la campaña».
+  Personas → «Editar» en cada trabajador o dueño.
+- **Precios:** el importe no se guarda en cada jornada (como en la 2.3.0): un cambio de precio o de horas vuelve a
+  calcular todas las jornadas de la campaña. Antes de guardar, la app enseña cuánto cambian los totales de trabajadores y
+  dueños y pide confirmación. Los pagos y entregas registrados **no cambian nunca**; cambia lo pendiente. Cada cambio queda
+  en la auditoría con el valor anterior y el nuevo (céntimos enteros, sin redondeos acumulados).
+- **Archivada:** solo lectura para todos en el servidor (disparador `campana_abierta` en 16 tablas): ni jornadas, ni pagos,
+  ni personas, ni precios, ni documentos, ni fotos. Se sigue pudiendo consultar, exportar e imprimir.
+- **Eliminar:** `eliminar_campana(id, nombre)`: solo el superadministrador, solo archivada y con el nombre exacto. Antes se
+  enseña `resumen_campana()` (personas, jornadas, pagos e importe, documentos, fotos, archivos, cuentas). Borra en orden,
+  devuelve las rutas de las fotos para borrarlas de Storage y deja constancia en la auditoría (quién y el resumen). Las
+  cuentas de las personas no se borran. Las copias diarias de los últimos 30 días la siguen conteniendo.
+- **Tiempo real (000019):** los cambios de configuración, precios, personas y maquinaria llegan al momento a los demás.
+- **Pruebas:** `permisos.test.mjs` (41/41, con los 8 escenarios) y la prueba real `ejecutar.js nube-campanas` contra el
+  proyecto de pruebas (superadministrador sin ser miembro, creador propio y ajeno, administrador, trabajador, archivar,
+  restaurar y eliminar con vista previa).
