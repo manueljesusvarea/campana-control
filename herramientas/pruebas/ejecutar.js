@@ -968,6 +968,135 @@ pruebaRed("nube-pwa", "Web publicada: HTTPS, service worker, recarga, dirección
   return { primera: p0.url, recarga: p1.controlado ? "con service worker" : "sin", inicio: p2.url, sinConexion: p3 ? "abre" : "no", cache: info.cache + " archivos de la app", iconos: info.iconos.join(",") };
 });
 
+// 3.0 · administrar campañas (000018): superadministrador sin ser miembro, creador propio y ajeno, administrador,
+// trabajador, archivar y restaurar, y eliminar definitivamente. Todo pulsando la app contra el proyecto de PRUEBAS.
+pruebaRed("nube-campanas", "3.0 real: superadministrador y creador administran campañas (precios, personas, maquinaria); ajeno, administrador y trabajador no; archivar, restaurar y eliminar", async () => {
+  const fijas = JSON.parse(fs.readFileSync(path.join(RAIZ, "supabase", "pruebas", ".cuentas-pruebas.json"), "utf8"));
+  ok(fijas.propietario && !fijas.propietario.temporal, "falta el superadministrador de pruebas");
+  const run = Date.now().toString(36).slice(-5), clave = () => require("crypto").randomBytes(12).toString("base64url");
+  SRV.nube = true;
+  try {
+    const aviso = `" · aviso: «" + (t.q("#toast")?.textContent || "") + "»"`;
+    const dispositivo = async (perfil, ancho = 1280, alto = 860) => {
+      const w = await abrir(perfil + "-" + run, { esperarApp: false, ancho, alto, url: URL_PUBLICADA });
+      await w.webContents.executeJavaScript(AYUDAS + "; true");
+      await ev(w, `await t.esperar(() => typeof MODE !== "undefined" && MODE === "cuenta" && t.q("#fentrar"), 15000, "pantalla de entrar"); return true;`);
+      return w;
+    };
+    const entrar = (w, usuario, password) => ev(w, `t.rellenar('#fentrar [name="usuario"]', ${JSON.stringify(usuario)}); t.rellenar('#fentrar [name="password"]', ${JSON.stringify(password)});
+      await t.pulsar('[data-act="nEntrar"]'); try { await t.esperar(() => NUBE.sesion && NUBE.perfil && !t.q("#fentrar"), 20000, "entrar"); } catch (e) { throw new Error(e.message + ${aviso}); } return true;`);
+    const ponerClave = (w, actual, nueva) => ev(w, `await t.esperar(() => t.q("#fclave"), 8000, "pantalla de contraseña");
+      t.rellenar('#fclave [name="actual"]', ${JSON.stringify(actual)}); t.rellenar('#fclave [name="p1"]', ${JSON.stringify(nueva)}); t.rellenar('#fclave [name="p2"]', ${JSON.stringify(nueva)});
+      await t.pulsar('[data-act="nGuardarClave"]'); await t.esperar(() => NUBE.perfil && !NUBE.perfil.debe_cambiar_clave && !t.q("#fclave"), 20000, "poner la contraseña"); return true;`);
+    const crearUsuario = (w, d) => ev(w, `await t.ir("#usuarios"); render(); await t.esperar(() => t.q("#fusuario") && NUBE.usuarios, 15000, "gestión de usuarios");
+      const sel = async (n, v) => { if (!t.q('#fusuario [name="' + n + '"]')) return; t.rellenar('#fusuario [name="' + n + '"]', v); await t.dormir(150); };
+      ${d.tipo ? `await sel("tipo", ${JSON.stringify(d.tipo)});` : ""}
+      ${d.rol ? `await sel("campana", ${JSON.stringify(d.campana)}); await sel("rol", ${JSON.stringify(d.rol)});` : ""}
+      ${d.ficha ? `await t.esperar(() => [...t.q('#fusuario [name="ficha"]').options].some(o => o.value === ${JSON.stringify(d.ficha)}), 15000, "fichas"); t.rellenar('#fusuario [name="ficha"]', ${JSON.stringify(d.ficha)});` : ""}
+      t.rellenar('#fusuario [name="nombre"]', ${JSON.stringify(d.nombre)}); t.rellenar('#fusuario [name="usuario"]', ${JSON.stringify(d.usuario)});
+      await t.pulsar('[data-act="nCrearUsuario"]'); let c; try { c = await t.esperar(() => t.q("#codigoInv")?.innerText.trim(), 20000, "contraseña temporal"); } catch (e) { throw new Error(e.message + ${aviso}); }
+      const u = t.q("#credUsuario").innerText.trim(); await t.pulsar('[data-act="cerrar"]'); return { usuario: u, clave: c };`);
+    const persona = async (w, cred) => { await entrar(w, cred.usuario, cred.clave); await ponerClave(w, cred.clave, clave()); };
+    // Abre la campaña desde la lista (como lo haría la persona) y espera a tenerla cargada
+    const abrirCampana = (w, id) => ev(w, `await t.ir("#campanas"); render(); await t.esperar(() => t.q('[data-act="nElegir"][data-id="${id}"]'), 15000, "campaña en la lista");
+      await t.pulsar('[data-act="nElegir"][data-id="${id}"]'); await t.esperar(() => NUBE.c?.campana_id === "${id}" && NUBE.d?.campana?.id === "${id}", 20000, "abrir campaña"); return true;`);
+    // Confirma la ventana de «recalcula las cuentas» y devuelve lo que enseñaba
+    const confirmarImpacto = `(await (async () => { const md = await t.esperar(() => t.q("#cfOk") && t.q("#modal").innerText, 8000, "vista previa del cambio"); t.q("#cfOk").click(); return md; })())`;
+
+    // 1) Superadministrador crea un creador y un segundo creador (ajeno)
+    const sa = await dispositivo("adm-superadmin");
+    await entrar(sa, fijas.propietario.usuario, fijas.propietario.password);
+    const credC = await crearUsuario(sa, { tipo: "creador", nombre: "Creador Admin E2E", usuario: "creador.adm." + run });
+    const credX = await crearUsuario(sa, { tipo: "creador", nombre: "Creador Ajeno E2E", usuario: "ajeno.adm." + run });
+
+    // 2) El creador prepara una campaña ficticia con datos y cuentas
+    const cr = await dispositivo("adm-creador", 390, 844);
+    await persona(cr, credC);
+    const nombre = "Admin E2E " + run;
+    const C = await ev(cr, `await t.ir("#campanas"); render(); await t.esperar(() => t.q("#fnueva"), 15000, "crear campañas");
+      t.rellenar('#fnueva [name="nombre"]', ${JSON.stringify(nombre)}); t.rellenar('#fnueva [name="horas"]', "8"); t.rellenar('#fnueva [name="ptrab"]', "10"); t.rellenar('#fnueva [name="pdueno"]', "12");
+      await t.pulsar('[data-act="nCrearCampana"]'); await t.esperar(() => NUBE.c?.nombre === ${JSON.stringify(nombre)} && NUBE.d, 20000, "crear campaña");
+      await t.ir("#n-personas"); render();
+      t.rellenar('#fntrab [name="nombre"]', "Ana Admin E2E"); await t.pulsar('[data-act="nAltaTrab"]'); await t.esperar(() => NUBE.d.trab.length === 1, 15000, "trabajador");
+      t.rellenar('#fndueno [name="nombre"]', "Dueño Admin E2E"); await t.pulsar('[data-act="nAltaDueno"]'); await t.esperar(() => NUBE.d.duenos.length === 1, 15000, "dueño");
+      const c = NUBE.c.campana_id, tr = NUBE.d.trab[0].id, du = NUBE.d.duenos[0].id;
+      const r1 = await NUBE.sb.rpc("guardar_parte", { p_campana: c, p_dueno: du, p_fecha: "2026-11-20", p_version: null, p_kilos: 2350, p_notas: null, p_filas: [{ trabajador_id: tr, tipo: "normal" }], p_maquinas: [] });
+      const r2 = await NUBE.sb.from("pagos").insert({ campana_id: c, tipo: "trabajador", trabajador_id: tr, importe_cent: 2000, fecha: "2026-11-20" });
+      if (r1.error || r2.error) throw new Error("datos: " + (r1.error || r2.error).message);
+      await nubeCargar(); return { c, tr, du };`);
+    const credT = await crearUsuario(cr, { nombre: "Ana Cuenta E2E", usuario: "ana.adm." + run, campana: C.c, rol: "trabajador", ficha: C.tr });
+    const credA = await crearUsuario(cr, { nombre: "Lector Admin E2E", usuario: "lector.adm." + run, campana: C.c, rol: "admin" });
+
+    // 3) Superadministrador SIN ser miembro: entra, cambia €/h del dueño con vista previa, IVA y una máquina
+    await abrirCampana(sa, C.c);
+    const sup = await ev(sa, `await t.ir("#ajustes"); render(); await t.esperar(() => t.q("#fncamp"), 8000, "configuración en Ajustes");
+      const miembro = NUBE.roles.length; const pagos0 = JSON.stringify(NUBE.d.pagos.map(p => p.importe_cent));
+      t.rellenar('#fncamp [name="pdueno"]', "13"); await t.pulsar('[data-act="nGuardarCampana"]');
+      const vista = ${confirmarImpacto};
+      await t.esperar(() => NUBE.d.eco?.precio_hora_dueno_cent === 1300, 20000, "guardar precio" + ${aviso});
+      const m0 = NUBE.d.maq[0]; const fila = t.q('[data-maq="' + m0.id + '"]'); t.rellenar(fila.querySelector('[name="precio"]'), "55"); await t.pulsar(fila.querySelector('[data-act="nGuardarMaq"]'));
+      await t.esperar(() => NUBE.d.maq.find(x => x.id === m0.id).precio_cent === 5500, 20000, "guardar máquina" + ${aviso});
+      return { miembro, vista, pagosIguales: pagos0 === JSON.stringify(NUBE.d.pagos.map(p => p.importe_cent)) };`);
+    ok(sup.miembro === 0 && /Total de los dueños[\s\S]*96,00\s*€[\s\S]*104,00\s*€/.test(sup.vista) && /no cambian/.test(sup.vista) && sup.pagosIguales, "superadministrador: " + JSON.stringify(sup));
+
+    // 4) Creador en su campaña: horas del día y precio propio de un trabajador desde Personas
+    const cre = await ev(cr, `await t.esperar(() => NUBE.d.eco?.precio_hora_dueno_cent === 1300, 20000, "el creador recibe el cambio del superadministrador"); await t.ir("#ajustes"); render();
+      t.rellenar('#fncamp [name="horas"]', "7,5"); await t.pulsar('[data-act="nGuardarCampana"]'); ${confirmarImpacto};
+      await t.esperar(() => +NUBE.d.campana.horas_dia === 7.5, 20000, "guardar horas" + ${aviso});
+      await t.ir("#n-personas"); render(); await t.pulsar('[data-act="nEditarPersona"][data-tipo="trabajador"]');
+      t.rellenar('#fned [name="precio"]', "11"); await t.pulsar('[data-act="nGuardarPersona"]'); ${confirmarImpacto};
+      await t.esperar(() => NUBE.d.trab[0].precio_hora_cent === 1100, 20000, "precio del trabajador" + ${aviso});
+      return { horas: +NUBE.d.campana.horas_dia, ana: nResTrab(NUBE.d.trab[0].id).importe };`);
+    ok(cre.horas === 7.5 && cre.ana === 8250, "creador: " + JSON.stringify(cre));
+
+    // 5) Creador ajeno, administrador y trabajador: no ven la configuración y el servidor rechaza los cambios
+    const aj = await dispositivo("adm-ajeno"); await persona(aj, credX);
+    const ajeno = await ev(aj, `const camps = (await NUBE.sb.rpc("mis_campanas")).data || [];
+      const u = await NUBE.sb.from("campanas_economia").update({ precio_hora_trab_cent: 1, version: 99 }).eq("campana_id", "${C.c}").select();
+      const m = await NUBE.sb.from("maquinas").update({ precio_cent: 1 }).eq("campana_id", "${C.c}").select();
+      const del = await NUBE.sb.rpc("eliminar_campana", { p_campana: "${C.c}", p_confirmacion: ${JSON.stringify(nombre)} });
+      return { ve: camps.some(x => x.campana_id === "${C.c}"), eco: (u.data || []).length, maq: (m.data || []).length, eliminar: !!del.error };`);
+    ok(!ajeno.ve && !ajeno.eco && !ajeno.maq && ajeno.eliminar, "creador ajeno: " + JSON.stringify(ajeno));
+    const restringido = async (perfil, cred, ancho) => { const w = await dispositivo(perfil, ancho); await persona(w, cred);
+      return ev(w, `await t.esperar(() => NUBE.c && NUBE.d, 20000, "su campaña"); await t.ir("#ajustes"); render();
+        const u = await NUBE.sb.from("campanas_economia").update({ precio_hora_trab_cent: 1, version: 99 }).eq("campana_id", "${C.c}").select();
+        const tr = await NUBE.sb.from("trabajadores").update({ precio_hora_cent: 1, version: 99 }).eq("campana_id", "${C.c}").select();
+        const c = await NUBE.sb.from("campanas").update({ activa: false, version: 99 }).eq("id", "${C.c}").select();
+        return { form: !!t.q("#fncamp"), editar: !!t.q('[data-act="nEditarPersona"]'), eco: (u.data || []).length, trab: (tr.data || []).length, archivar: (c.data || []).length };`); };
+    const lector = await restringido("adm-lector", credA), trabajador = await restringido("adm-trabajador", credT, 390);
+    for (const [k, v] of [["administrador", lector], ["trabajador", trabajador]]) ok(!v.form && !v.editar && !v.eco && !v.trab && !v.archivar, k + ": " + JSON.stringify(v));
+
+    // 6) El creador archiva: solo lectura para todos (también por la API); después la restaura
+    const arch = await ev(cr, `await t.ir("#ajustes"); render(); await t.pulsar('[data-act="nArchivar"][data-v="0"]'); ${confirmarImpacto};
+      await t.esperar(() => nArchivada(), 20000, "archivar" + ${aviso}); render();
+      const vistas = nubeVistas().map(x => x[0]); const banner = /archivada/i.test(document.querySelector("#view").innerText);
+      const p = await NUBE.sb.from("pagos").insert({ campana_id: "${C.c}", tipo: "trabajador", trabajador_id: "${C.tr}", importe_cent: 100, fecha: "2026-11-21" });
+      const camps = (await NUBE.sb.rpc("mis_campanas")).data.find(x => x.campana_id === "${C.c}");
+      await t.pulsar('[data-act="nArchivar"][data-v="1"]'); ${confirmarImpacto};
+      try { await t.esperar(() => !nArchivada(), 20000, "restaurar"); } catch (e) { throw new Error(e.message + " · " + JSON.stringify({ d: NUBE.d.campana.activa, c: NUBE.c.activa, v: NUBE.d.campana.version, modal: (t.q("#modal").innerText || "").slice(0, 120), hash: location.hash, toast: t.q("#toast").textContent, boton: !!t.q('[data-act="nArchivar"][data-v="1"]') })); }
+      return { parte: vistas.includes("parte"), banner, pago: p.error?.message || "PERMITIDO", lista: camps?.activa, restaurada: nEdita() };`);
+    ok(!arch.parte && arch.banner && /ARCHIVADA/.test(arch.pago) && arch.lista === false && arch.restaurada, "archivar: " + JSON.stringify(arch));
+
+    // 7) Superadministrador: archiva, ve el resumen, nombre mal escrito rechazado, elimina definitivamente
+    const elim = await ev(sa, `await nubeCargar(); await t.ir("#ajustes"); render(); await t.pulsar('[data-act="nArchivar"][data-v="0"]'); ${confirmarImpacto};
+      await t.esperar(() => nArchivada() && t.q('[data-act="nEliminarCampana"]'), 20000, "archivar para eliminar" + ${aviso});
+      await t.pulsar('[data-act="nEliminarCampana"]'); const resumen = await t.esperar(() => t.q("#elimNombre") && t.q("#modal").innerText, 15000, "resumen de lo que se pierde");
+      t.rellenar("#elimNombre", ${JSON.stringify(nombre.toLowerCase())}); t.q("#toast").textContent = ""; await t.pulsar('[data-act="nConfirmarEliminar"]');
+      const mal = await t.esperar(() => t.q("#toast").textContent, 5000, "aviso de nombre"); const sigue = (await NUBE.sb.from("campanas").select("id").eq("id", "${C.c}")).data.length;
+      t.rellenar("#elimNombre", ${JSON.stringify(nombre)}); await t.pulsar('[data-act="nConfirmarEliminar"]');
+      await t.esperar(() => !NUBE.c && location.hash === "#campanas", 30000, "eliminar" + ${aviso});
+      const queda = await Promise.all(["campanas", "trabajadores", "duenos", "partes", "pagos", "miembros"].map(async tb => (await NUBE.sb.from(tb).select("*", { count: "exact", head: true }).eq(tb === "campanas" ? "id" : "campana_id", "${C.c}")).count));
+      return { resumen, mal, sigue, queda, lista: NUBE.campanas.some(x => x.campana_id === "${C.c}") };`);
+    ok(/Jornadas de trabajadores\s*1/.test(elim.resumen) && /Pagos y entregas\s*1/.test(elim.resumen) && /no se puede deshacer/.test(elim.resumen), "resumen: " + elim.resumen.slice(0, 400));
+    ok(/nombre exacto/.test(elim.mal) && elim.sigue === 1, "nombre mal escrito: " + JSON.stringify({ mal: elim.mal, sigue: elim.sigue }));
+    ok(elim.queda.every(n => n === 0) && !elim.lista, "tras eliminar: " + JSON.stringify(elim.queda));
+    const anaSinCampana = await ev(cr, `const r = await NUBE.sb.rpc("mis_campanas"); return (r.data || []).some(x => x.campana_id === "${C.c}");`);
+    ok(!anaSinCampana, "el creador sigue viendo la campaña eliminada");
+    return { superadmin: "sin ser miembro: €/h dueño con vista previa (96 € → 104 €), máquina; pagos iguales", creador: cre, ajeno, administrador: lector, trabajador,
+      archivar: { pago: "rechazado (ARCHIVADA)", parte: "oculto", restaurada: true }, eliminar: { resumen: "con jornadas y pagos", nombreMal: "rechazado", filasQuedan: elim.queda } };
+  } finally { SRV.nube = false; }
+});
+
 /* ---------- Ejecución ---------- */
 async function main() {
   await new Promise(r => servidor.listen(0, "127.0.0.1", r));

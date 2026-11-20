@@ -1,6 +1,23 @@
 # Plan para activar la producción de Campaña Control 3.0
 
-**Estado (20-11-2026): todo preparado; no hay nada creado ni activado.** Para empezar hace falta tu autorización expresa.
+**Estado (20-11-2026): PRODUCCIÓN ACTIVADA** con la autorización del dueño, pasos 1 a 9 hechos:
+
+| Pieza | Dato |
+| --- | --- |
+| Web de producción | **https://campana-control-app.pages.dev** (Cloudflare Pages `campana-control-app`; solo se despliega desde `produccion/v3`; vistas previas: None) |
+| Supabase de producción | Proyecto `campana-control` (`voxhvqysgzgpuvvsgecz`), plan Free, UE (Irlanda). URL pública `https://voxhvqysgzgpuvvsgecz.supabase.co` |
+| Esquema | `instalacion_completa.sql`, huella `82a00575811c`, comprobada antes de ejecutar. 24 tablas con RLS forzada, bucket `fotos` privado, clave de sello creada |
+| Authentication | Registro público desactivado; Confirm email desactivado; hook «Before User Created» → `public.hook_alta_con_codigo` |
+| Edge Function | `gestion-usuarios`, huella `cd734de212bd` (la misma que en pruebas); «Verify JWT» activado |
+| Superadministrador | `manuel.varea`. Su contraseña la puso el dueño y nadie más la conoce. Es la única cuenta y el único superadministrador; sin altas pendientes |
+| Verificación | `verificar_proyecto.mjs`: 10/10 sin sesión. Web: modo cuenta, sin etiqueta PRUEBAS; `nube-pwa` correcta |
+| Primera versión | `produccion/v3` = `d51e4d8` (la misma probada en la beta) |
+
+**Pendiente del dueño:**
+- entrar con `manuel.varea` en la web de producción;
+- configurar las copias diarias con la URL de producción (paso 10).
+
+Lo que sigue es el procedimiento que se siguió, y sirve para rehacerlo.
 
 El proyecto Supabase actual (`campana-control-pruebas`) y la beta (https://campana-control-v3-pruebas.pages.dev) quedan **solo para desarrollo y pruebas**. La 2.3.0 (GitHub Pages, rama `main`) no se toca.
 

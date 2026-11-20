@@ -18,14 +18,20 @@ Revisión del 20-11-2026. Lo que figura como «verificado» se ha comprobado eje
   - consulta sin conexión;
   - copias diarias cifradas fuera de Supabase.
 - **APK y EXE de pruebas** compilados en GitHub Actions, como artefactos, sin Releases. El EXE también se ha compilado y comprobado en este ordenador. Se instalan aparte de la 2.3.0.
-- **Producción:** preparada y **sin crear**. Necesita tu autorización: `docs/PRODUCCION_PLAN.md`.
+- **Producción ACTIVA (autorizada el 20-11-2026):**
+  - web **https://campana-control-app.pages.dev**;
+  - Supabase `campana-control` (`voxhvqysgzgpuvvsgecz`), limpio, con el superadministrador `manuel.varea` y la cuenta técnica de copias `respaldo.copias` (solo lectura); migraciones 000001-000017;
+  - copias diarias automáticas operativas desde el 20-11-2026 (GitHub Actions privado, cifradas, con prueba de restauración): `docs/COPIAS_Y_RECUPERACION.md`;
+  - se actualiza solo desde `produccion/v3`, con tu aprobación;
+  - detalle en `docs/PRODUCCION_PLAN.md`.
 - **Coste:** 0 €/mes.
 
 ## 2. Ramas y commits
 
 - `desarrollo/multiusuario-v3`: la beta. El trabajo se hace en `trabajo/v3-completa` y pasa con avance rápido cuando todo está en verde.
 - `compilar/v3-pruebas`: solo para compilar el APK y el EXE de pruebas.
-- `produccion/v3`: **todavía no existe**; será la única rama que publique producción, y solo con tu aprobación.
+- `produccion/v3`: la única rama que publica producción. Protegida (no se puede borrar ni forzar; los cambios entran solo por pull request) y solo con tu aprobación.
+- **21-11-2026:** administrar campañas con cuenta (configuración, precios, maquinaria, personas, archivar, restaurar y eliminar definitivamente; migraciones 000018-000019). Ver `docs/PERMISOS_Y_SEGURIDAD.md`.
 - **Commits del 20-11:**
 
   | Commit | Contenido |

@@ -104,8 +104,8 @@ await prueba("Un creador no puede convertirse en superadministrador ni darse per
   await falla(U.trab1, ({ q }) => q("update perfiles set puede_crear_campanas = true where id = $1", [U.trab1]));
   await falla(U.creadorA, ({ q }) => q("insert into miembros (campana_id, user_id, rol) values ($1, $2, 'creador')", [A.c, U.trab1]));
   await falla(U.creadorA, ({ uno }) => uno("select public.crear_invitacion($1, 'creador', null, null, 7)", [A.c]));
-  const s = await como(U.creadorA, ({ q }) => q("select public.mis_campanas()"));
-  ok(s.every(r => !r.mis_campanas.includes(",t)")), "mis_campanas dice que el creador es superadministrador");
+  const s = await como(U.creadorA, ({ q }) => q("select superadmin from public.mis_campanas()"));
+  ok(s.length && s.every(r => r.superadmin === false), "mis_campanas dice que el creador es superadministrador");
 });
 
 await prueba("Un usuario sin autorización no puede crear campañas", async () => {
@@ -580,6 +580,214 @@ await prueba("Restauración completa aislada (000014): jornadas, pagos, document
   const [a, b] = [await cuenta(A.c), await cuenta(R)];
   ok(JSON.stringify(a) === JSON.stringify(b), "restauración distinta: " + JSON.stringify({ a, b }));
   return `campaña nueva: ${b.filas} jornadas, ${b.maq} maquinaria, kilos ${b.kilos}, pagos ${b.pagos} céntimos y ${b.docs} documentos iguales · ${m.vinculadas} cuentas con su rol y ficha · solo el superadministrador vincula`;
+});
+
+/* ---------- 000015: cuenta técnica de copias, solo lectura ---------- */
+await prueba("Cuenta de copias (000015): lee campañas, copias selladas y fotos; no escribe nada ni puede recibir permisos", async () => {
+  // Alta: solo el propietario (editor SQL) la autoriza; nadie desde la API
+  for (const u of [U.super, U.creadorA, U.adminA, null]) await falla(u, ({ uno }) => uno("select cc_priv.autorizar_alta_respaldo('copias.intento')"));
+  await db.query("select cc_priv.autorizar_alta_respaldo('respaldo.copias')");
+  const R = crypto.randomUUID();
+  await db.query("insert into auth.users (id, email) values ($1, 'respaldo.copias@usuarios.campana-control.invalid')", [R]);
+  const p = (await db.query("select activo, debe_cambiar_clave, puede_crear_campanas from public.perfiles where id = $1", [R])).rows[0];
+  ok(p.activo && !p.debe_cambiar_clave && !p.puede_crear_campanas, "perfil de la cuenta de copias: " + JSON.stringify(p));
+  ok((await db.query("select count(*)::int as n from public.superadmin where user_id = $1", [R])).rows[0].n === 0, "la cuenta de copias es superadministrador");
+  // Lee lo necesario para las copias
+  const camps = await como(R, ({ q }) => q("select * from public.respaldo_campanas()"));
+  ok(camps.length >= 2 && camps.some(c => c.campana_id === A.c), "no ve las campañas: " + camps.length);
+  const c = (await como(R, ({ uno }) => uno("select public.copia_campana($1) as r", [A.c]))).r;
+  ok(c.datos.partes.length > 0 && /^[0-9a-f]{64}$/.test(c.sello), "no puede hacer la copia sellada");
+  ok(typeof (await como(R, ({ uno }) => uno("select public.respaldo_huella($1) as h", [A.c]))).h === "string", "sin huella");
+  await como(R, ({ q }) => q("select * from public.respaldo_fotos()"));
+  ok((await como(R, ({ uno }) => uno("select public.verificar_sello($1, $2) as v", [JSON.stringify(c.datos), c.sello]))).v === true, "no comprueba el sello");
+  // Directamente, la RLS no le deja ver nada
+  for (const t of ["partes", "pagos", "trabajadores_privado", "perfiles", "miembros", "auditoria"]) {
+    const n = (await como(R, ({ q }) => q(`select * from public.${t}`))).filter(x => x.id !== R).length;
+    ok(n === 0, "la cuenta de copias lee directamente " + t);
+  }
+  // No escribe nada
+  const intentos = [
+    ["insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 100, '2026-11-20') returning id", [A.c, A.t1]],
+    ["select public.guardar_parte($1, $2, '2026-11-25', null, 1, null, '[]', '[]')", [A.c, A.d1]],
+    ["select public.crear_campana('de copias', 2026)", []],
+    ["select public.preparar_alta('colado.copias', 'x', 'creador')", []],
+    ["insert into public.superadmin (user_id) values ($1)", [R]],
+    ["select public.importar_campana($1, repeat('a', 64), '{}')", [A.c]],
+    ["select public.restaurar_miembros($1, '[]')", [A.c]]];
+  for (const [sql, prm] of intentos) {
+    let hecho = false; try { const r = await como(R, ({ q }) => q(sql, prm)); hecho = r.length > 0; } catch (e) { hecho = false; }
+    ok(!hecho, "la cuenta de copias pudo: " + sql.slice(0, 50));
+  }
+  ok((await como(R, ({ q }) => q("update pagos set importe_cent = 1, version = version + 1 returning id"))).length === 0, "cambió pagos");
+  ok((await como(R, ({ q }) => q("update partes_filas set horas = 1 returning id"))).length === 0, "cambió jornadas");
+  try { await como(R, ({ q }) => q("update public.perfiles set puede_crear_campanas = true where id = $1 returning id", [R])); } catch (e) { }
+  ok(!(await db.query("select puede_crear_campanas from public.perfiles where id = $1", [R])).rows[0].puede_crear_campanas, "se dio permiso de crear campañas");
+  // Ni el superadministrador puede convertirla en superadministrador, miembro o creador
+  await falla(U.super, ({ uno }) => uno("insert into public.superadmin (user_id) values ($1)", [R]));
+  let msg0 = ""; try { await db.query("insert into public.superadmin (user_id) values ($1)", [R]); } catch (e) { msg0 = e.message; }
+  ok(/solo lectura|unico|duplicate/.test(msg0) && (await db.query("select count(*)::int as n from public.superadmin where user_id = $1", [R])).rows[0].n === 0, "el propietario la hizo superadministrador: " + msg0);
+  await falla(U.super, ({ uno }) => uno("insert into public.miembros (campana_id, user_id, rol) values ($1, $2, 'admin')", [A.c, R]));
+  let msg = ""; try { await db.query("update public.perfiles set puede_crear_campanas = true where id = $1", [R]); } catch (e) { msg = e.message; }
+  ok(/solo lectura/.test(msg), "se le dio crear campañas desde el propietario");
+  // Otros usuarios no usan sus funciones
+  for (const u of [U.super, U.creadorA, U.trab1]) await falla(u, ({ uno }) => uno("select * from public.respaldo_campanas()"));
+  // Si se bloquea, deja de poder leer
+  await db.query("update public.perfiles set bloqueado = true where id = $1", [R]);
+  await falla(R, ({ uno }) => uno("select public.copia_campana($1)", [A.c]));
+  await db.query("update public.perfiles set bloqueado = false where id = $1", [R]);
+  return `${camps.length} campañas y copia sellada legibles · 6 tablas sin lectura directa · 9 escrituras rechazadas · no puede ser superadministrador, miembro ni creador · bloqueada pierde el acceso`;
+});
+
+/* ---------- 000017: cuentas para la copia completa, solo «respaldo_lectura» ---------- */
+await prueba("Copia completa (000017): solo el usuario de base de datos de copias lee las cuentas; la app no", async () => {
+  for (const u of [U.super, U.creadorA, U.trab1, null]) await falla(u, ({ q }) => q("select * from cc_priv.respaldo_cuentas()"));
+  const total = (await db.query("select count(*)::int as n from auth.users")).rows[0].n;
+  const filas = await db.transaction(async tx => {
+    await tx.exec("set local role respaldo_lectura");
+    return (await tx.query("select r from cc_priv.respaldo_cuentas() r")).rows;
+  });
+  ok(filas.length === total && total > 0, `devuelve ${filas.length} de ${total} cuentas`);
+  ok(filas.every(f => f.r.id && "email" in f.r), "faltan columnas de la cuenta");
+  let escribe = true;
+  try { await db.transaction(async tx => { await tx.exec("set local role respaldo_lectura"); await tx.query("update public.pagos set importe_cent = 1"); }); } catch (e) { escribe = false; }
+  ok(!escribe, "respaldo_lectura pudo escribir en pagos");
+  return `${filas.length} cuentas completas legibles solo por respaldo_lectura · superadministrador, creador, trabajador y anónimo rechazados · no escribe`;
+});
+
+/* ---------- 000018: administrar campañas (precios, archivar, eliminar) ---------- */
+const filasDe = async (c) => +(await db.query(`select (select count(*) from trabajadores where campana_id = $1) + (select count(*) from duenos where campana_id = $1)
+  + (select count(*) from maquinas where campana_id = $1) + (select count(*) from partes where campana_id = $1) + (select count(*) from partes_filas where campana_id = $1)
+  + (select count(*) from partes_maquinas where campana_id = $1) + (select count(*) from pagos where campana_id = $1) + (select count(*) from documentos where campana_id = $1)
+  + (select count(*) from fotos where campana_id = $1) + (select count(*) from miembros where campana_id = $1) + (select count(*) from asignaciones_equipo where campana_id = $1)
+  + (select count(*) from campanas_economia where campana_id = $1) + (select count(*) from campanas where id = $1) as n`, [c])).rows[0].n;
+const cambia = async (u, sql, prm) => { try { return (await como(u, ({ q }) => q(sql, prm))).length; } catch (e) { return "error: " + e.message; } };
+
+await prueba("Superadministrador (000018): cambia configuración, precios, trabajadores, dueños y máquinas de su campaña y de la de otro creador", async () => {
+  const S1 = (await como(U.super, ({ uno }) => uno("select public.crear_campana('Propia del súper', 2026) as id"))).id;
+  for (const c of [S1, B.c]) {
+    ok(await cambia(U.super, "update campanas set horas_dia = 8, version = version + 1 where id = $1 returning id", [c]) === 1, "no cambió la campaña " + c);
+    ok(await cambia(U.super, "update campanas_economia set precio_hora_trab_cent = 1100, iva = 10, version = version + 1 where campana_id = $1 returning campana_id", [c]) === 1, "no cambió precios");
+  }
+  ok(await cambia(U.super, "update trabajadores set precio_hora_cent = 1250, version = version + 1 where id = $1 returning id", [A.t1]) === 1, "no cambió el precio de un trabajador de A");
+  ok(await cambia(U.super, "update duenos set precio_hora_cent = 1300, version = version + 1 where id = $1 returning id", [A.d2]) === 1, "no cambió el precio de un dueño de A");
+  ok(await cambia(U.super, "update maquinas set precio_cent = 4500, version = version + 1 where id = $1 returning id", [A.mq]) === 1, "no cambió el precio de una máquina de A");
+  const a = (await db.query("select antes->>'precio_cent' as antes, despues->>'precio_cent' as despues, user_id from auditoria where tabla = 'maquinas' and fila_id = $1 order by id desc limit 1", [A.mq])).rows[0];
+  ok(a.antes === "4000" && a.despues === "4500" && a.user_id === U.super, "auditoría del precio: " + JSON.stringify(a));
+  await como(U.super, async ({ q }) => {
+    await q("update trabajadores set precio_hora_cent = null, version = version + 1 where id = $1", [A.t1]);
+    await q("update duenos set precio_hora_cent = null, version = version + 1 where id = $1", [A.d2]);
+    await q("update maquinas set precio_cent = 4000, version = version + 1 where id = $1", [A.mq]);
+    await q("update campanas set horas_dia = 7.5, version = version + 1 where id = $1", [B.c]);
+    await q("update campanas_economia set precio_hora_trab_cent = 1000, iva = 0, version = version + 1 where campana_id = $1", [B.c]);
+  });
+  return "campaña propia y ajena (B): horas, €/h e IVA · precio de trabajador, dueño y máquina de A · auditoría con antes/después";
+});
+
+await prueba("Creador (000018): administra su campaña; no puede tocar la de otro creador", async () => {
+  ok(await cambia(U.creadorB, "update campanas set nombre = 'Campaña B', horas_dia = 7.5, version = version + 1 where id = $1 returning id", [B.c]) === 1, "el creador no cambió su campaña");
+  ok(await cambia(U.creadorB, "update campanas_economia set precio_hora_dueno_cent = 1250, version = version + 1 where campana_id = $1 returning campana_id", [B.c]) === 1, "el creador no cambió su precio");
+  ok(await cambia(U.creadorB, "update campanas set nombre = 'robada', version = version + 1 where id = $1 returning id", [A.c]) === 0, "el creador B cambió la campaña A");
+  ok(await cambia(U.creadorB, "update campanas_economia set precio_hora_trab_cent = 1, version = version + 1 where campana_id = $1 returning campana_id", [A.c]) === 0, "el creador B cambió precios de A");
+  ok(await cambia(U.creadorB, "update maquinas set precio_cent = 1, version = version + 1 where campana_id = $1 returning id", [A.c]) === 0, "el creador B cambió máquinas de A");
+  ok(String(await cambia(U.creadorB, "insert into trabajadores (campana_id, nombre) values ($1, 'colado') returning id", [A.c])).startsWith("error"), "el creador B añadió un trabajador en A");
+  ok(await cambia(U.creadorB, "update campanas set activa = false, version = version + 1 where id = $1 returning id", [A.c]) === 0, "el creador B archivó A");
+  return "su campaña: nombre, horas y €/h · campaña ajena: 0 cambios en campaña, precios y máquinas; alta y archivado rechazados";
+});
+
+await prueba("Administrador, jefe, trabajador y dueño (000018): no cambian configuración ni precios; el administrador con edición solo jornadas y pagos", async () => {
+  await db.query("update miembros set puede_editar = true where campana_id = $1 and user_id = $2", [A.c, U.adminA]);
+  for (const u of [U.adminA, U.jefe1, U.trab1, U.dueno1]) {
+    ok(await cambia(u, "update campanas_economia set precio_hora_trab_cent = 1, version = version + 1 where campana_id = $1 returning campana_id", [A.c]) === 0, "cambió precios de la campaña");
+    ok(await cambia(u, "update campanas set horas_dia = 1, version = version + 1 where id = $1 returning id", [A.c]) === 0, "cambió la configuración");
+    ok(await cambia(u, "update trabajadores set precio_hora_cent = 1, version = version + 1 where campana_id = $1 returning id", [A.c]) === 0, "cambió el precio de un trabajador");
+    ok(await cambia(u, "update maquinas set precio_cent = 1, version = version + 1 where campana_id = $1 returning id", [A.c]) === 0, "cambió el precio de una máquina");
+    await falla(u, ({ uno }) => uno("select public.resumen_campana($1)", [A.c]));
+    await falla(u, ({ uno }) => uno("select public.eliminar_campana($1, 'Campaña A')", [A.c]));
+  }
+  const v = (await db.query("select version from partes where id = $1", [A.p2])).rows[0].version;
+  await como(U.adminA, ({ uno }) => uno("select public.guardar_parte($1, $2, '2026-11-15', $3, null, null, $4, '[]')", [A.c, A.d2, v, JSON.stringify([{ trabajador_id: A.t2, tipo: "normal" }])]));
+  await db.query("update miembros set puede_editar = false where campana_id = $1 and user_id = $2", [A.c, U.adminA]);
+  return "4 roles × (precios, configuración, trabajador, máquina, resumen, eliminar) rechazados · el administrador con edición guarda jornadas";
+});
+
+await prueba("Cambiar un precio (000018): recalcula las jornadas como en la 2.3.0 y no cambia ningún pago registrado", async () => {
+  const pagosDeA = async () => (await db.query("select string_agg(id || ':' || importe_cent, ',' order by id) as p from pagos where campana_id = $1", [A.c])).rows[0].p;
+  const total = async () => (await como(U.creadorA, ({ uno }) => uno("select public.cuenta_dueno($1, $2) as r", [A.c, A.d1]))).r;
+  const p0 = await pagosDeA(), t0 = await total();
+  await como(U.creadorA, ({ q }) => q("update campanas_economia set precio_hora_dueno_cent = 1300, version = version + 1 where campana_id = $1", [A.c]));
+  const t1 = await total();
+  await como(U.creadorA, ({ q }) => q("update campanas_economia set precio_hora_dueno_cent = 1200, version = version + 1 where campana_id = $1", [A.c]));
+  ok(p0 === await pagosDeA(), "un cambio de precio modificó pagos registrados");
+  ok(+t1.total_cent - +t0.total_cent === Math.round(+t0.horas * 100), `${t0.horas} h × 1 € de diferencia: ${t0.total_cent} → ${t1.total_cent}`);
+  ok(+t1.pagado_cent === +t0.pagado_cent, "cambió lo pagado");
+  return `dueño 1: total ${t0.total_cent / 100} € → ${t1.total_cent / 100} € con +1 €/h (${t0.horas} h) · pagos registrados idénticos · restaurado`;
+});
+
+await prueba("Archivar y restaurar (000018): archivada es solo lectura para todos en el servidor; solo quien la gestiona la restaura", async () => {
+  const Z = { c: (await como(U.creadorB, ({ uno }) => uno("select public.crear_campana('Ficticia para archivar', 2026) as id"))).id };
+  await como(U.creadorB, async ({ uno }) => {
+    Z.t = (await uno("insert into trabajadores (campana_id, nombre) values ($1, 'Z Trabajador') returning id", [Z.c])).id;
+    Z.d = (await uno("insert into duenos (campana_id, nombre) values ($1, 'Z Dueño') returning id", [Z.c])).id;
+    await uno("select public.guardar_parte($1, $2, '2026-11-20', null, null, null, $3, '[]')", [Z.c, Z.d, JSON.stringify([{ trabajador_id: Z.t, tipo: "normal" }])]);
+  });
+  const n0 = await filasDe(Z.c);
+  ok(await cambia(U.creadorB, "update campanas set activa = false, version = version + 1 where id = $1 returning id", [Z.c]) === 1, "el creador no la archivó");
+  const camp = (await como(U.creadorB, ({ q }) => q("select * from public.mis_campanas()"))).find(x => x.campana_id === Z.c);
+  ok(camp && camp.activa === false, "mis_campanas no la muestra archivada");
+  const bloqueos = [
+    ["select public.guardar_parte($1, $2, '2026-11-21', null, null, null, $3, '[]')", [Z.c, Z.d, JSON.stringify([{ trabajador_id: Z.t, tipo: "normal" }])]],
+    ["insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 100, '2026-11-21') returning id", [Z.c, Z.t]],
+    ["update campanas_economia set precio_hora_trab_cent = 1, version = version + 1 where campana_id = $1 returning campana_id", [Z.c]],
+    ["update trabajadores set nombre = 'x', version = version + 1 where id = $1 returning id", [Z.t]],
+    ["delete from partes where campana_id = $1 returning id", [Z.c]],
+    ["insert into trabajadores (campana_id, nombre) values ($1, 'nuevo') returning id", [Z.c]],
+    ["update campanas set nombre = 'otro', version = version + 1 where id = $1 returning id", [Z.c]]];
+  for (const u of [U.creadorB, U.super]) for (const [sql, prm] of bloqueos) {
+    const r = await cambia(u, sql, prm);
+    ok(typeof r === "string" && /ARCHIVADA/.test(r), "en archivada se permitió: " + sql.slice(0, 50) + " → " + r);
+  }
+  ok(await filasDe(Z.c) === n0, "cambiaron los datos de la archivada");
+  ok(await cambia(U.creadorA, "update campanas set activa = true, version = version + 1 where id = $1 returning id", [Z.c]) === 0, "otro creador la restauró");
+  ok(await cambia(U.creadorB, "update campanas set activa = true, version = version + 1 where id = $1 returning id", [Z.c]) === 1, "su creador no la restauró");
+  await como(U.creadorB, ({ uno }) => uno("insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 100, '2026-11-21') returning id", [Z.c, Z.t]));
+  ok(await cambia(U.super, "update campanas set activa = false, version = version + 1 where id = $1 returning id", [Z.c]) === 1, "el superadministrador no la archivó");
+  ok(await cambia(U.super, "update campanas set activa = true, version = version + 1 where id = $1 returning id", [Z.c]) === 1, "el superadministrador no la restauró");
+  return `archivada: 7 cambios × 2 cuentas rechazados (jornada, pago, precio, trabajador, borrar, alta, renombrar) · datos intactos (${n0} filas) · restaurada vuelve a admitir cambios`;
+});
+
+await prueba("Eliminar definitivamente (000018): solo superadministrador, archivada y con el nombre; borra todo lo suyo y nada más", async () => {
+  const E = { c: (await como(U.creadorB, ({ uno }) => uno("select public.crear_campana('Ficticia para eliminar', 2026) as id"))).id };
+  await como(U.creadorB, async ({ uno }) => {
+    E.t = (await uno("insert into trabajadores (campana_id, nombre) values ($1, 'E Trabajador') returning id", [E.c])).id;
+    await uno("insert into trabajadores_privado (trabajador_id, campana_id, nif) values ($1, $2, '00000001R') returning trabajador_id", [E.t, E.c]);
+    E.d = (await uno("insert into duenos (campana_id, nombre) values ($1, 'E Dueño') returning id", [E.c])).id;
+    E.m = (await uno("insert into maquinas (campana_id, nombre, precio_cent) values ($1, 'E Tractor', 3000) returning id", [E.c])).id;
+    await uno("select public.guardar_parte($1, $2, '2026-11-20', null, 1000, null, $3, $4)", [E.c, E.d, JSON.stringify([{ trabajador_id: E.t, tipo: "normal" }]), JSON.stringify([{ maquina_id: E.m, cantidad: 1 }])]);
+    await uno("insert into pagos (campana_id, tipo, trabajador_id, importe_cent, fecha) values ($1, 'trabajador', $2, 1500, '2026-11-20') returning id", [E.c, E.t]);
+    await uno("insert into pagos (campana_id, tipo, dueno_id, importe_cent, fecha) values ($1, 'dueno', $2, 2500, '2026-11-20') returning id", [E.c, E.d]);
+    E.doc = (await uno("insert into documentos (campana_id, dueno_id, plantilla_ref, nombre) values ($1, $2, 'gen-riesgos', 'E doc') returning id", [E.c, E.d])).id;
+    await uno("insert into fotos (campana_id, documento_id, ruta, bytes, sha256) values ($1, $2, $3, 10, repeat('a', 64)) returning id", [E.c, E.doc, E.c + "/e.jpg"]);
+    await uno("insert into asignaciones_equipo (campana_id, jefe_user_id, trabajador_id, desde) values ($1, $2, $3, '2026-11-01') returning id", [E.c, U.jefe1, E.t]);
+  });
+  await db.query("insert into miembros (campana_id, user_id, rol, trabajador_id) values ($1, $2, 'trabajador', $3)", [E.c, U.trab2, E.t]);
+  const res = (await como(U.super, ({ uno }) => uno("select public.resumen_campana($1) as r", [E.c]))).r;
+  ok(res.trabajadores === 1 && res.duenos === 1 && res.partes === 1 && res.jornadas === 1 && res.pagos === 2 && +res.pagos_cent === 4000 && res.documentos === 1 && res.fotos === 1 && res.cuentas >= 2,
+     "resumen: " + JSON.stringify(res));
+  const otrasA = await filasDe(A.c), otrasB = await filasDe(B.c);
+  await falla(U.creadorB, ({ uno }) => uno("select public.eliminar_campana($1, 'Ficticia para eliminar')", [E.c]));
+  ok(/archiva/i.test(await falla(U.super, ({ uno }) => uno("select public.eliminar_campana($1, 'Ficticia para eliminar')", [E.c]))), "se eliminó sin archivar");
+  await como(U.creadorB, ({ q }) => q("update campanas set activa = false, version = version + 1 where id = $1", [E.c]));
+  ok(/nombre exacto/.test(await falla(U.super, ({ uno }) => uno("select public.eliminar_campana($1, 'ficticia para eliminar')", [E.c]))), "se eliminó con un nombre mal escrito");
+  ok(await filasDe(E.c) > 0, "se borraron datos en un intento rechazado");
+  const rutas = (await como(U.super, ({ uno }) => uno("select public.eliminar_campana($1, 'Ficticia para eliminar') as r", [E.c]))).r;
+  ok(Array.isArray(rutas), "no devolvió las rutas de Storage");
+  ok(await filasDe(E.c) === 0, "quedan datos de la campaña eliminada: " + await filasDe(E.c));
+  for (const t of ["trabajadores_privado", "duenos_privado", "plantillas", "importaciones"]) ok((await db.query(`select count(*)::int as n from ${t} where campana_id = $1`, [E.c])).rows[0].n === 0, "quedan filas en " + t);
+  ok(await filasDe(A.c) === otrasA && await filasDe(B.c) === otrasB, "se tocaron otras campañas");
+  const au = (await db.query("select antes, user_id from auditoria where accion = 'eliminar_campana' and campana_id = $1", [E.c])).rows[0];
+  ok(au && au.user_id === U.super && au.antes.pagos === 2, "sin constancia en la auditoría");
+  ok((await db.query("select count(*)::int as n from perfiles where id = $1", [U.trab2])).rows[0].n === 1, "se borró la cuenta de una persona");
+  return "creador y sin archivar rechazados · nombre mal escrito rechazado sin borrar nada · eliminada: 0 filas suyas, A y B intactas, cuentas conservadas, auditoría con el resumen";
 });
 
 /* ---------- Resumen ---------- */

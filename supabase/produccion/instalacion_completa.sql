@@ -1,5 +1,5 @@
 -- CAMPAÑA CONTROL 3.0 · Instalación completa para un proyecto Supabase NUEVO y vacío (producción).
--- Generado por supabase/pruebas/instalacion.test.mjs a partir de supabase/migrations/ (14 migraciones). No editar a mano.
+-- Generado por supabase/pruebas/instalacion.test.mjs a partir de supabase/migrations/ (19 migraciones). No editar a mano.
 -- Contiene solo el esquema, permisos y funciones: ningún dato, cuenta ni contraseña.
 begin;
 
@@ -1905,5 +1905,401 @@ end $$;
 revoke all on function cc_priv.normalizar(jsonb), cc_priv.sellar(jsonb) from public, anon, authenticated;
 revoke all on function public.copia_campana(uuid), public.verificar_sello(jsonb, text), public.restaurar_miembros(uuid, jsonb) from public, anon;
 grant execute on function public.copia_campana(uuid), public.verificar_sello(jsonb, text), public.restaurar_miembros(uuid, jsonb) to authenticated;
+
+
+-- ===== 20261120000015_cuenta_respaldo.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000015: cuenta técnica de copias de SOLO LECTURA («respaldo»)
+--
+-- Por qué: las copias automáticas (GitHub Actions) necesitan leer todas las campañas y sus fotos. Hasta ahora eso
+-- solo lo podía hacer un superadministrador, que además puede cambiarlo todo. Guardar su contraseña en GitHub da
+-- demasiado poder a quien la obtenga. Esta cuenta técnica solo puede LEER lo necesario para las copias:
+--   · no es superadministrador, ni creador, ni miembro de ninguna campaña: la RLS no le deja leer ni escribir
+--     ninguna tabla directamente;
+--   · solo puede usar funciones de lectura concretas (lista de campañas, huella, copia sellada, lista de fotos) y
+--     leer los archivos del bucket «fotos» (migración 000016);
+--   · la base de datos impide convertirla en superadministrador, miembro o creador, aunque alguien lo intente;
+--   · se crea solo con una autorización del propietario en el editor SQL (cc_priv.autorizar_alta_respaldo), igual
+--     que el primer superadministrador; su contraseña la pone el dueño en el panel y no hay que cambiarla.
+-- No borra ni modifica datos. Redefine exportar_campana y copia_campana con el mismo contenido y una condición más.
+
+create table cc_priv.cuentas_respaldo (
+  user_id uuid primary key references public.perfiles (id) on delete cascade,
+  creado_en timestamptz not null default now()
+);
+alter table cc_priv.cuentas_respaldo enable row level security;
+revoke all on table cc_priv.cuentas_respaldo from public, anon, authenticated;
+
+create function cc_priv.es_respaldo() returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from cc_priv.cuentas_respaldo r join public.perfiles p on p.id = r.user_id
+                 where r.user_id = (select auth.uid()) and p.activo and not p.bloqueado
+                   and not exists (select 1 from public.superadmin s where s.user_id = r.user_id))
+$$;
+
+-- Alta: nuevo tipo «respaldo» (solo lo crea el propietario)
+alter table public.altas_pendientes drop constraint altas_pendientes_tipo_check;
+alter table public.altas_pendientes add constraint altas_pendientes_tipo_check check (tipo in ('superadmin', 'creador', 'miembro', 'respaldo'));
+
+create function cc_priv.autorizar_alta_respaldo(p_usuario text) returns text
+language plpgsql security definer set search_path = '' as $$
+declare v_usuario text := lower(trim(p_usuario));
+begin
+  delete from public.altas_pendientes where usuario = v_usuario and usada_en is null;
+  insert into public.altas_pendientes (usuario, nombre, tipo) values (v_usuario, 'Copias automáticas (solo lectura)', 'respaldo');
+  return cc_priv.email_interno(v_usuario);
+end $$;
+revoke all on function cc_priv.autorizar_alta_respaldo(text) from public, anon, authenticated;
+
+create or replace function cc_priv.nuevo_perfil() returns trigger language plpgsql security definer set search_path = '' as $$
+declare a public.altas_pendientes;
+begin
+  select * into a from public.altas_pendientes
+  where cc_priv.email_interno(usuario) = lower(new.email) and usada_en is null and caduca_en > now()
+  order by creada_en desc limit 1 for update;
+  if not found then
+    raise exception 'ALTA: las cuentas solo se crean desde «Gestión de usuarios»' using errcode = '42501';
+  end if;
+  insert into public.perfiles (id, nombre, usuario, activo, correo_confirmado, debe_cambiar_clave, creado_por)
+  values (new.id, a.nombre, a.usuario, a.tipo in ('superadmin', 'respaldo'), true, a.tipo not in ('superadmin', 'respaldo'), a.creado_por);
+  if a.tipo = 'superadmin' then
+    insert into public.superadmin (user_id) values (new.id) on conflict (unico) do update set user_id = excluded.user_id;
+  elsif a.tipo = 'respaldo' then
+    insert into cc_priv.cuentas_respaldo (user_id) values (new.id);
+  elsif a.tipo = 'creador' then
+    update public.perfiles set puede_crear_campanas = true where id = new.id;
+  else
+    insert into public.miembros (campana_id, user_id, rol, trabajador_id, dueno_id, puede_editar, creado_por)
+    values (a.campana_id, new.id, a.rol, a.trabajador_id, a.dueno_id, a.puede_editar, a.creado_por);
+  end if;
+  update public.altas_pendientes set usada_en = now(), user_id = new.id where id = a.id;
+  return new;
+end $$;
+
+-- Nunca más que lectura: ni superadministrador, ni miembro, ni creador
+create function cc_priv.respaldo_sin_permisos() returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_u uuid;
+begin
+  if tg_table_name = 'perfiles' then
+    if not new.puede_crear_campanas then return new; end if;
+    v_u := new.id;
+  else
+    v_u := new.user_id;
+  end if;
+  if exists (select 1 from cc_priv.cuentas_respaldo r where r.user_id = v_u) then
+    raise exception 'PERMISO: la cuenta de copias es de solo lectura y no puede recibir permisos' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger respaldo_sin_permisos before insert or update on public.superadmin for each row execute function cc_priv.respaldo_sin_permisos();
+create trigger respaldo_sin_permisos before insert or update on public.miembros for each row execute function cc_priv.respaldo_sin_permisos();
+create trigger respaldo_sin_permisos before update on public.perfiles for each row execute function cc_priv.respaldo_sin_permisos();
+
+-- Funciones de lectura para las copias (solo la cuenta de copias)
+create function public.respaldo_campanas() returns table (campana_id uuid, nombre text)
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not cc_priv.es_respaldo() then raise exception 'PERMISO: solo la cuenta de copias' using errcode = '42501'; end if;
+  return query select k.id, k.nombre from public.campanas k order by k.creado_en;
+end $$;
+create function public.respaldo_huella(p_campana uuid) returns text
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not cc_priv.es_respaldo() then raise exception 'PERMISO: solo la cuenta de copias' using errcode = '42501'; end if;
+  return public.huella_campana(p_campana);
+end $$;
+create function public.respaldo_fotos() returns setof text
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not cc_priv.es_respaldo() then raise exception 'PERMISO: solo la cuenta de copias' using errcode = '42501'; end if;
+  return query select f.ruta from public.fotos f order by f.ruta;
+end $$;
+
+create or replace function public.exportar_campana(p_campana uuid) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not (cc_priv.gestiona(p_campana) or cc_priv.es_respaldo()) then raise exception 'PERMISO: solo quien gestiona la campaña puede exportarla' using errcode = '42501'; end if;
+  return (select jsonb_build_object(
+    'campana', (select jsonb_build_object('nombre', k.nombre, 'anio', k.anio, 'inicio', k.inicio, 'horas_dia', k.horas_dia, 'precio_hora_trab_cent', e.precio_hora_trab_cent,
+                       'precio_hora_dueno_cent', e.precio_hora_dueno_cent, 'iva', e.iva)
+                from public.campanas k join public.campanas_economia e on e.campana_id = k.id where k.id = p_campana),
+    'empresa', (select empresa from public.campanas where id = p_campana),
+    'trabajadores', (select coalesce(jsonb_agg(jsonb_build_object('o', t.id, 'nombre', t.nombre, 'precio_hora_cent', t.precio_hora_cent, 'activo', t.activo,
+                            'nif', v.nif, 'nss', v.nss, 'telefono', v.telefono) order by t.nombre), '[]')
+                     from public.trabajadores t left join public.trabajadores_privado v on v.trabajador_id = t.id where t.campana_id = p_campana),
+    'duenos', (select coalesce(jsonb_agg(jsonb_build_object('o', d.id, 'nombre', d.nombre, 'finca', d.finca, 'municipio', d.municipio, 'num', d.num,
+                      'precio_hora_cent', d.precio_hora_cent, 'kilos_total', d.kilos_total, 'nif', v.nif, 'direccion', v.direccion, 'telefono', v.telefono,
+                      'poligono', v.poligono, 'parcela', v.parcela, 'notas', v.notas,
+                      'trabajadores', (select coalesce(jsonb_agg(x.trabajador_id), '[]') from public.duenos_trabajadores x where x.dueno_id = d.id)) order by d.nombre), '[]')
+               from public.duenos d left join public.duenos_privado v on v.dueno_id = d.id where d.campana_id = p_campana),
+    'maquinas', (select coalesce(jsonb_agg(jsonb_build_object('o', q.id, 'nombre', q.nombre, 'precio_cent', q.precio_cent, 'unidad', q.unidad, 'activa', q.activa) order by q.orden, q.nombre), '[]')
+                 from public.maquinas q where q.campana_id = p_campana),
+    'partes', (select coalesce(jsonb_agg(jsonb_build_object('o', p.id, 'dueno', p.dueno_id, 'fecha', p.fecha, 'kilos', p.kilos, 'notas', p.notas,
+                      'filas', (select coalesce(jsonb_agg(jsonb_build_object('t', f.trabajador_id, 'tipo', f.tipo, 'horas', f.horas, 'nota', f.nota) order by f.trabajador_id), '[]')
+                                from public.partes_filas f where f.parte_id = p.id),
+                      'maquinas', (select coalesce(jsonb_agg(jsonb_build_object('m', m.maquina_id, 'cantidad', m.cantidad) order by m.maquina_id), '[]')
+                                   from public.partes_maquinas m where m.parte_id = p.id)) order by p.fecha, p.dueno_id), '[]')
+               from public.partes p where p.campana_id = p_campana),
+    'pagos', (select coalesce(jsonb_agg(jsonb_build_object('o', g.id, 'tipo', g.tipo, 'persona', coalesce(g.trabajador_id, g.dueno_id), 'importe_cent', g.importe_cent,
+                     'fecha', g.fecha, 'hora', g.hora, 'forma', g.forma, 'nota', g.nota) order by g.fecha, g.hora, g.id), '[]')
+              from public.pagos g where g.campana_id = p_campana),
+    'plantillas', (select coalesce(jsonb_agg(jsonb_build_object('o', l.id, 'nombre', l.nombre, 'asesoria', l.asesoria, 'titulo', l.titulo, 'cuerpo', l.cuerpo, 'campos', l.campos) order by l.nombre), '[]')
+                   from public.plantillas l where l.campana_id = p_campana),
+    'documentos', (select coalesce(jsonb_agg(jsonb_build_object('o', x.id, 'dueno', x.dueno_id, 'plantilla', x.plantilla_ref, 'nombre', x.nombre, 'fecha', x.fecha,
+                          'desde', x.desde, 'hasta', x.hasta, 'campos', x.campos, 'trabajadores', to_jsonb(x.trabajadores)) order by x.creado_en), '[]')
+                   from public.documentos x where x.campana_id = p_campana),
+    'fotos', (select coalesce(jsonb_agg(jsonb_build_object('documento', f.documento_id, 'ruta', f.ruta, 'sha256', f.sha256, 'bytes', f.bytes) order by f.creado_en), '[]')
+              from public.fotos f where f.campana_id = p_campana)));
+end $$;
+
+
+create or replace function public.copia_campana(p_campana uuid) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare d jsonb;
+begin
+  if not (cc_priv.gestiona(p_campana) or cc_priv.es_respaldo()) then raise exception 'PERMISO: solo quien gestiona la campaña puede hacer su copia' using errcode = '42501'; end if;
+  d := public.exportar_campana(p_campana) || jsonb_build_object('miembros', (
+    select coalesce(jsonb_agg(jsonb_build_object('usuario', p.usuario, 'nombre', p.nombre, 'rol', m.rol, 'puede_editar', m.puede_editar,
+                    'trabajador', m.trabajador_id, 'dueno', m.dueno_id) order by m.rol, p.usuario), '[]')
+    from public.miembros m join public.perfiles p on p.id = m.user_id
+    where m.campana_id = p_campana and m.activo and p.usuario is not null));
+  d := cc_priv.normalizar(d);
+  return jsonb_build_object('datos', d, 'sello', cc_priv.sellar(d),
+    'emisor', left(encode(extensions.hmac(convert_to('emisor', 'UTF8'), (select clave from cc_priv.sello where id = 1), 'sha256'), 'hex'), 12));
+end $$;
+
+
+revoke all on function public.respaldo_campanas(), public.respaldo_huella(uuid), public.respaldo_fotos() from public, anon;
+grant execute on function public.respaldo_campanas(), public.respaldo_huella(uuid), public.respaldo_fotos() to authenticated;
+revoke all on function cc_priv.es_respaldo() from public, anon;
+grant execute on function cc_priv.es_respaldo() to authenticated;
+
+
+-- ===== 20261120000016_respaldo_almacenamiento.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000016: fotos para la cuenta de copias y usuario de base de datos de SOLO LECTURA
+-- (El nombre contiene «almacenamiento»: las pruebas locales con PGlite no tienen Storage y no lo aplican.)
+--
+-- 1) La cuenta técnica de copias (000015) puede LEER los archivos del bucket privado «fotos» para copiarlos.
+--    No puede subir ni borrar (esas políticas no cambian: solo quien gestiona la campaña).
+-- 2) Usuario de PostgreSQL «respaldo_lectura» para la copia completa (pg_dump) sin guardar en GitHub la contraseña
+--    principal de la base de datos. Solo puede LEER: tablas de la app (public, cc_priv), las cuentas (auth.users) y
+--    los datos de los archivos (storage.objects). BYPASSRLS es necesario para que pg_dump vea todas las filas (las
+--    tablas tienen RLS forzada); no le da permiso para escribir nada. Se crea SIN contraseña y sin poder entrar
+--    (NOLOGIN): el dueño la activa con su propia contraseña en el editor SQL (ver docs/COPIAS_Y_RECUPERACION.md).
+-- No borra ni modifica datos.
+
+alter policy fotos_leer on storage.objects using (
+  bucket_id = 'fotos' and (
+    exists (select 1 from public.fotos f where f.ruta = storage.objects.name)                       -- RLS de public.fotos decide
+    or cc_priv.gestiona(case when (storage.foldername(name))[1] ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                             then ((storage.foldername(name))[1])::uuid end)                       -- carpeta = id de la campaña
+    or cc_priv.es_respaldo()));                                                                     -- cuenta de copias (solo lectura)
+
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'respaldo_lectura') then
+    create role respaldo_lectura nologin bypassrls;
+  end if;
+end $$;
+grant usage on schema public, cc_priv, auth, storage to respaldo_lectura;
+grant select on all tables in schema public to respaldo_lectura;
+grant select on all sequences in schema public to respaldo_lectura;
+grant select on all tables in schema cc_priv to respaldo_lectura;
+grant select on auth.users to respaldo_lectura;
+grant select on storage.objects to respaldo_lectura;
+alter default privileges in schema public grant select on tables to respaldo_lectura;
+
+
+-- ===== 20261120000017_respaldo_cuentas.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000017: lectura de las cuentas (auth.users) para la copia completa de la base de datos
+--
+-- Por qué: en 000016 se concedió a «respaldo_lectura» SELECT sobre auth.users, pero no se pudo conceder USAGE sobre
+-- el esquema «auth»: ese esquema es de supabase_admin y el usuario postgres lo usa sin opción de concederlo
+-- (PostgreSQL ignora esa concesión con un simple aviso). Sin USAGE, la copia falla con «permission denied for
+-- schema auth». No se toca el esquema de Supabase: esta función de solo lectura, con los permisos del propietario,
+-- devuelve cada cuenta completa (una fila jsonb por cuenta, para poder restaurarla) y SOLO la puede ejecutar
+-- «respaldo_lectura». Ni la app (anon, authenticated) ni service_role pueden usarla.
+-- No borra ni modifica datos.
+
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'respaldo_lectura') then
+    create role respaldo_lectura nologin bypassrls;
+  end if;
+end $$;
+grant usage on schema cc_priv to respaldo_lectura;
+
+create function cc_priv.respaldo_cuentas() returns setof jsonb
+language sql stable security definer set search_path = '' as $$
+  select to_jsonb(u) from auth.users u order by u.id
+$$;
+revoke all on function cc_priv.respaldo_cuentas() from public, anon, authenticated;
+grant execute on function cc_priv.respaldo_cuentas() to respaldo_lectura;
+
+
+-- ===== 20261121000018_gestion_campanas.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000018: administrar campañas (archivar, restaurar y eliminar definitivamente)
+--
+-- Qué fallaba: la base de datos ya dejaba al superadministrador y al creador cambiar la configuración, los precios,
+-- los trabajadores, los dueños y la maquinaria de una campaña (cc_priv.gestiona), pero la app con cuenta no tenía
+-- ninguna pantalla para hacerlo. Además, «archivar» no existía de verdad: la columna «activa» no impedía nada, y
+-- borrar una campaña con datos podía fallar por las relaciones protegidas (jornadas → trabajadores, dueños, máquinas)
+-- y dejaba sus fotos en Storage.
+--
+-- Esta migración (no borra ni cambia ningún dato):
+--   1. Campaña ARCHIVADA = solo lectura para todos, comprobado en el servidor: nadie puede crear, cambiar ni borrar
+--      sus jornadas, pagos, personas, máquinas, documentos, fotos ni precios. Quien la gestiona (creador o
+--      superadministrador) la archiva y la restaura; las cuentas de sus miembros se siguen pudiendo gestionar.
+--   2. resumen_campana(): qué hay en una campaña (lo que se perdería al eliminarla). Solo quien la gestiona.
+--   3. eliminar_campana(): SOLO el superadministrador, SOLO si la campaña está archivada y SOLO si escribe su nombre
+--      exacto. Borra en orden (sin chocar con las relaciones), deja constancia en la auditoría con el resumen y
+--      devuelve las rutas de sus fotos para que la app las borre de Storage.
+--   4. mis_campanas() devuelve también si la campaña está activa o archivada.
+-- Los precios se siguen cambiando con las políticas existentes (gestiona) y quedan en la auditoría (antes/después).
+
+-- 1. Campaña archivada: solo lectura
+create function cc_priv.campana_abierta() returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_c uuid;
+begin
+  if tg_op = 'DELETE' then v_c := old.campana_id; else v_c := new.campana_id; end if;
+  if v_c is not null and coalesce(current_setting('cc.eliminando', true), '') <> v_c::text
+     and exists (select 1 from public.campanas k where k.id = v_c and not k.activa) then
+    raise exception 'ARCHIVADA: la campaña está archivada y es de solo lectura. Restáurala para hacer cambios' using errcode = '42501';
+  end if;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end $$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['campanas_economia', 'trabajadores', 'trabajadores_privado', 'duenos', 'duenos_privado', 'duenos_trabajadores',
+                           'maquinas', 'asignaciones_equipo', 'partes', 'partes_filas', 'partes_maquinas', 'pagos', 'plantillas',
+                           'documentos', 'fotos', 'importaciones'] loop
+    execute format('create trigger campana_abierta before insert or update or delete on public.%I for each row execute function cc_priv.campana_abierta()', t);
+  end loop;
+end $$;
+
+-- Una campaña archivada solo admite un cambio: restaurarla (activa = true)
+create function cc_priv.campana_archivada() returns trigger language plpgsql as $$
+begin
+  if not old.activa and not new.activa then
+    raise exception 'ARCHIVADA: la campaña está archivada y es de solo lectura. Restáurala para hacer cambios' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger archivada before update on public.campanas for each row execute function cc_priv.campana_archivada();
+
+-- 2. Resumen de una campaña (lo que se perdería al eliminarla)
+create function public.resumen_campana(p_campana uuid) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare v jsonb; v_archivos bigint := 0;
+begin
+  if not cc_priv.gestiona(p_campana) then
+    raise exception 'PERMISO: solo quien gestiona la campaña ve su resumen' using errcode = '42501';
+  end if;
+  if not exists (select 1 from public.campanas where id = p_campana) then
+    raise exception 'NO_EXISTE: esa campaña no existe' using errcode = 'P0002';
+  end if;
+  if to_regclass('storage.objects') is not null then
+    execute 'select count(*) from storage.objects where bucket_id = ''fotos'' and name like $1' into v_archivos using p_campana::text || '/%';
+  end if;
+  select jsonb_build_object(
+    'nombre', k.nombre, 'anio', k.anio, 'activa', k.activa,
+    'trabajadores', (select count(*) from public.trabajadores where campana_id = p_campana),
+    'duenos', (select count(*) from public.duenos where campana_id = p_campana),
+    'maquinas', (select count(*) from public.maquinas where campana_id = p_campana),
+    'partes', (select count(*) from public.partes where campana_id = p_campana),
+    'jornadas', (select count(*) from public.partes_filas where campana_id = p_campana),
+    'pagos', (select count(*) from public.pagos where campana_id = p_campana),
+    'pagos_cent', (select coalesce(sum(importe_cent), 0) from public.pagos where campana_id = p_campana),
+    'documentos', (select count(*) from public.documentos where campana_id = p_campana),
+    'fotos', (select count(*) from public.fotos where campana_id = p_campana),
+    'archivos', v_archivos,
+    'modelos', (select count(*) from public.plantillas where campana_id = p_campana),
+    'asignaciones', (select count(*) from public.asignaciones_equipo where campana_id = p_campana),
+    'cuentas', (select count(distinct user_id) from public.miembros where campana_id = p_campana),
+    'cuentas_solo_aqui', (select count(distinct m.user_id) from public.miembros m where m.campana_id = p_campana
+                            and not exists (select 1 from public.miembros o where o.user_id = m.user_id and o.campana_id <> p_campana)
+                            and not exists (select 1 from public.superadmin s where s.user_id = m.user_id)))
+  into v from public.campanas k where k.id = p_campana;
+  return v;
+end $$;
+
+-- 3. Eliminar definitivamente (solo el superadministrador, archivada y con el nombre exacto)
+create function public.eliminar_campana(p_campana uuid, p_confirmacion text) returns text[]
+language plpgsql security definer set search_path = '' as $$
+declare v public.campanas; v_res jsonb; v_rutas text[] := '{}';
+begin
+  if not cc_priv.es_superadmin() then
+    raise exception 'PERMISO: solo el superadministrador puede eliminar una campaña' using errcode = '42501';
+  end if;
+  select * into v from public.campanas where id = p_campana for update;
+  if not found then raise exception 'NO_EXISTE: esa campaña no existe' using errcode = 'P0002'; end if;
+  if v.activa then
+    raise exception 'ESTADO: archiva la campaña antes de eliminarla' using errcode = '55000';
+  end if;
+  if p_confirmacion is distinct from v.nombre then
+    raise exception 'CONFIRMACION: escribe el nombre exacto de la campaña para eliminarla' using errcode = '22023';
+  end if;
+  v_res := public.resumen_campana(p_campana);
+  if to_regclass('storage.objects') is not null then
+    execute 'select coalesce(array_agg(name order by name), ''{}'') from storage.objects where bucket_id = ''fotos'' and name like $1'
+      into v_rutas using p_campana::text || '/%';
+  end if;
+  perform set_config('cc.eliminando', p_campana::text, true);
+  -- En orden: primero lo que depende de trabajadores, dueños y máquinas (relaciones protegidas)
+  delete from public.partes_maquinas where campana_id = p_campana;
+  delete from public.partes_filas where campana_id = p_campana;
+  delete from public.partes where campana_id = p_campana;
+  delete from public.pagos where campana_id = p_campana;
+  delete from public.fotos where campana_id = p_campana;
+  delete from public.documentos where campana_id = p_campana;
+  delete from public.asignaciones_equipo where campana_id = p_campana;
+  delete from public.duenos_trabajadores where campana_id = p_campana;
+  delete from public.miembros where campana_id = p_campana;
+  delete from public.campanas where id = p_campana;     -- el resto, en cascada (personas, máquinas, modelos, precios…)
+  perform set_config('cc.eliminando', '', true);
+  insert into public.auditoria (campana_id, user_id, tabla, fila_id, accion, antes, despues)
+  values (p_campana, auth.uid(), 'campanas', p_campana::text, 'eliminar_campana', v_res || jsonb_build_object('archivos_storage', coalesce(array_length(v_rutas, 1), 0)), null);
+  return v_rutas;
+end $$;
+
+-- 4. mis_campanas con el estado (activa / archivada)
+drop function public.mis_campanas();
+create function public.mis_campanas() returns table (campana_id uuid, nombre text, anio int, roles public.rol_campana[], superadmin boolean, activa boolean)
+language sql stable security definer set search_path = '' as $$
+  select k.id, k.nombre, k.anio,
+         coalesce(array_agg(m.rol order by m.rol) filter (where m.rol is not null), '{}'),
+         cc_priv.es_superadmin(), k.activa
+  from public.campanas k
+  left join public.miembros m on m.campana_id = k.id and m.user_id = (select auth.uid()) and m.activo
+  where exists (select 1 from public.perfiles p where p.id = (select auth.uid()) and p.activo)
+    and (cc_priv.es_superadmin() or m.user_id is not null)
+  group by k.id, k.nombre, k.anio, k.activa
+  order by k.activa desc, k.anio desc nulls last, k.nombre
+$$;
+
+revoke all on function public.mis_campanas(), public.resumen_campana(uuid), public.eliminar_campana(uuid, text) from public, anon;
+grant execute on function public.mis_campanas(), public.resumen_campana(uuid), public.eliminar_campana(uuid, text) to authenticated;
+revoke all on function cc_priv.campana_abierta(), cc_priv.campana_archivada() from public, anon, authenticated;
+
+
+-- ===== 20261121000019_tiempo_real_configuracion.sql =====
+-- CAMPAÑA CONTROL 3.0 · 000019: tiempo real también para la configuración de la campaña
+--
+-- Con 000018 la configuración, los precios, las personas y la maquinaria se cambian desde la app. Hasta ahora solo
+-- partes, jornadas, pagos y miembros avisaban al momento; el resto se notaba en la comprobación periódica (huella,
+-- cada 45 s). Se añaden a la publicación de Supabase Realtime (que respeta la RLS: cada cual solo recibe avisos de
+-- lo que puede leer). No cambia datos ni permisos.
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['campanas', 'campanas_economia', 'trabajadores', 'duenos', 'maquinas'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
 
 commit;
