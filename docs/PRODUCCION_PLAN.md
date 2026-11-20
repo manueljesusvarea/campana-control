@@ -95,3 +95,15 @@ El proyecto Supabase actual (`campana-control-pruebas`) y la beta (https://campa
 - **Web:** Cloudflare → Deployments → «Rollback».
 - **Datos:** restaurar una copia de campaña en una campaña nueva, o la copia completa con `pg_restore` en un proyecto aparte.
 - **Retirar producción:** pausar o borrar el proyecto. Solo con tu autorización.
+
+## Publicaciones posteriores
+
+Desde que `produccion/v3` está protegida (no se puede borrar ni forzar; los cambios solo entran por pull request), el
+paso 9 se hace con una **pull request de `desarrollo/multiusuario-v3` a `produccion/v3`**, que queda registrada, y solo
+con la aprobación expresa del dueño. Orden: 1) pruebas en verde y beta publicada probada (`URL_PUBLICADA=… ejecutar.js nube`);
+2) migraciones nuevas en la base de datos de producción, comprobadas por su huella y **antes** de la web; 3) pull request y
+fusión; 4) comprobar la web (`nube-pwa`) y actualizar `ESQUEMA` en el flujo de copias.
+
+| Fecha | Versión | Qué | Migraciones |
+|---|---|---|---|
+| 21-11-2026 | `c0bd1cc` (PR #1) | Administrar campañas: configuración, precios, maquinaria, personas, archivar, restaurar y eliminar | 000018-000019 (huella `aaaba1bb5bdd`) |
