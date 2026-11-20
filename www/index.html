@@ -1858,7 +1858,8 @@ const aCent = v => { const n = num(v); return n == null ? null : Math.round(n * 
 const hFila = (f, hd) => f.tipo === "ausente" ? 0 : (f.tipo === "normal" || f.horas == null) ? +hd : +f.horas;   // misma regla que horasFila()
 const nGestiona = () => NUBE.superadmin || NUBE.roles.includes("creador");
 const nConsulta = () => nGestiona() || NUBE.roles.includes("admin");
-const nEdita = () => nGestiona() || !!NUBE.permisos?.edita;          // administrador con edición: jornadas y cuentas
+const nArchivada = () => NUBE.d?.campana?.activa === false || NUBE.c?.activa === false;   // archivada: solo lectura (000018)
+const nEdita = () => (nGestiona() || !!NUBE.permisos?.edita) && !nArchivada();         // administrador con edición: jornadas y cuentas
 async function nq(p) { const r = await p; if (r.error) throw r.error; return r.data; }
 function nubeMsg(e) {
   const m = String(e?.message || e || ""), code = String(e?.code || "");
@@ -1876,6 +1877,7 @@ function nubeMsg(e) {
   if (/banned/i.test(m) || code === "user_banned") return "Esta cuenta está bloqueada. Habla con quien gestiona tu campaña.";
   if (/already registered|already been registered/i.test(m)) return "Ya existe una cuenta con ese correo. Entra con tu contraseña.";
   if (/Password should be|password.*at least/i.test(m)) return "La contraseña es demasiado corta.";
+  if (/^ARCHIVADA/.test(m)) return "La campaña está archivada y es de solo lectura. Restáurala para hacer cambios.";
   if (/^PERMISO|row-level security|permission denied/i.test(m) || code === "42501") return "No tienes permiso para hacer esto.";
   return m.replace(/^[A-ZÁÉÍÓÚ]+: /, "") || "Algo ha fallado.";
 }
@@ -1937,7 +1939,7 @@ async function nubeCargarUna() {
   if (!fila) throw new Error("PERMISO: ya no tienes acceso a esta campaña");
   if (n0 === nCargaN + 1 && NUBE.c?.campana_id === c0) { NUBE.campanas = camps; NUBE.c = fila; NUBE.roles = fila.roles || []; NUBE.permisos = perm; }
   const n = ++nCargaN, sb = NUBE.sb, c = NUBE.c.campana_id, d = { docs: [], fotos: [], plantillas: [], campana: null, eco: null, trab: [], duenos: [], partes: [], filas: [], pmaq: [], maq: [], pagos: [], miembros: [], asig: [], nombres: {}, resumen: null, cuenta: null, equipo: null };
-  d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia, empresa").eq("id", c).single());
+  d.campana = await nq(sb.from("campanas").select("id, nombre, anio, inicio, horas_dia, hora_inicio, empresa, activa, version").eq("id", c).single());
   if (nConsulta()) {
     const sel = (t, cols, ord) => { let x = sb.from(t).select(cols).eq("campana_id", c); if (ord) x = x.order(ord[0], { ascending: ord[1] !== false }); return nq(x); };
     [d.eco, d.trab, d.duenos, d.partes, d.filas, d.pmaq, d.maq, d.pagos, d.miembros, d.asig] = await Promise.all([
@@ -1947,7 +1949,7 @@ async function nubeCargarUna() {
       sel("partes", "id, dueno_id, fecha, kilos, notas, version", ["fecha", false]),
       sel("partes_filas", "parte_id, trabajador_id, tipo, horas, nota, fecha"),
       sel("partes_maquinas", "parte_id, maquina_id, cantidad"),
-      sel("maquinas", "id, nombre, precio_cent, unidad, activa", ["orden"]),
+      sel("maquinas", "id, nombre, precio_cent, unidad, activa, orden, version", ["orden"]),
       sel("pagos", "id, tipo, trabajador_id, dueno_id, importe_cent, fecha, hora, forma, nota, version", ["fecha", false]),
       sel("miembros", "id, user_id, rol, trabajador_id, dueno_id, activo"),
       sel("asignaciones_equipo", "id, jefe_user_id, trabajador_id, desde, hasta", ["desde", false])]);
@@ -2496,7 +2498,7 @@ function nubeRender() {
   if (!NUBE.sesion) { nubeNav([]); v.innerHTML = vEntrar(); return; }
   if (NUBE.perfil?.bloqueado) { nubeNav([]); v.innerHTML = vBloqueada(); return; }
   if (NUBE.nuevaClave || NUBE.perfil?.debe_cambiar_clave) { nubeNav([]); v.innerHTML = vNuevaClave(); return; }
-  const aviso = NUBE.desdeCache ? avisoCache() : NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`;
+  const aviso = (NUBE.c && nArchivada() && r !== "campanas" ? `<div class="banner" style="margin-bottom:12px">Campaña <b>archivada</b>: solo lectura. ${nGestiona() ? "Se restaura en Ajustes." : ""}</div>` : "") + (NUBE.desdeCache ? avisoCache() : NUBE.online ? "" : `<div class="banner" style="margin-bottom:12px">Sin conexión: lo que ves puede no estar al día y no se pueden guardar cambios.</div>`);
   if (r === "usuarios" && nPuedeUsuarios()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vUsuarios(); nAfter.usuarios(); return; }
   if (r === "ajustes") { nubeNav(nubeVistas()); v.innerHTML = aviso + vNAjustes(); return; }
   if (r === "copias" && nPuedeCopias()) { nubeNav(nubeVistas()); v.innerHTML = aviso + vNCopias(); nAfter.copias(); return; }
@@ -2599,7 +2601,7 @@ function nMostrarClave(titulo, nombre, usuario, clave) {
 function vNCampanas() {
   const p = NUBE.perfil, puede = NUBE.superadmin || p?.puede_crear_campanas, y = new Date().getFullYear();
   return `<div class="stack"><div class="head"><div><div class="lbl">${esc(p?.nombre || usuarioDe(NUBE.sesion.user.email))}</div><h1>Tus campañas</h1></div><div class="row">${nPuedeUsuarios() ? `<a class="btn" href="#usuarios">${ic("trabajadores")}Gestión de usuarios</a>` : ""}${nPuedeCopias() ? `<a class="btn" href="#copias">Copias e importación</a>` : ""}${NUBE.superadmin ? `<a class="btn" href="#global">${ic("chart")}Panel global</a>` : ""}</div></div>
-  ${NUBE.campanas.length ? `<div class="list">${NUBE.campanas.map(c => `<button class="li" data-act="nElegir" data-id="${esc(c.campana_id)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="muted small">${esc((c.roles || []).map(r => ROL_TXT[r]).join(" · ") || "Superadministrador")}</div></div></button>`).join("")}</div>`
+  ${NUBE.campanas.length ? `<div class="list">${NUBE.campanas.map(c => `<button class="li" data-act="nElegir" data-id="${esc(c.campana_id)}"><div class="grow"><div class="t">${esc(c.nombre)}</div><div class="muted small">${esc((c.roles || []).map(r => ROL_TXT[r]).join(" · ") || "Superadministrador")}${c.activa === false ? " · <b>archivada</b> (solo lectura)" : ""}}</div></div></button>`).join("")}</div>`
     : `<div class="empty"><b>Aún no tienes ninguna campaña</b><span>${puede ? "Crea la primera abajo." : "Pide acceso a quien gestiona tu campaña."}</span></div>`}
   ${puede ? `<section class="card stack" id="fnueva"><h2>Nueva campaña</h2>
     <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="Campaña ${y}"></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${y}"></label><label class="f"><span>Inicio</span><input type="date" name="inicio" value="${hoy()}"></label></div>
@@ -2613,10 +2615,89 @@ function vNAjustes() {
   <section class="card stack" id="fperfil"><h2>Tu cuenta</h2><div class="muted small">Usuario: ${esc(usuarioDe(NUBE.sesion.user.email))}${NUBE.superadmin ? " · superadministrador" : ""}</div>
    <label class="f"><span>Tu nombre (lo ven quienes gestionan tus campañas)</span><input name="nombre" value="${esc(p?.nombre || "")}"></label>
    <div class="row between"><button class="btn danger" data-act="nSalir">Cerrar sesión</button><span class="row"><button class="btn" data-act="nCambiarClave">Cambiar contraseña</button><button class="btn pri" data-act="nGuardarPerfil">Guardar nombre</button></span></div></section>
-  ${NUBE.c ? `<section class="card stack"><h2>Campaña ${esc(NUBE.c.nombre)}</h2><div class="muted small">Tus roles: ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><a class="btn" href="#campanas" style="align-self:flex-start">Cambiar de campaña</a></section>` : ""}
+  ${NUBE.c ? `<section class="card stack"><h2>Campaña ${esc(NUBE.c.nombre)}${nArchivada() ? " · archivada" : ""}</h2><div class="muted small">Tus roles: ${esc(NUBE.roles.map(r => ROL_TXT[r]).join(", ") || "superadministrador")}</div><a class="btn" href="#campanas" style="align-self:flex-start">Cambiar de campaña</a></section>` : ""}
+  ${vNAdminCampana()}
   ${vInstalar()}
   <section class="card stack"><h2>Sin cuenta</h2><div class="hint">Puedes usar la app sin cuenta, con los datos solo en este dispositivo (como la versión 2.3.0).</div><button class="btn" data-act="nSinCuenta" style="align-self:flex-start">Usar sin cuenta</button></section>
   <div class="muted small">Versión ${APP_VERSION} · con cuenta</div></div>`;
+}
+
+/* ---------- Administrar la campaña: configuración, precios, maquinaria, archivar y eliminar (000018) ----------
+   Lo ven y lo usan quien creó la campaña y el superadministrador (aunque no sea miembro). La base de datos lo comprueba
+   igualmente (cc_priv.gestiona; archivada = solo lectura; eliminar solo el superadministrador). Un cambio de precio o de
+   horas vuelve a calcular las jornadas igual que la 2.3.0 (el importe no se guarda en cada jornada): antes de guardar se
+   enseña cuánto cambian los totales; los pagos y entregas registrados no cambian nunca. Todo queda en la auditoría. */
+const EMP_CAMPOS = [["nombre", "Nombre o razón social"], ["nif", "NIF / CIF"], ["direccion", "Dirección"], ["telefono", "Teléfono"], ["encargado", "Encargado de la cuadrilla"], ["iban", "IBAN para las cuentas"]];
+function nImpacto(cambios) {
+  const d = NUBE.d, en = (o, k) => o && Object.prototype.hasOwnProperty.call(o, k);
+  const dx = { ...d, campana: { ...d.campana, ...(cambios.campana || {}) }, eco: { ...(d.eco || {}), ...(cambios.eco || {}) },
+    trab: d.trab.map(t => en(cambios.trab, t.id) ? { ...t, precio_hora_cent: cambios.trab[t.id] } : t),
+    duenos: d.duenos.map(x => en(cambios.dueno, x.id) ? { ...x, precio_hora_cent: cambios.dueno[x.id] } : x),
+    maq: d.maq.map(m => en(cambios.maq, m.id) ? { ...m, precio_cent: cambios.maq[m.id] } : m) };
+  const tot = dd => conS(snConsulta(dd), () => ({ trab: dd.trab.reduce((s, t) => s + resumenTrab(t.id).importe, 0), duenos: dd.duenos.reduce((s, x) => s + cuentaDueno(x.id).total, 0) }));
+  const a = tot(d), b = tot(dx);
+  return { a, b, jornadas: d.filas.filter(f => f.tipo !== "ausente").length, pagos: d.pagos.length, cambia: Math.abs(a.trab - b.trab) > 0.004 || Math.abs(a.duenos - b.duenos) > 0.004 };
+}
+function nConfirmarHtml(titulo, html, ok, boton) {
+  openModal(`<div class="stack"><h2>${esc(titulo)}</h2><div>${html}</div><div class="row" style="justify-content:flex-end"><button class="btn" data-act="cerrar">Cancelar</button><button class="btn pri" id="cfOk">${esc(boton)}</button></div></div>`);
+  $("#cfOk").onclick = async () => { closeModal(); await ok(); render(); };
+}
+// Guarda con vista previa: si el cambio altera las cuentas, se enseña antes cuánto y se pide confirmación
+function nGuardarConImpacto(cambios, guardar) {
+  const i = nImpacto(cambios);
+  if (!i.cambia) return guardar();
+  nConfirmarHtml("Este cambio recalcula las cuentas",
+    `<p style="margin:0 0 8px">Se vuelven a calcular las <b>${i.jornadas}</b> jornadas de la campaña, igual que en la versión 2.3.0:</p>
+     <div class="card stack" style="gap:4px"><div>Ganado por los trabajadores: <b>${fE(i.a.trab)}</b> → <b>${fE(i.b.trab)}</b></div><div>Total de los dueños (con IVA): <b>${fE(i.a.duenos)}</b> → <b>${fE(i.b.duenos)}</b></div></div>
+     <p class="small" style="margin:8px 0 0">Los <b>${i.pagos}</b> pagos y entregas ya registrados <b>no cambian</b>: cambia lo que queda pendiente. El cambio queda registrado en la auditoría con el valor anterior.</p>`,
+    guardar, "Sí, guardar");
+}
+async function nGuardarFila(tabla, campoId, id, version, datos) {
+  const r = await nq(NUBE.sb.from(tabla).update({ ...datos, version: version + 1 }).eq(campoId, id).select(campoId));
+  if (!r.length) throw new Error("PERMISO: no se ha podido guardar");
+}
+async function nTrasGuardar(msg) { await nubeCargar(); toast(msg); render(); }
+function nErrorGuardar(e) { toast(nubeMsg(e)); if (/^CONFLICTO/.test(e?.message) || e?.code === "PT409") nubeCargar().then(render, () => {}); }
+function vNAdminCampana() {
+  if (!NUBE.c || !NUBE.d?.campana || !nGestiona()) return "";
+  const c = NUBE.d.campana, e = NUBE.d.eco || {}, arch = nArchivada(), dis = arch ? " disabled" : "", emp = c.empresa || {};
+  return `<section class="card stack" id="fncamp"><h2>Configuración de la campaña</h2>
+   ${arch ? `<div class="banner">Campaña <b>archivada</b>: solo lectura. Restáurala abajo para hacer cambios.</div>` : `<div class="hint">La pueden cambiar quien creó la campaña y el superadministrador. Cada cambio queda en la auditoría.</div>`}
+   <div class="grid2"><label class="f"><span>Nombre</span><input name="nombre" value="${esc(c.nombre)}"${dis}></label><label class="f"><span>Año</span><input name="anio" inputmode="numeric" value="${esc(c.anio ?? "")}"${dis}></label>
+    <label class="f"><span>Fecha de inicio</span><input type="date" name="inicio" value="${esc(c.inicio || "")}"${dis}></label><label class="f"><span>Hora de entrada</span><input type="time" name="hora" value="${esc(horaCorta(c.hora_inicio) || "08:00")}"${dis}></label></div>
+   <div class="grid2"><label class="f"><span>Horas de un día normal</span><input name="horas" inputmode="decimal" value="${fN(c.horas_dia)}"${dis}></label><label class="f"><span>IVA a los dueños (%)</span><input name="iva" inputmode="decimal" value="${fN(e.iva || 0)}"${dis}></label>
+    <label class="f"><span>€/hora al trabajador</span><input name="ptrab" inputmode="decimal" value="${fN(euroDeCent(e.precio_hora_trab_cent))}"${dis}></label><label class="f"><span>€/hora al dueño</span><input name="pdueno" inputmode="decimal" value="${fN(euroDeCent(e.precio_hora_dueno_cent))}"${dis}></label></div>
+   <h3>Datos de la empresa</h3><div class="hint">Salen en las cuentas en PDF y en los documentos.</div>
+   <div class="grid2">${EMP_CAMPOS.map(([k, l]) => `<label class="f"><span>${l}</span><input name="emp_${k}" value="${esc(emp[k] || "")}"${dis}></label>`).join("")}</div>
+   ${arch ? "" : `<div class="row" style="justify-content:flex-end"><button class="btn pri" data-act="nGuardarCampana">Guardar configuración</button></div>`}</section>
+  <section class="card stack"><h2>Maquinaria y precios</h2><div class="hint">El importe de cada máquina es cantidad usada × precio.</div>
+   <div class="list">${NUBE.d.maq.map(m => `<div class="mrow" style="flex-wrap:wrap" data-maq="${m.id}"><input name="nombre" aria-label="Máquina" value="${esc(m.nombre)}" style="flex:2 1 140px"${dis}><input name="precio" aria-label="Precio en euros" inputmode="decimal" value="${fN(m.precio_cent / 100)}" style="flex:1 1 70px"${dis}><select name="unidad" aria-label="Unidad"${dis}>${["día", "jornada", "hora"].map(u => `<option${u === m.unidad ? " selected" : ""}>${u}</option>`).join("")}</select><label class="row small" style="gap:4px"><input type="checkbox" name="activa"${m.activa !== false ? " checked" : ""}${dis}>en uso</label>${arch ? "" : `<button class="btn sm" data-act="nGuardarMaq" data-id="${m.id}">Guardar</button>`}</div>`).join("") || `<div class="mrow muted">Sin máquinas.</div>`}</div>
+   ${arch ? "" : `<div class="row" id="fnmaqnueva" style="flex-wrap:wrap"><input name="nombre" placeholder="Máquina nueva" style="flex:2 1 140px"><input name="precio" inputmode="decimal" placeholder="Precio €" style="flex:1 1 80px"><select name="unidad"><option>día</option><option>jornada</option><option>hora</option></select><button class="btn" data-act="nAltaMaq">${ic("mas")}Añadir</button></div>`}</section>
+  <section class="card stack"><h2>Archivar o eliminar la campaña</h2>
+   ${arch ? `<div class="hint">Archivada: nadie puede cambiar nada, pero todo se conserva y se puede consultar, exportar e imprimir.</div>
+     <div class="row"><button class="btn pri" data-act="nArchivar" data-v="1">Restaurar campaña</button>${NUBE.superadmin ? `<button class="btn danger" data-act="nEliminarCampana">Eliminar definitivamente…</button>` : ""}</div>`
+     : `<div class="hint">Al archivarla queda en solo lectura para todos y no se pierde nada. Se puede restaurar cuando quieras.${NUBE.superadmin ? " Para eliminarla definitivamente, primero hay que archivarla." : ""}</div>
+     <button class="btn" data-act="nArchivar" data-v="0" style="align-self:flex-start">Archivar campaña</button>`}</section>`;
+}
+function vNEliminar(r) {
+  const fila = (n, t) => `<div class="row between"><span>${t}</span>${nCifra(n)}</div>`;
+  openModal(`<div class="stack"><h2>Eliminar definitivamente «${esc(r.nombre)}»</h2>
+   <div class="banner">Esto <b>no se puede deshacer</b>. Se borra de la base de datos todo lo de esta campaña:</div>
+   <div class="card stack" style="gap:4px">${fila(r.trabajadores, "Trabajadores")}${fila(r.duenos, "Dueños")}${fila(r.maquinas, "Máquinas")}${fila(r.partes, "Partes diarios")}${fila(r.jornadas, "Jornadas de trabajadores")}
+    ${fila(r.pagos, "Pagos y entregas")}${fila(eurosC(r.pagos_cent), "Importe de esos pagos")}${fila(r.documentos, "Documentos")}${fila(r.fotos, "Fotos de documentos")}${fila(r.archivos, "Archivos en Storage")}
+    ${fila(r.modelos, "Modelos de documento propios")}${fila(r.asignaciones, "Asignaciones de equipos")}${fila(r.cuentas, "Cuentas con acceso (pierden el acceso a esta campaña)")}${fila(r.cuentas_solo_aqui, "…de ellas, sin ninguna otra campaña")}</div>
+   <div class="hint">Las cuentas de las personas no se borran. Queda constancia en la auditoría de quién la eliminó y de este resumen. Las copias diarias de los últimos 30 días la siguen conteniendo. Si quieres conservarla, haz antes una copia en «Copias».</div>
+   <label class="f"><span>Para confirmar, escribe el nombre exacto de la campaña</span><input id="elimNombre" autocomplete="off"></label>
+   <div class="row" style="justify-content:flex-end"><button class="btn" data-act="cerrar">Cancelar</button><button class="btn danger" data-act="nConfirmarEliminar">Eliminar definitivamente</button></div></div>`);
+}
+function vNEditarPersona(tipo, x) {
+  const t = tipo === "trabajador";
+  openModal(`<div class="stack" id="fned"><h2>${t ? "Trabajador" : "Dueño"}</h2>
+   <label class="f"><span>Nombre</span><input name="nombre" value="${esc(x.nombre)}"></label>
+   ${t ? "" : `<div class="grid2"><label class="f"><span>Finca</span><input name="finca" value="${esc(x.finca || "")}"></label><label class="f"><span>Municipio</span><input name="municipio" value="${esc(x.municipio || "")}"></label></div>`}
+   <label class="f"><span>€/hora propio (vacío = el de la campaña, ${eurosC(t ? NUBE.d.eco?.precio_hora_trab_cent : NUBE.d.eco?.precio_hora_dueno_cent)})</span><input name="precio" inputmode="decimal" value="${x.precio_hora_cent != null ? fN(x.precio_hora_cent / 100) : ""}"></label>
+   ${t ? `<label class="row" style="gap:8px"><input type="checkbox" name="activo"${x.activo !== false ? " checked" : ""}>En activo (si no, aparece «de baja» y no sale en los partes nuevos)</label>` : ""}
+   <div class="row" style="justify-content:flex-end"><button class="btn" data-act="cerrar">Cancelar</button><button class="btn pri" data-act="nGuardarPersona" data-tipo="${tipo}" data-id="${x.id}">Guardar</button></div></div>`);
 }
 
 /* ---------- Creador y administrador ---------- */
@@ -2706,14 +2787,14 @@ function vNPagos() {
 
 /* ---------- Personas: fichas, cuentas vinculadas, invitaciones y equipos ---------- */
 function vNPersonas() {
-  const d = NUBE.d, g = nGestiona(), nom = u => d.nombres[u] || "(sin nombre)";
+  const d = NUBE.d, g = nGestiona() && !nArchivada(), nom = u => d.nombres[u] || "(sin nombre)";
   const jefes = d.miembros.filter(m => m.rol === "jefe" && m.activo);
   return `<div class="stack"><h1>Personas</h1>
   <section class="stack"><div class="row between"><h2>Trabajadores</h2></div>
-   <div class="list">${d.trab.map(t => `<div class="mrow"><div class="grow"><b>${esc(t.nombre)}</b><div class="muted small">${t.precio_hora_cent != null ? eurosC(t.precio_hora_cent) + "/h propio" : "precio de la campaña"}${t.activo ? "" : " · de baja"}${d.miembros.some(m => m.trabajador_id === t.id && m.activo) ? " · con cuenta" : ""}</div></div></div>`).join("") || `<div class="mrow muted">Sin trabajadores.</div>`}</div>
+   <div class="list">${d.trab.map(t => `<div class="mrow"><div class="grow"><b>${esc(t.nombre)}</b><div class="muted small">${t.precio_hora_cent != null ? eurosC(t.precio_hora_cent) + "/h propio" : "precio de la campaña"}${t.activo ? "" : " · de baja"}${d.miembros.some(m => m.trabajador_id === t.id && m.activo) ? " · con cuenta" : ""}</div></div>${g ? `<button class="btn ghost sm" data-act="nEditarPersona" data-tipo="trabajador" data-id="${t.id}">Editar</button>` : ""}</div>`).join("") || `<div class="mrow muted">Sin trabajadores.</div>`}</div>
    ${g ? `<div class="row" id="fntrab"><input name="nombre" placeholder="Nombre y apellidos" style="flex:2 1 180px"><input name="precio" inputmode="decimal" placeholder="€/h propio (opcional)" style="flex:1 1 120px"><button class="btn" data-act="nAltaTrab">${ic("mas")}Añadir</button></div>` : ""}</section>
   <section class="stack"><h2>Dueños</h2>
-   <div class="list">${d.duenos.map(x => `<div class="mrow"><div class="grow"><b>${esc(x.nombre)}</b><div class="muted small">${esc([x.finca, x.municipio].filter(Boolean).join(" · ") || "Sin finca anotada")}${d.miembros.some(m => m.dueno_id === x.id && m.activo) ? " · con cuenta" : ""}</div></div></div>`).join("") || `<div class="mrow muted">Sin dueños.</div>`}</div>
+   <div class="list">${d.duenos.map(x => `<div class="mrow"><div class="grow"><b>${esc(x.nombre)}</b><div class="muted small">${esc([x.finca, x.municipio].filter(Boolean).join(" · ") || "Sin finca anotada")}${x.precio_hora_cent != null ? " · " + eurosC(x.precio_hora_cent) + "/h propio" : ""}${d.miembros.some(m => m.dueno_id === x.id && m.activo) ? " · con cuenta" : ""}</div></div>${g ? `<button class="btn ghost sm" data-act="nEditarPersona" data-tipo="dueno" data-id="${x.id}">Editar</button>` : ""}</div>`).join("") || `<div class="mrow muted">Sin dueños.</div>`}</div>
    ${g ? `<div class="row" id="fndueno"><input name="nombre" placeholder="Nombre del dueño" style="flex:2 1 180px"><input name="finca" placeholder="Finca (opcional)" style="flex:1 1 120px"><button class="btn" data-act="nAltaDueno">${ic("mas")}Añadir</button></div>` : ""}</section>
   <section class="stack"><h2>Cuentas con acceso</h2>
    <div class="list">${d.miembros.filter(m => m.activo).map(m => `<div class="mrow"><div class="grow"><b>${esc(nom(m.user_id))}</b><div class="muted small">${ROL_TXT[m.rol]}${m.trabajador_id ? " · " + esc(nTrab(m.trabajador_id)?.nombre || "") : ""}${m.dueno_id ? " · " + esc(nDueno(m.dueno_id)?.nombre || "") : ""}</div></div>${g && (m.rol !== "creador" || NUBE.superadmin) ? `<button class="btn ghost sm danger" data-act="nQuitarMiembro" data-id="${m.id}">Quitar</button>` : ""}</div>`).join("")}</div>
@@ -2894,6 +2975,92 @@ Object.assign(A, {
   async nAltaDueno() {
     const f = leer("#fndueno"); if (!f.nombre) return toast("Escribe el nombre"); if (nSinRed()) return;
     try { await nq(NUBE.sb.from("duenos").insert({ campana_id: NUBE.c.campana_id, nombre: f.nombre, finca: f.finca || null, num: NUBE.d.duenos.length + 1 })); await nubeCargar(); toast("Dueño añadido"); render(); } catch (e) { toast(nubeMsg(e)); }
+  },
+  // ----- Administrar la campaña (000018) -----
+  nGuardarCampana() {
+    if (nSinRed()) return;
+    const f = leer("#fncamp"), c = NUBE.d.campana, e = NUBE.d.eco || {};
+    const horas = num(f.horas), iva = num(f.iva), pt = aCent(f.ptrab), pd = aCent(f.pdueno);
+    if (!f.nombre) return toast("Pon un nombre a la campaña");
+    if (!(horas > 0 && horas <= 24)) return toast("Las horas de un día normal deben estar entre 0 y 24");
+    if (pt == null || pt < 0 || pd == null || pd < 0) return toast("Revisa los precios por hora");
+    if (iva == null || iva < 0 || iva > 100) return toast("El IVA debe estar entre 0 y 100");
+    const empresa = { ...(c.empresa || {}) }; EMP_CAMPOS.forEach(([k]) => empresa[k] = f["emp_" + k] || "");
+    const camp = { nombre: f.nombre, anio: +f.anio || null, inicio: f.inicio || null, hora_inicio: f.hora || "08:00", horas_dia: horas, empresa };
+    const antes = { nombre: c.nombre, anio: c.anio ?? null, inicio: c.inicio || null, hora_inicio: horaCorta(c.hora_inicio) || "08:00", horas_dia: +c.horas_dia, empresa: c.empresa || {} };
+    const cambiaC = Object.keys(camp).some(k => k === "empresa" ? EMP_CAMPOS.some(([x]) => (empresa[x] || "") !== (antes.empresa[x] || "")) : camp[k] !== antes[k]);
+    const eco = { precio_hora_trab_cent: pt, precio_hora_dueno_cent: pd, iva };
+    const cambiaE = pt !== e.precio_hora_trab_cent || pd !== e.precio_hora_dueno_cent || iva !== +(e.iva || 0);
+    if (!cambiaC && !cambiaE) return toast("No hay cambios");
+    nGuardarConImpacto({ campana: { horas_dia: horas }, eco }, async () => {
+      try {
+        if (cambiaC) await nGuardarFila("campanas", "id", c.id, c.version, camp);
+        if (cambiaE) await nGuardarFila("campanas_economia", "campana_id", c.id, e.version, eco);
+        await nTrasGuardar("Configuración guardada");
+      } catch (er) { nErrorGuardar(er); }
+    });
+  },
+  nGuardarMaq(el) {
+    if (nSinRed()) return;
+    const fila = el.closest("[data-maq]"), m = NUBE.d.maq.find(x => x.id === el.dataset.id); if (!fila || !m) return;
+    const v = n => fila.querySelector(`[name="${n}"]`), precio = aCent(v("precio").value), nombre = v("nombre").value.trim();
+    if (!nombre) return toast("Pon un nombre a la máquina"); if (precio == null || precio < 0) return toast("Revisa el precio");
+    const datos = { nombre, precio_cent: precio, unidad: v("unidad").value, activa: v("activa").checked };
+    if (Object.keys(datos).every(k => datos[k] === m[k])) return toast("No hay cambios");
+    nGuardarConImpacto({ maq: { [m.id]: precio } }, async () => {
+      try { await nGuardarFila("maquinas", "id", m.id, m.version, datos); await nTrasGuardar("Máquina guardada"); } catch (er) { nErrorGuardar(er); }
+    });
+  },
+  async nAltaMaq() {
+    if (nSinRed()) return;
+    const f = leer("#fnmaqnueva"), precio = aCent(f.precio); if (!f.nombre) return toast("Escribe el nombre de la máquina"); if (precio == null || precio < 0) return toast("Escribe el precio");
+    try { await nq(NUBE.sb.from("maquinas").insert({ campana_id: NUBE.c.campana_id, nombre: f.nombre, precio_cent: precio, unidad: f.unidad || "día", orden: Math.max(-1, ...NUBE.d.maq.map(m => +m.orden || 0)) + 1 })); await nTrasGuardar("Máquina añadida"); }
+    catch (er) { nErrorGuardar(er); }
+  },
+  nEditarPersona(el) {
+    const t = el.dataset.tipo === "trabajador", x = (t ? NUBE.d.trab : NUBE.d.duenos).find(y => y.id === el.dataset.id);
+    if (x) vNEditarPersona(el.dataset.tipo, x);
+  },
+  nGuardarPersona(el) {
+    if (nSinRed()) return;
+    const t = el.dataset.tipo === "trabajador", x = (t ? NUBE.d.trab : NUBE.d.duenos).find(y => y.id === el.dataset.id); if (!x) return;
+    const f = leer("#fned"), precio = f.precio === "" ? null : aCent(f.precio);
+    if (!f.nombre) return toast("Escribe el nombre"); if (f.precio !== "" && (precio == null || precio < 0)) return toast("Revisa el precio");
+    const datos = t ? { nombre: f.nombre, precio_hora_cent: precio, activo: !!f.activo } : { nombre: f.nombre, finca: f.finca || null, municipio: f.municipio || null, precio_hora_cent: precio };
+    if (Object.keys(datos).every(k => (datos[k] ?? null) === (x[k] ?? null))) { closeModal(); return toast("No hay cambios"); }
+    closeModal();
+    nGuardarConImpacto(t ? { trab: { [x.id]: precio } } : { dueno: { [x.id]: precio } }, async () => {
+      try { await nGuardarFila(t ? "trabajadores" : "duenos", "id", x.id, x.version, datos); await nTrasGuardar(t ? "Trabajador guardado" : "Dueño guardado"); } catch (er) { nErrorGuardar(er); }
+    });
+  },
+  nArchivar(el) {
+    const restaurar = el.dataset.v === "1", c = NUBE.d.campana;
+    nConfirmarHtml(restaurar ? "Restaurar la campaña" : "Archivar la campaña",
+      restaurar ? `<p style="margin:0">«${esc(c.nombre)}» vuelve a admitir cambios: partes, pagos, personas y precios.</p>`
+        : `<p style="margin:0">«${esc(c.nombre)}» quedará en <b>solo lectura</b> para todos: nadie podrá cambiar partes, pagos, personas ni precios. No se borra nada y se puede seguir consultando, exportando e imprimiendo. Se puede restaurar cuando quieras.</p>`,
+      async () => {
+        if (nSinRed()) return;
+        try { await nGuardarFila("campanas", "id", c.id, c.version, { activa: restaurar }); await nTrasGuardar(restaurar ? "Campaña restaurada" : "Campaña archivada"); } catch (er) { nErrorGuardar(er); }
+      }, restaurar ? "Sí, restaurar" : "Sí, archivar");
+  },
+  async nEliminarCampana() {
+    if (!NUBE.superadmin || nSinRed()) return;
+    try { vNEliminar(await nq(NUBE.sb.rpc("resumen_campana", { p_campana: NUBE.c.campana_id }))); } catch (er) { toast(nubeMsg(er)); }
+  },
+  async nConfirmarEliminar() {
+    if (nSinRed()) return;
+    const c = NUBE.d.campana, nombre = $("#elimNombre")?.value ?? "";
+    if (nombre !== c.nombre) return toast("Escribe el nombre exacto de la campaña, tal y como aparece");
+    const b = $('[data-act="nConfirmarEliminar"]'); if (b) b.disabled = true;
+    try {
+      const rutas = await nq(NUBE.sb.rpc("eliminar_campana", { p_campana: c.id, p_confirmacion: nombre })) || [];
+      let falta = 0;   // fotos de Storage: se borran después (los datos ya no existen); si alguna falla, se avisa
+      for (let i = 0; i < rutas.length; i += 100) { const r = await NUBE.sb.storage.from("fotos").remove(rutas.slice(i, i + 100)); if (r.error) falta += rutas.slice(i, i + 100).length; }
+      closeModal(); nubeDesuscribir(); try { localStorage.removeItem(PREF_CAMP); } catch (e) { }
+      NUBE.c = null; NUBE.d = null; NUBE.roles = []; NUBE.campanas = await nq(NUBE.sb.rpc("mis_campanas"));
+      toast(falta ? `Campaña eliminada. ${falta} archivos de fotos no se pudieron borrar de Storage. Ya no se ven en la app; se pueden borrar en el panel de Supabase (Storage → fotos → carpeta ${c.id}).` : "Campaña eliminada definitivamente");
+      location.hash = "#campanas"; render();
+    } catch (er) { if (b) b.disabled = false; toast(nubeMsg(er)); }
   },
   async nCopiarCodigo() { try { await navigator.clipboard.writeText($("#codigoInv").innerText.trim()); toast("Copiada"); } catch (e) { toast("Selecciónala y cópiala a mano"); } },
   nQuitarMiembro(el) { confirmar("¿Quitar el acceso de esta cuenta a la campaña? Sus datos (horas, pagos) se conservan.", async () => { if (nSinRed()) return; try { await nq(NUBE.sb.from("miembros").delete().eq("id", el.dataset.id)); await nubeCargar(); toast("Acceso retirado"); } catch (e) { toast(nubeMsg(e)); } }, "Quitar acceso"); },
