@@ -66,7 +66,7 @@ En **Copias e importación → Importar o restaurar** se puede usar una copia de
 `herramientas/respaldo/respaldo_diario.mjs`, lanzado con `respaldo_diario.ps1` en tu ordenador con Windows.
 
 **Qué hace cada día:**
-1. Entra con una **cuenta de respaldo**: un superadministrador. Mejor una cuenta solo para esto que tu cuenta personal.
+1. Entra con la **cuenta técnica de copias** `respaldo.copias` (solo lectura, 000015). Nunca con una cuenta personal.
 2. Mira la huella de cambios de cada campaña y **solo copia las que han cambiado** desde la última vez.
 3. Pide la copia sellada al servidor y descarga sus fotos.
 4. **Comprueba** la huella de cada foto y el sello, y que el archivo cifrado se puede volver a leer.
@@ -108,7 +108,32 @@ node respaldo_diario.mjs descifrar <archivo.ccr> <salida.json>
 
 Con la frase en `CC_RESPALDO_FRASE`, en la misma sesión. Después, en la app: Copias e importación → Importar o restaurar, en una campaña nueva. El sello se comprueba y el superadministrador recupera las cuentas autorizadas.
 
-**Alternativa sin ordenador encendido:** un flujo de GitHub Actions programado en un repositorio **privado** aparte (gratis), con las credenciales como secretos cifrados de GitHub y las copias cifradas como artefactos. Necesita crear ese repositorio, y por tanto tu autorización. No está hecho.
+### Copias de producción en GitHub Actions (OPERATIVAS desde el 20-11-2026, sin ordenador encendido)
+
+Repositorio **privado** `manueljesusvarea/campana-control-copias`, flujo `copias.yml`: todos los días a las 02:15 UTC
+(GitHub puede retrasar las ejecuciones programadas varias horas) y a mano con «Run workflow». Coste 0 €.
+
+| Qué | Con qué cuenta | Resultado |
+|---|---|---|
+| Copia sellada de cada campaña con sus fotos (`.ccr`) | `respaldo.copias` (cuenta de la app de SOLO LECTURA, 000015) | cifrada AES-256-GCM |
+| Todos los archivos del bucket `fotos` + manifiesto con huellas | `respaldo.copias` (000016) | `storage.tar.enc` |
+| `pg_dump` de `public` y `cc_priv`, cuentas completas (`cc_priv.respaldo_cuentas()`, 000017) y metadatos de Storage | `respaldo_lectura` (usuario de PostgreSQL de SOLO LECTURA, 000016-000017) | `base_datos.tar.enc` |
+| **Prueba de restauración**: descifra `base_datos.tar.enc`, lo restaura en un PostgreSQL 17 desechable con el esquema exacto de producción y compara cada tabla (filas y huella del contenido) y el número de cuentas | — | si algo no coincide, la ejecución falla y GitHub avisa por correo |
+
+- Secretos: `CC_RESPALDO_CLAVE` (contraseña de `respaldo.copias`), `CC_DB_URL` (Session pooler con `respaldo_lectura`, la crea
+  `herramientas/respaldo/activar_lectura_bd.ps1`: producción registra el DDL, así que solo se envía la huella SCRAM), `CC_RESPALDO_FRASE`.
+  **Ninguno es la contraseña de una persona ni la contraseña principal de la base de datos.** El flujo se niega a funcionar si
+  `CC_DB_URL` no usa `respaldo_lectura` o si apunta al proyecto de pruebas, y una copia incompleta cuenta como fallo.
+- `respaldo.copias`: no es superadministrador, ni creador, ni miembro; la base de datos impide dárselo. Solo funciones de lectura.
+- `respaldo_lectura`: SELECT en `public`, `cc_priv` y `storage.objects`; las cuentas solo mediante `cc_priv.respaldo_cuentas()`.
+  No puede escribir nada. (El esquema `auth` es de Supabase y `postgres` no puede conceder USAGE sobre él: por eso la función.)
+- Los artefactos (solo archivos cifrados y un informe sin datos personales) se guardan 30 días.
+- **Primera ejecución completa correcta: 20-11-2026, ejecución 44729785813.** 26 tablas y 2 cuentas restauradas idénticas.
+- Si se aplica una migración nueva en producción, actualiza en `copias.yml` el commit de `ESQUEMA` (prueba de restauración).
+
+**Límites (no ocultar):** la prueba automática restaura la base de datos, no un proyecto Supabase completo (el plan gratuito solo
+permite 2 proyectos); los archivos de Storage se guardan y se comprueban por huella, pero no se suben de nuevo en la prueba.
+Sin la frase de paso `CC_RESPALDO_FRASE` no se puede descifrar nada: guárdala también fuera de GitHub.
 
 ## 2. Copia completa de la base de datos (dueño del proyecto)
 

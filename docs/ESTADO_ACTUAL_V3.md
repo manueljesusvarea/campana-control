@@ -20,7 +20,8 @@ Revisión del 20-11-2026. Lo que figura como «verificado» se ha comprobado eje
 - **APK y EXE de pruebas** compilados en GitHub Actions, como artefactos, sin Releases. El EXE también se ha compilado y comprobado en este ordenador. Se instalan aparte de la 2.3.0.
 - **Producción ACTIVA (autorizada el 20-11-2026):**
   - web **https://campana-control-app.pages.dev**;
-  - Supabase `campana-control` (`voxhvqysgzgpuvvsgecz`), limpio, con el superadministrador `manuel.varea` como única cuenta;
+  - Supabase `campana-control` (`voxhvqysgzgpuvvsgecz`), limpio, con el superadministrador `manuel.varea` y la cuenta técnica de copias `respaldo.copias` (solo lectura); migraciones 000001-000017;
+  - copias diarias automáticas operativas desde el 20-11-2026 (GitHub Actions privado, cifradas, con prueba de restauración): `docs/COPIAS_Y_RECUPERACION.md`;
   - se actualiza solo desde `produccion/v3`, con tu aprobación;
   - detalle en `docs/PRODUCCION_PLAN.md`.
 - **Coste:** 0 €/mes.
